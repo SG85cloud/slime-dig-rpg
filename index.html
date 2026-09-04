@@ -385,7 +385,7 @@
 
       <div class="shop-tab-panel" data-shoppanel="trade">
         <button id="btn-sell" class="shop-btn">광물 일괄 판매 <span class="cost" id="cost-sell"></span></button>
-        <div class="shop-note">환전 시세 — 암석/흙 1G · 철광석 5G · 미스릴 20G</div>
+        <div class="shop-note">환전 시세 — 암석/흙 1G · 철광석 5G · 미스릴 20G · 박쥐 날개 10G</div>
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="spa" style="display:none">
@@ -421,17 +421,17 @@
         <button class="evo-option" data-evo="ironclad">
           <div class="evo-emoji">🛡️</div>
           <div class="evo-name">철갑 슬라임</div>
-          <div class="evo-effect">채굴 공격력 +30%<br>낙석 피해 무효화</div>
+          <div class="evo-effect">채굴 공격력 +30%<br>(적은 타격으로 파괴)</div>
         </button>
         <button class="evo-option" data-evo="luminous">
           <div class="evo-emoji">💡</div>
           <div class="evo-name">발광 슬라임</div>
-          <div class="evo-effect">시야 반경 2배<br>희귀 광석 확률 +20%</div>
+          <div class="evo-effect">희귀 광물/미스릴<br>드랍 확률 +20%</div>
         </button>
         <button class="evo-option" data-evo="giant">
           <div class="evo-emoji">🐌</div>
           <div class="evo-name">거대 슬라임</div>
-          <div class="evo-effect">가방 기본 용량<br>+20칸</div>
+          <div class="evo-effect">가방 기본 슬롯<br>+15칸 증가</div>
         </button>
       </div>
     </div>
@@ -466,19 +466,21 @@ const SP_COST_PER_CYCLE = 5;
 const SP_REGEN_PER_SEC = 1;
 const PICKUP_RADIUS = 64;   // 드랍된 광물을 자동으로 줍는 거리 (채굴 접근 거리보다 넉넉하게)
 
-const MONSTER_EVENT_CHANCE = 0.10;  // 타격마다 몬스터 조우 확률
-const ROCKFALL_EVENT_CHANCE = 0.05; // 타격마다 낙석 확률 (몬스터 확률 다음 구간)
-const ROCKFALL_DAMAGE = [3, 8];     // 낙석 피해량 범위
+const MONSTER_EVENT_CHANCE = 0.08;  // 타격마다 몬스터 조우 확률 (로그 기반 즉시 정산, 별도 렌더링 없음)
+const MONSTER_HP_DAMAGE = [5, 10];  // 몬스터 조우 시 HP 피해량 범위
+const MONSTER_EXP_REWARD = 25;
+const BATWING_NAME = "박쥐 날개";
+const BATWING_SELL_PRICE = 10;
 
-// 진화 형태별 효과 배수/보너스 (같은 형태를 두 번 고르면 대부분 중첩 적용된다)
-const EVOLUTION_LEVELS = [5, 10];
+// 진화 형태별 효과 (Lv.5 단 한 번, 3종 중 1종을 영구 선택한다)
+const EVOLUTION_LEVELS = [5];
 const EVOLUTION_TYPES = {
-  ironclad: { name: "철갑 슬라임", emoji: "🛡️", desc: "채굴 공격력 +30% · 낙석 피해 무효화" },
-  luminous: { name: "발광 슬라임", emoji: "💡", desc: "시야 반경 2배 · 희귀 광석 확률 +20%" },
-  giant:    { name: "거대 슬라임", emoji: "🐌", desc: "가방 기본 용량 +20칸" },
+  ironclad: { name: "철갑 슬라임", emoji: "🛡️", desc: "채굴 공격력 +30% (바위가 더 적은 타격으로 깨짐)" },
+  luminous: { name: "발광 슬라임", emoji: "💡", desc: "희귀 광물/미스릴 드랍 확률 +20%" },
+  giant:    { name: "거대 슬라임", emoji: "🐌", desc: "가방 기본 슬롯 +15칸 증가" },
 };
 
-const SAVE_KEY = "slime_dig_rpg_save_v5";
+const SAVE_KEY = "slime_dig_rpg_save_v6";
 
 // 광물 종류: 이름 / 판매가(교환소 시세) / 드랍 가중치(기본) / 파편·로그 색상
 const ORE_TYPES = {
@@ -513,7 +515,7 @@ const DEPTH_PER_STEP = 3; // col+row 한 칸당 깊이(m)
 const DEPTH_TIERS = [
   { max: 10,       label: "일반 암석층",     hp: 2, tint: 0xffffff, ironBonus: 0,  mithrilBonus: 0  },
   { max: 30,       label: "단단한 암반층",   hp: 4, tint: 0xd8d8e8, ironBonus: 26, mithrilBonus: 0  },
-  { max: Infinity, label: "심층 고밀도 암반", hp: 8, tint: 0xb0b0ff, ironBonus: 12, mithrilBonus: 22 },
+  { max: Infinity, label: "심층 고밀도 암반", hp: 6, tint: 0xb0b0ff, ironBonus: 12, mithrilBonus: 22 },
 ];
 
 function depthMetersOf(col, row) {
@@ -531,8 +533,8 @@ const LAMP_DISPLAY   = 120; const LAMP_ORIGIN_Y   = 0.825;
 const SLIME_DISPLAY  = 64; const SLIME_ORIGIN_Y  = 0.75;
 const ORE_ITEM_DISPLAY = 98; const ORE_ITEM_ORIGIN_Y = 0.68;
 
-const PLAYER_LIGHT_SCALE = 3.4;       // 슬라임 랜턴 발광 이미지 기본 배율
-const PLAYER_LIGHT_STAMP_SCALE = 3.6; // 안개를 지우는 반경 기본 배율 (발광 슬라임 진화 시 2배)
+const PLAYER_LIGHT_SCALE = 3.4;       // 슬라임 랜턴 발광 이미지 배율
+const PLAYER_LIGHT_STAMP_SCALE = 3.6; // 안개를 지우는 반경 배율
 
 /* -------------------------------------------------------------------------
    2. 조명(Fog of War) 글로우 텍스처
@@ -561,7 +563,7 @@ class MineScene extends Phaser.Scene {
   constructor() {
     super("MineScene");
 
-    this.inventory = { rock: 0, iron: 0, mithril: 0 };
+    this.inventory = { rock: 0, iron: 0, mithril: 0, batwing: 0 };
     this.rockBlocks = [];
     this.groundItems = [];
     this.miningTarget = null;
@@ -624,6 +626,7 @@ class MineScene extends Phaser.Scene {
       this.inventory.rock = saved.inventory?.rock ?? 0;
       this.inventory.iron = saved.inventory?.iron ?? 0;
       this.inventory.mithril = saved.inventory?.mithril ?? 0;
+      this.inventory.batwing = saved.inventory?.batwing ?? 0;
       this.level = saved.level ?? this.level;
       this.expPercent = saved.expPercent ?? this.expPercent;
       this.maxHP = saved.maxHP ?? this.maxHP;
@@ -714,7 +717,7 @@ class MineScene extends Phaser.Scene {
     this.playerLight = this.add.image(this.player.x, this.player.y, "glow")
       .setBlendMode(Phaser.BlendModes.ADD)
       .setAlpha(0.85)
-      .setScale(PLAYER_LIGHT_SCALE * this.visionMultiplier())
+      .setScale(PLAYER_LIGHT_SCALE)
       .setDepth(890);
 
     // 안개에 구멍을 뚫을 때 쓰는 스탬프 (화면에는 직접 그려지지 않는다)
@@ -859,19 +862,14 @@ class MineScene extends Phaser.Scene {
     return "rock";
   }
 
-  /** 곡괭이 파워 강화 단계에 비례해 타격 한 번당 암반 내구도를 더 크게 깎는다. */
+  /** 곡괭이 파워 강화 단계 + 철갑 슬라임 진화(+30%)에 비례해 타격 한 번당 암반 내구도를 깎는다. */
   get pickaxePower() {
-    return this.pickaxeLevel * (1 + 0.3 * this.evolutionCounts.ironclad); // 철갑 슬라임: 채굴 공격력 +30%/중첩
+    return this.pickaxeLevel * (1 + 0.3 * this.evolutionCounts.ironclad);
   }
 
-  /** 발광 슬라임을 한 번이라도 골랐으면 시야(안개 제거 반경)가 2배가 된다. */
-  visionMultiplier() {
-    return this.evolutionCounts.luminous > 0 ? 2 : 1;
-  }
-
-  /** 가방 기본 용량(강화 단계) + 거대 슬라임 진화 보너스(+20칸/중첩)를 합산해 최신화한다. */
+  /** 가방 기본 용량(강화 단계) + 거대 슬라임 진화 보너스(+15칸)를 합산해 최신화한다. */
   recalcBagCapacity() {
-    this.bagCapacity = this.bagTiers[this.bagLevel] + 20 * this.evolutionCounts.giant;
+    this.bagCapacity = this.bagTiers[this.bagLevel] + 15 * this.evolutionCounts.giant;
   }
 
   resolveMiningTick(cluster) {
@@ -903,40 +901,26 @@ class MineScene extends Phaser.Scene {
     this.saveGame();
   }
 
-  /** 타격마다 일정 확률로 몬스터 조우 또는 낙석 이벤트를 굴린다 (긴장감 요소). */
+  /** 타격마다 일정 확률로 몬스터 조우 이벤트를 굴린다 (긴장감 요소, 별도 렌더링 없이 로그로만 처리). */
   rollMiningEvent(cluster) {
-    const r = Math.random();
-    if (r < MONSTER_EVENT_CHANCE) {
-      this.triggerMonsterEncounter(cluster);
-    } else if (r < MONSTER_EVENT_CHANCE + ROCKFALL_EVENT_CHANCE) {
-      this.triggerRockfall(cluster);
-    }
+    if (Math.random() < MONSTER_EVENT_CHANCE) this.triggerMonsterEncounter(cluster);
   }
 
-  /** 몬스터 조우: 슬라임이 자동으로 몸통 박치기로 처치하고 대량 경험치 + 특수 원석을 얻는다. */
+  /** 몬스터 조우: 화면에 몬스터를 그리지 않고 채팅 로그로 즉시 정산한다 - 처치 보상 + 소량의 HP 피해. */
   triggerMonsterEncounter(cluster) {
-    const monster = Phaser.Math.Between(0, 1) === 0 ? "동굴 박쥐" : "지하 벌레";
-    this.addLog(`[위험!] 어둠 속에서 ${monster}가 나타났습니다!`, "#ff6b6b", "battle");
-    this.addLog(`슬라임이 몸통 박치기로 ${monster}를 물리쳤습니다! 특수 원석을 발견했습니다.`, "#8fdc8f", "battle");
-    this.gainExp(20);
-    this.spawnGroundItem(cluster.sprite.x + Phaser.Math.Between(-10, 10), cluster.sprite.y, "mithril");
+    this.addLog("[전투] 어둠 속에서 튀어나온 동굴 박쥐를 곡괭이로 퇴치했습니다!", "#ff6b6b", "battle");
+    this.addLog(`경험치 +${MONSTER_EXP_REWARD} 획득! ${BATWING_NAME} 1개 획득.`, "#ffd166", "battle");
+
+    this.gainExp(MONSTER_EXP_REWARD);
+    this.inventory.batwing += 1;
+
+    const dmg = Phaser.Math.Between(MONSTER_HP_DAMAGE[0], MONSTER_HP_DAMAGE[1]);
+    this.hp = Math.max(1, this.hp - dmg);
+
     this.cameras.main.flash(150, 255, 80, 80, false);
     this.cameras.main.shake(180, 0.004);
-  }
-
-  /** 낙석: 철갑 슬라임이 아니면 소량의 HP 피해를 입는다. */
-  triggerRockfall(cluster) {
-    const immune = this.evolutionCounts.ironclad > 0;
-    const dmg = immune ? 0 : Phaser.Math.Between(ROCKFALL_DAMAGE[0], ROCKFALL_DAMAGE[1]);
-    this.hp = Math.max(1, this.hp - dmg);
-    if (immune) {
-      this.addLog("[주의] 천장에서 낙석이 떨어졌지만, 철갑 슬라임이라 끄떡없습니다!", "#9ad1ff", "battle");
-    } else {
-      this.addLog(`[주의] 천장에서 낙석이 떨어져 가벼운 부상을 입었습니다! (HP -${dmg})`, "#ff9a76", "battle");
-    }
-    this.spawnRockChips(cluster.sprite.x, cluster.sprite.y - 40);
-    this.cameras.main.shake(220, 0.006);
     this.updateUI();
+    this.saveGame();
   }
 
   /** 채굴 타격마다 그 자리에 광물 아이템을 떨어뜨린다. 슬라임이 다가가 밟으면 collectGroundItems()가 자동으로 줍는다. */
@@ -990,7 +974,7 @@ class MineScene extends Phaser.Scene {
       this.maxHP += 10;
       this.hp = this.maxHP;
       this.sp = this.maxSP;
-      this.addLog(`레벨업! Lv.${this.level} 달성!`, "#ffe066");
+      this.addLog(`축하합니다! 레벨이 상승하여 Lv.${this.level}이 되었습니다.`, "#ffe066");
       this.spawnLevelUpEffect();
       if (EVOLUTION_LEVELS.includes(this.level) && !this.evolutionPicks[this.level]) {
         this.pendingEvolutions.push(this.level);
@@ -1047,7 +1031,6 @@ class MineScene extends Phaser.Scene {
 
     const trait = EVOLUTION_TYPES[traitId];
     if (traitId === "giant") this.recalcBagCapacity();
-    if (traitId === "luminous") this.playerLight.setScale(PLAYER_LIGHT_SCALE * this.visionMultiplier());
 
     this.addLog(`${trait.emoji} Lv.${level} 진화: [${trait.name}](으)로 진화했습니다! ${trait.desc}`, "#c9a6ff");
     document.getElementById("evolution-modal").style.display = "none";
@@ -1055,7 +1038,7 @@ class MineScene extends Phaser.Scene {
     this.updateUI();
     this.saveGame();
 
-    this.tryShowNextEvolutionPrompt(); // Lv.5, Lv.10을 한꺼번에 넘긴 경우 다음 선택을 이어서 띄운다.
+    this.tryShowNextEvolutionPrompt(); // 대기 중인 선택이 더 있으면 이어서 띄운다.
   }
 
   spawnSparkle(x, y, color) {
@@ -1147,7 +1130,7 @@ class MineScene extends Phaser.Scene {
   }
 
   refreshShopUI() {
-    const total = this.inventory.rock + this.inventory.iron + this.inventory.mithril;
+    const total = this.inventory.rock + this.inventory.iron + this.inventory.mithril + this.inventory.batwing;
     document.getElementById("shop-gold").textContent = `${this.gold}G`;
     document.getElementById("shop-bag").textContent = `${total}/${this.bagCapacity}`;
     document.getElementById("shop-pickaxe").textContent =
@@ -1155,7 +1138,8 @@ class MineScene extends Phaser.Scene {
 
     const sellValue = this.inventory.rock * ORE_TYPES.rock.sell
       + this.inventory.iron * ORE_TYPES.iron.sell
-      + this.inventory.mithril * ORE_TYPES.mithril.sell;
+      + this.inventory.mithril * ORE_TYPES.mithril.sell
+      + this.inventory.batwing * BATWING_SELL_PRICE;
     document.getElementById("cost-sell").textContent = total > 0 ? `+${sellValue}G` : "-";
     document.getElementById("btn-sell").disabled = total <= 0;
 
@@ -1189,12 +1173,14 @@ class MineScene extends Phaser.Scene {
   sellAll() {
     const value = this.inventory.rock * ORE_TYPES.rock.sell
       + this.inventory.iron * ORE_TYPES.iron.sell
-      + this.inventory.mithril * ORE_TYPES.mithril.sell;
+      + this.inventory.mithril * ORE_TYPES.mithril.sell
+      + this.inventory.batwing * BATWING_SELL_PRICE;
     if (value <= 0) return;
     this.gold += value;
     this.inventory.rock = 0;
     this.inventory.iron = 0;
     this.inventory.mithril = 0;
+    this.inventory.batwing = 0;
     const msg = `정산 완료: ${value} 골드를 획득했습니다.`;
     document.getElementById("shop-msg").textContent = msg;
     this.addLog(msg, "#ffd166");
@@ -1264,7 +1250,7 @@ class MineScene extends Phaser.Scene {
   }
 
   openInventory() {
-    const total = this.inventory.rock + this.inventory.iron + this.inventory.mithril;
+    const total = this.inventory.rock + this.inventory.iron + this.inventory.mithril + this.inventory.batwing;
     document.getElementById("inventory-body").innerHTML = `
       <div class="inv-row"><span>골드</span><span>${this.gold}G</span></div>
       <div class="inv-row"><span>가방</span><span>${total}/${this.bagCapacity}</span></div>
@@ -1272,6 +1258,7 @@ class MineScene extends Phaser.Scene {
       <div class="inv-row"><span>🪨 암석/흙</span><span>${this.inventory.rock}</span></div>
       <div class="inv-row"><span>🟫 철광석</span><span>${this.inventory.iron}</span></div>
       <div class="inv-row"><span>🟣 미스릴</span><span>${this.inventory.mithril}</span></div>
+      <div class="inv-row"><span>🦇 ${BATWING_NAME}</span><span>${this.inventory.batwing}</span></div>
     `;
     document.getElementById("inventory-modal").style.display = "block";
   }
@@ -1352,7 +1339,7 @@ class MineScene extends Phaser.Scene {
 
   saveGame() {
     const data = {
-      version: 5,
+      version: 6,
       gold: this.gold,
       bagLevel: this.bagLevel,
       pickaxeLevel: this.pickaxeLevel,
@@ -1420,7 +1407,7 @@ class MineScene extends Phaser.Scene {
       this.lightStampLamp.setPosition(lx, ly).setScale(2.0);
       this.fog.erase(this.lightStampLamp);
     });
-    this.lightStampPlayer.setPosition(this.player.x, this.player.y).setScale(PLAYER_LIGHT_STAMP_SCALE * this.visionMultiplier());
+    this.lightStampPlayer.setPosition(this.player.x, this.player.y).setScale(PLAYER_LIGHT_STAMP_SCALE);
     this.fog.erase(this.lightStampPlayer);
 
     this.drawMinimap();
