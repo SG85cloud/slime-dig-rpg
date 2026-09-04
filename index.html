@@ -372,6 +372,8 @@
       <canvas id="minimap-canvas" width="128" height="88"></canvas>
       <div id="coord-text" class="coord-text">(0, 0)</div>
       <div id="depth-text" class="coord-text" style="color:#ffd166;">깊이 1m</div>
+      <div id="sector-label" class="coord-text" style="color:#c9e8ff; margin-top:4px;">구역 1/6</div>
+      <div class="stat-bar-bg" style="height:6px; margin-top:2px;"><div id="sector-bar" class="stat-bar-fill" style="background:linear-gradient(180deg,#ffe066,#d8a233); width:0%;"></div></div>
     </div>
   </div>
 
@@ -625,7 +627,28 @@ function floorThemeOf(floorNumber) {
   return { key: "normal", label: null, tint: null, hpMult: 1, oreMult: 1 };
 }
 
-const SAVE_KEY = "slime_dig_rpg_save_v9";
+/* -------------------------------------------------------------------------
+   1e. 초반 쾌속 세팅 - 1~3층은 압도적으로 빨리 뚫리고, 1~5층은 골드가 넉넉하다.
+   ------------------------------------------------------------------------- */
+const EARLY_GAME_HP_CAP_FLOOR = 3;   // 이 층까지는 암반 내구도를 강제로 낮게 고정한다
+const EARLY_GAME_HP_CAP = 2;         // 기본 곡괭이로 1~2타면 부서지는 수준
+const EARLY_GOLD_BONUS_FLOOR = 5;    // 이 층까지는 타격마다 소량의 보너스 골드가 함께 나온다
+const EARLY_GOLD_BONUS_PER_HIT = 2;
+
+/* -------------------------------------------------------------------------
+   1f. 구역(Sector) 시스템 - 한 층을 5~8개 구역으로 나눠 순서대로 자동 채굴/전진한다.
+   ------------------------------------------------------------------------- */
+const SECTOR_COUNT_RANGE = [5, 8];
+const SECTOR_EVENT_IDS = ["hotspring", "goldbox", "batswarm", "vein"];
+const SECTOR_SPEED_BUFF_MS = 60000;   // 온천 이벤트: 1분간 채굴 속도 +20%
+const SECTOR_SPEED_BUFF_MULT = 1.2;
+const SECTOR_ORE_VALUE_BUFF_MS = 30000; // 황금 상자 이벤트: 30초간 판매가 2배
+const SECTOR_ORE_VALUE_BUFF_MULT = 2;
+const SECTOR_GOLDBOX_GOLD = 150;
+const SECTOR_BATSWARM_EXP = 40;
+const PLAYER_AUTO_TICK_MS = 1400; // 플레이어가 유휴 상태일 때 자동 채굴 대상을 살피는 주기
+
+const SAVE_KEY = "slime_dig_rpg_save_v10";
 
 // 광물 종류: 이름 / 판매가(교환소 시세) / 드랍 가중치(기본) / 파편·로그 색상
 const ORE_TYPES = {
@@ -815,6 +838,14 @@ class MineScene extends Phaser.Scene {
     this.dragon = null;         // B30F 고룡 오브젝트 상태 (없으면 null)
     this.dragonVeins = [];      // 고룡 주변의 강화된 광맥 암반들
 
+    this.sectorsThisFloor = Phaser.Math.Between(SECTOR_COUNT_RANGE[0], SECTOR_COUNT_RANGE[1]);
+    this.sectorGroups = [];     // 현재 층의 암반을 깊이순으로 나눈 구역별 묶음
+    this.activeSectorIndex = 0; // 지금 진행 중인 구역 (buildSectorGroups에서 최초 계산 후 명시적으로만 증가)
+    this.sectorAdvancing = false; // 구역/층 전환 연출 중 중복 트리거 방지
+    this.speedBuffUntil = 0;    // Date.now() 기준, 이 시각까지 채굴 속도 +20% (온천 이벤트)
+    this.oreValueBuffUntil = 0; // 이 시각까지 판매가 2배 (황금 상자 이벤트)
+    this.playerAutoTimer = null;
+
     // 곡괭이 강화 단계표 (레벨, 비용)
     this.upgradeTiers = [
       { level: 1, cost: 0 },
@@ -884,6 +915,7 @@ class MineScene extends Phaser.Scene {
         this.dragonNoise = saved.dragonNoise ?? 0;
         this.dragonAwake = saved.dragonAwake ?? false;
       }
+      this.sectorsThisFloor = saved.sectorsThisFloor ?? this.sectorsThisFloor;
     }
     if (!this.playerTrait) this.playerTrait = rollRandomTrait(); // 최초 생성 시 1회 무작위 배정
     this.recalcBagCapacity();
@@ -939,6 +971,7 @@ class MineScene extends Phaser.Scene {
 
     // 저장된 만큼 미니 일꾼 슬라임을 복원한다 (골드 재차감 없이 스폰만).
     savedWorkerTraits.forEach((trait) => this.spawnWorker(trait));
+    if (!saved) this.spawnWorker(); // 초반 쾌속 세팅: 완전 신규 게임이면 견습 일꾼 슬라임 1마리를 무료로 지급
 
     // 채굴 진행 게이지 (플레이어 머리 위)
     this.gaugeBg = this.add.rectangle(0, 0, 40, 6, 0x222222).setOrigin(0, 0).setDepth(999).setVisible(false);
@@ -974,6 +1007,10 @@ class MineScene extends Phaser.Scene {
 
     /* ---- 3-9. 최초 안내 로그 ---- */
     this.addLog("슬라임 광부: 오늘도 열심히 캐보자~!", "#8fdc8f");
+    if (!saved) {
+      const starterTrait = TRAIT_TYPES[this.workers[0].trait];
+      this.addLog(`견습 미니 일꾼 슬라임을 무료로 데려왔습니다! (특성: ${starterTrait.emoji} ${starterTrait.name})`, "#a8d8a8");
+    }
 
     /* ---- 3-10. UI 초기 갱신 + DOM 연결 ---- */
     window.gameScene = this;
@@ -983,6 +1020,7 @@ class MineScene extends Phaser.Scene {
     this.time.addEvent({ delay: 5000, loop: true, callback: () => this.saveGame() });
     this.time.addEvent({ delay: 900, loop: true, callback: () => this.ambientSparkle() });
     window.addEventListener("beforeunload", () => this.saveGame());
+    this.schedulePlayerAutoTick();
 
     if (offlineReward) this.showOfflineRewardModal(offlineReward);
   }
@@ -1036,9 +1074,11 @@ class MineScene extends Phaser.Scene {
 
         const depthM = depthMetersOf(col, row);
         const baseTier = depthTierOf(depthM);
+        let hp = Math.round((baseTier.hp + floorBonus * FLOOR_HP_BONUS_PER_FLOOR) * theme.hpMult);
+        if (this.floorNumber <= EARLY_GAME_HP_CAP_FLOOR) hp = Math.min(hp, EARLY_GAME_HP_CAP); // 초반 쾌속 세팅: 1~2타 확정 클리어
         const tier = {
           ...baseTier,
-          hp: Math.round((baseTier.hp + floorBonus * FLOOR_HP_BONUS_PER_FLOOR) * theme.hpMult),
+          hp,
           ironBonus: baseTier.ironBonus * oreMult,
           mithrilBonus: baseTier.mithrilBonus * oreMult,
         };
@@ -1059,6 +1099,98 @@ class MineScene extends Phaser.Scene {
       this.spawnTreasureChest();
     }
     if (this.floorNumber === DRAGON_LAIR_FLOOR) this.spawnDragonLair();
+
+    this.buildSectorGroups();
+  }
+
+  /**
+   * 방금 생성된 암반들을 깊이(depthM) 순으로 정렬해 sectorsThisFloor개 묶음으로 나눈다.
+   * 별도의 좌표 재배치 없이, "얕은 곳부터 순서대로" 구역 개념을 부여하는 방식이다.
+   */
+  buildSectorGroups() {
+    const sorted = [...this.rockBlocks].sort((a, b) => a.depthM - b.depthM);
+    const groups = Array.from({ length: this.sectorsThisFloor }, () => []);
+    const perGroup = Math.ceil(sorted.length / this.sectorsThisFloor) || 1;
+    sorted.forEach((rock, i) => {
+      const g = Math.min(this.sectorsThisFloor - 1, Math.floor(i / perGroup));
+      groups[g].push(rock);
+    });
+    this.sectorGroups = groups;
+    this.activeSectorIndex = this.currentSectorIndex(); // 최초 1회만 상태를 계산해서 초기화한다
+    this.updateSectorUI();
+  }
+
+  /** 아직 다 부서지지 않은 첫 구역의 인덱스(0-base)를 반환한다. 전부 끝났으면 마지막 인덱스. */
+  currentSectorIndex() {
+    const idx = this.sectorGroups.findIndex((g) => g.some((r) => !r.broken));
+    return idx === -1 ? this.sectorGroups.length - 1 : idx;
+  }
+
+  /**
+   * activeSectorIndex는 "지금 몇 구역째인지"를 나타내는 명시적 상태값이다. 매번 새로
+   * 계산하면(currentSectorIndex) 구역이 막 끝난 순간을 놓치므로(이미 다음 구역을 가리켜버림),
+   * 최초 1회만 currentSectorIndex()로 초기화하고 이후에는 checkSectorClear()가 직접 증가시킨다.
+   */
+
+  /** 현재 구역이 100% 채굴됐는지 확인하고, 그렇다면 전진 연출을 시작한다. */
+  checkSectorClear() {
+    if (this.sectorAdvancing || !this.sectorGroups.length) return;
+    const idx = this.activeSectorIndex;
+    const group = this.sectorGroups[idx];
+    if (!group || group.length === 0 || !group.every((r) => r.broken)) return;
+    if (idx < this.sectorsThisFloor - 1 && idx < this.sectorGroups.length - 1) {
+      this.activeSectorIndex = idx + 1;
+      this.advanceSector(idx);
+    } else if (!this.sectorAdvancing) {
+      // 마지막 구역까지 끝났다: 짧게 축하 연출 후 자동으로 다음 층으로 내려간다.
+      this.sectorAdvancing = true;
+      this.addLog(`🎉 B${this.floorNumber}F 전 구역을 돌파했습니다! 심층으로 자동 이동합니다...`, "#ffe066");
+      this.cameras.main.flash(250, 255, 255, 255, false);
+      this.time.delayedCall(900, () => { this.sectorAdvancing = false; this.descendFloor(); });
+    }
+  }
+
+  /** 구역 전진: 짧은 화면 전환 연출 + 돌발 이벤트 1개를 발생시킨다 (새 암반은 이미 다음 구역에 존재한다). */
+  advanceSector(clearedIdx) {
+    this.sectorAdvancing = true;
+    this.addLog(`🎉 구역 ${clearedIdx + 1}을(를) 돌파했습니다! 슬라임들이 환호하며 다음 구역으로 전진합니다.`, "#ffe066");
+    sfx.playFanfareSound();
+    this.spawnSparkle(this.player.x, this.player.y - 20, 0xffe066);
+    this.cameras.main.flash(180, 255, 255, 255, false);
+    this.time.delayedCall(400, () => {
+      this.updateSectorUI();
+      this.triggerSectorClearEvent();
+      this.sectorAdvancing = false;
+      this.checkSectorClear(); // 연출 중에 다음 구역까지 이미 끝났다면(다수 일꾼의 동시 타격 등) 놓치지 않고 이어서 처리한다.
+    });
+  }
+
+  /** 구역 돌파 시 4가지 돌발 이벤트 중 하나를 무작위로 발생시킨다. */
+  triggerSectorClearEvent() {
+    const id = SECTOR_EVENT_IDS[Phaser.Math.Between(0, SECTOR_EVENT_IDS.length - 1)];
+    const nextGroup = this.sectorGroups[this.activeSectorIndex] ?? [];
+
+    if (id === "hotspring") {
+      this.hp = this.maxHP;
+      this.sp = this.maxSP;
+      this.speedBuffUntil = Date.now() + SECTOR_SPEED_BUFF_MS;
+      this.addLog("[이벤트] ♨️ 따뜻한 천연 온천을 발견했습니다! 모든 슬라임의 HP/SP가 회복되고 1분간 채굴 속도 +20% 버프를 얻습니다.", "#8fdc8f", "battle");
+      sfx.playFanfareSound();
+    } else if (id === "goldbox") {
+      this.gold += SECTOR_GOLDBOX_GOLD;
+      this.oreValueBuffUntil = Date.now() + SECTOR_ORE_VALUE_BUFF_MS;
+      this.addLog(`[이벤트] 📦 비밀 황금 상자를 발견해 ${SECTOR_GOLDBOX_GOLD}G를 챙겼습니다! 30초간 광물 판매가가 2배가 됩니다.`, "#ffd700", "battle");
+      sfx.playCoinSound();
+    } else if (id === "batswarm") {
+      this.gainExp(SECTOR_BATSWARM_EXP);
+      this.addLog("[전투] 🦇 어둠 속에서 동굴 박쥐 무리가 습격했습니다! 슬라임들이 협동하여 격퇴했습니다!", "#ff6b6b", "battle");
+      this.addLog(`경험치 +${SECTOR_BATSWARM_EXP} 획득!`, "#ffd166", "battle");
+    } else if (id === "vein") {
+      nextGroup.slice(0, 3).forEach((rock) => { rock.guaranteedOreKey = "mithril"; rock.sprite.setTint(0xffcf3c); });
+      this.addLog("[이벤트] 💎 원시 광맥이 분출했습니다! 다음 구역의 암반 일부가 미스릴 광맥으로 바뀌었습니다.", "#c9a6ff", "battle");
+    }
+    this.updateUI();
+    this.saveGame();
   }
 
   /** 광산 엘리베이터: 층수를 1 올리고 바닥/암반을 새로 채운 뒤 입구로 돌아간다. */
@@ -1071,6 +1203,7 @@ class MineScene extends Phaser.Scene {
     this.maxFloorReached = Math.max(this.maxFloorReached, this.floorNumber);
     this.dragonNoise = 0;
     this.dragonAwake = false;
+    this.sectorsThisFloor = Phaser.Math.Between(SECTOR_COUNT_RANGE[0], SECTOR_COUNT_RANGE[1]);
     this.cancelMining();
     this.groundItems.forEach((item) => { this.tweens.killTweensOf(item.sprite); item.sprite.destroy(); });
     this.groundItems = [];
@@ -1372,6 +1505,37 @@ class MineScene extends Phaser.Scene {
     this.moveTo(ax, ay, () => this.beginChannel(cluster));
   }
 
+  /* =========================================================================
+     완전자동 채굴 (방치형 핵심) - 플레이어가 따로 클릭하지 않아도 현재 구역의
+     암반을 스스로 찾아가 캔다. 수동 클릭/이동/채굴은 그대로 우선권을 가진다.
+     ========================================================================= */
+
+  /** 일정 주기로 플레이어가 유휴 상태인지 확인해 자동으로 다음 암반을 캐도록 한다. */
+  schedulePlayerAutoTick() {
+    this.playerAutoTimer = this.time.delayedCall(PLAYER_AUTO_TICK_MS, () => {
+      this.playerAutoTick();
+      this.schedulePlayerAutoTick();
+    });
+  }
+
+  playerAutoTick() {
+    if (this.shopOpen || this.evolutionOpen || this.miningTarget) return; // 이미 뭔가 하고 있으면 방해하지 않는다
+    if (this.tweens.isTweening(this.player)) return; // 수동 클릭으로 이동 중이면 우선권을 준다
+    const target = this.findNextAutoRock();
+    if (target) this.onOreClicked(target);
+  }
+
+  /** 현재 구역에서 가장 가까운 미채굴 암반을 찾는다 (구역이 비어있으면 층 전체에서 찾는다). */
+  findNextAutoRock() {
+    const pool = (this.sectorGroups[this.activeSectorIndex] ?? []).filter((r) => !r.broken);
+    const candidates = pool.length > 0 ? pool : this.rockBlocks.filter((r) => !r.broken);
+    if (candidates.length === 0) return null;
+    return candidates.reduce((best, r) => {
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, r.sprite.x, r.sprite.y);
+      return (!best || d < best.d) ? { rock: r, d } : best;
+    }, null).rock;
+  }
+
   onShopClicked() {
     if (this.shopOpen || this.evolutionOpen) return;
     const dx = this.player.x - this.shopSprite.x;
@@ -1410,7 +1574,9 @@ class MineScene extends Phaser.Scene {
 
   currentCycleMs() {
     const base = Math.max(500, BASE_CYCLE_MS - (this.pickaxeLevel - 1) * 150);
-    return this.hasTrait(this, "workaholic") ? base * 0.5 : base;
+    let mult = this.hasTrait(this, "workaholic") ? 0.5 : 1;
+    if (Date.now() < this.speedBuffUntil) mult /= SECTOR_SPEED_BUFF_MULT; // 온천 이벤트 버프
+    return base * mult;
   }
 
   /** tier(깊이 등급)가 주어지면 그 등급의 철/미스릴 드랍 보너스를 더해 확률을 계산한다. */
@@ -1449,6 +1615,11 @@ class MineScene extends Phaser.Scene {
     return (this.hasRelic("lantern") || this.hasTrait(this, "night_glow")) ? 1.6 : 1;
   }
 
+  /** 황금 상자 구역 이벤트가 활성 중이면 광물 판매가가 2배가 된다. */
+  oreValueMultiplier() {
+    return Date.now() < this.oreValueBuffUntil ? SECTOR_ORE_VALUE_BUFF_MULT : 1;
+  }
+
   /** 곡괭이 파워 강화 단계 + 철갑 슬라임 진화(+30%) + 고대 거인의 장갑 유물(+50%)에 비례해 타격당 암반 내구도를 깎는다. */
   get pickaxePower() {
     return this.pickaxeLevel * (1 + 0.3 * this.evolutionCounts.ironclad) * (1 + 0.5 * this.hasRelic("gauntlet"));
@@ -1466,6 +1637,7 @@ class MineScene extends Phaser.Scene {
   workerSpeedMultiplier(worker) {
     let mult = this.hasRelic("pickaxe") ? 1.5 : 1;
     if (this.hasTrait(worker, "workaholic")) mult *= 1.5;
+    if (Date.now() < this.speedBuffUntil) mult *= SECTOR_SPEED_BUFF_MULT; // 온천 이벤트 버프
     return mult;
   }
 
@@ -1475,9 +1647,10 @@ class MineScene extends Phaser.Scene {
     this.applyMiningDamage(cluster, this.pickaxePower);
     sfx.playPickSound();
 
-    const oreKey = this.rollOreType(cluster.tier);
+    const oreKey = cluster.guaranteedOreKey ?? this.rollOreType(cluster.tier);
     this.grantMiningRewards(this, cluster, oreKey);
     this.gainExp(4);
+    if (this.floorNumber <= EARLY_GOLD_BONUS_FLOOR) this.gold += EARLY_GOLD_BONUS_PER_HIT; // 초반 쾌속 세팅: 골드가 넉넉하게
     this.spawnRockChips(cluster.sprite.x, cluster.sprite.y);
     this.cameras.main.shake(100, 0.0015);
     this.rollMiningEvent(cluster);
@@ -1558,6 +1731,8 @@ class MineScene extends Phaser.Scene {
     sfx.playBreakSound();
 
     if (cluster.isGuardian) this.checkChestUnlock();
+    this.updateSectorUI();
+    this.checkSectorClear();
     this.saveGame();
   }
 
@@ -1752,9 +1927,10 @@ class MineScene extends Phaser.Scene {
     this.applyMiningDamage(target, 1);
     sfx.playPickSound();
     this.spawnRockChips(target.sprite.x, target.sprite.y);
-    const oreKey = this.rollOreType(target.tier);
+    const oreKey = target.guaranteedOreKey ?? this.rollOreType(target.tier);
     this.grantMiningRewards(worker, target, oreKey);
     this.addLog("[일꾼] 미니 슬라임이 암석을 채굴했습니다!", "#a8d8a8");
+    if (this.floorNumber <= EARLY_GOLD_BONUS_FLOOR) this.gold += EARLY_GOLD_BONUS_PER_HIT;
     if (this.floorNumber === DRAGON_LAIR_FLOOR) this.addDragonNoise(DRAGON_NOISE_PER_HIT);
 
     if (target.uses <= 0) {
@@ -2002,10 +2178,10 @@ class MineScene extends Phaser.Scene {
     document.getElementById("shop-pickaxe").textContent =
       `Lv.${this.pickaxeLevel} (${this.pickaxeDurability}/${this.pickaxeMaxDurability})`;
 
-    const sellValue = this.inventory.rock * ORE_TYPES.rock.sell
+    const sellValue = Math.round((this.inventory.rock * ORE_TYPES.rock.sell
       + this.inventory.iron * ORE_TYPES.iron.sell
       + this.inventory.mithril * ORE_TYPES.mithril.sell
-      + this.inventory.batwing * BATWING_SELL_PRICE;
+      + this.inventory.batwing * BATWING_SELL_PRICE) * this.oreValueMultiplier());
     document.getElementById("cost-sell").textContent = total > 0 ? `+${sellValue}G` : "-";
     document.getElementById("btn-sell").disabled = total <= 0;
 
@@ -2058,10 +2234,10 @@ class MineScene extends Phaser.Scene {
   }
 
   sellAll() {
-    const value = this.inventory.rock * ORE_TYPES.rock.sell
+    const value = Math.round((this.inventory.rock * ORE_TYPES.rock.sell
       + this.inventory.iron * ORE_TYPES.iron.sell
       + this.inventory.mithril * ORE_TYPES.mithril.sell
-      + this.inventory.batwing * BATWING_SELL_PRICE;
+      + this.inventory.batwing * BATWING_SELL_PRICE) * this.oreValueMultiplier());
     if (value <= 0) return;
     this.gold += value;
     this.inventory.rock = 0;
@@ -2235,6 +2411,17 @@ class MineScene extends Phaser.Scene {
     return Math.max(1, Math.round(steps * DEPTH_PER_STEP));
   }
 
+  /** 우측 상단 미니맵의 "구역 N/M" 라벨과 진행도 바를 현재 구역 클리어율에 맞춰 갱신한다. */
+  updateSectorUI() {
+    if (!this.sectorGroups.length) return;
+    const idx = this.activeSectorIndex;
+    const group = this.sectorGroups[idx];
+    const brokenCount = group.filter((r) => r.broken).length;
+    const pct = group.length ? Math.round((brokenCount / group.length) * 100) : 100;
+    document.getElementById("sector-label").textContent = `구역 ${idx + 1}/${this.sectorsThisFloor}`;
+    document.getElementById("sector-bar").style.width = `${pct}%`;
+  }
+
   /* =========================================================================
      자동 저장 / 불러오기
      ========================================================================= */
@@ -2260,7 +2447,7 @@ class MineScene extends Phaser.Scene {
 
   saveGame() {
     const data = {
-      version: 9,
+      version: 10,
       gold: this.gold,
       bagLevel: this.bagLevel,
       pickaxeLevel: this.pickaxeLevel,
@@ -2285,6 +2472,7 @@ class MineScene extends Phaser.Scene {
       dragonLairCleared: this.dragonLairCleared,
       dragonNoise: this.dragonNoise,
       dragonAwake: this.dragonAwake,
+      sectorsThisFloor: this.sectorsThisFloor,
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
