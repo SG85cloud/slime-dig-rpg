@@ -347,6 +347,7 @@
     </div>
     <div class="rpg-window-body">
       <div class="stat-line">Lv.<span id="stat-level">1</span> / Job Lv.1 / Exp. <span id="stat-exp">0</span>%</div>
+      <div class="stat-line" id="stat-trait" style="color:#c9a6ff; font-size:11px;">특성: -</div>
       <div class="stat-row">
         <span class="stat-label">HP</span>
         <div class="stat-bar-bg"><div id="hp-bar" class="stat-bar-fill hp"></div></div>
@@ -442,6 +443,8 @@
           <img src="assets/slime.png" class="spa-slime" alt="쉬고 있는 슬라임">
         </div>
         <button id="btn-rest" class="shop-btn">휴식하기 (HP/SP 완전 회복)</button>
+        <div class="shop-note" id="current-trait-note" style="margin:8px 2px 2px;">현재 특성: -</div>
+        <button id="btn-reroll-trait" class="shop-btn">🎲 특성 리롤 <span class="cost" id="cost-reroll-trait">150G</span></button>
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="smithy" style="display:none">
@@ -589,7 +592,40 @@ const EVOLUTION_TYPES = {
   giant:    { name: "거대 슬라임", emoji: "🐌", desc: "가방 기본 슬롯 +15칸 증가" },
 };
 
-const SAVE_KEY = "slime_dig_rpg_save_v8";
+// 슬라임 개인 특성(Trait) - 플레이어는 최초 생성 시, 일꾼은 고용될 때마다 5종 중 1개를 무작위로 받는다.
+const TRAIT_TYPES = {
+  glutton:      { name: "돌연변이 식탐", emoji: "🍖", desc: "채굴 시 15% 확률로 광석 2배 드랍" },
+  iron_skin:    { name: "강철 피부",     emoji: "🦾", desc: "몬스터 조우 피해 무효화" },
+  night_glow:   { name: "야행성 발광체", emoji: "✨", desc: "시야 확장 · 희귀 광석 확률 +25%" },
+  workaholic:   { name: "워커홀릭",      emoji: "⚡", desc: "이동/채굴 속도 50% 빨라짐" },
+  golden_touch: { name: "황금 손등",     emoji: "🪙", desc: "일반 채굴 시 5% 확률로 보너스 골드" },
+};
+const TRAIT_REROLL_COST = 150;
+const GOLDEN_TOUCH_BONUS_GOLD = 5;
+
+function rollRandomTrait() {
+  const keys = Object.keys(TRAIT_TYPES);
+  return keys[Phaser.Math.Between(0, keys.length - 1)];
+}
+
+/* -------------------------------------------------------------------------
+   1d. 층별 테마 + 최종 목표(B30F 잠든 고룡의 레어)
+   - 1~10F 일반 → 11~20F 용암 균열 → 21~29F 드래곤 비늘 → 30F 고룡의 레어.
+   - 기존 층별 난이도 스케일(FLOOR_HP_BONUS_PER_FLOOR 등)에 테마 배율을 추가로 곱한다.
+   ------------------------------------------------------------------------- */
+const DRAGON_LAIR_FLOOR = 30;
+const DRAGON_NOISE_PER_HIT = 8;   // 30층에서 한 번 타격할 때마다 차오르는 소음 게이지(%)
+const DRAGON_ESCAPE_GOLD = 2000;
+const DRAGON_ESCAPE_SCALES = 20;
+
+function floorThemeOf(floorNumber) {
+  if (floorNumber >= DRAGON_LAIR_FLOOR) return { key: "lair", label: "잠든 고룡의 레어", tint: 0xff5a3c, hpMult: 1.6, oreMult: 2.0 };
+  if (floorNumber >= 21) return { key: "scale", label: "드래곤 비늘 암석층", tint: 0x8a4fd8, hpMult: 1.4, oreMult: 1.6 };
+  if (floorNumber >= 11) return { key: "lava", label: "용암 균열 암반", tint: 0xff7043, hpMult: 1.2, oreMult: 1.3 };
+  return { key: "normal", label: null, tint: null, hpMult: 1, oreMult: 1 };
+}
+
+const SAVE_KEY = "slime_dig_rpg_save_v9";
 
 // 광물 종류: 이름 / 판매가(교환소 시세) / 드랍 가중치(기본) / 파편·로그 색상
 const ORE_TYPES = {
@@ -749,7 +785,7 @@ class MineScene extends Phaser.Scene {
   constructor() {
     super("MineScene");
 
-    this.inventory = { rock: 0, iron: 0, mithril: 0, batwing: 0 };
+    this.inventory = { rock: 0, iron: 0, mithril: 0, batwing: 0, dragonScale: 0 };
     this.rockBlocks = [];
     this.groundItems = [];
     this.miningTarget = null;
@@ -770,6 +806,14 @@ class MineScene extends Phaser.Scene {
     this.relics = { owned: [], equipped: [] }; // 획득/장착한 고대 유물 id 목록
     this.chest = null;          // 이번 층의 보물 상자 상태 (없으면 null)
     this.chestGuardians = [];   // 상자를 지키는 가디언 암반들
+
+    this.playerTrait = null;    // 슬라임 개인 특성 (최초 생성 시 1회 배정)
+    this.maxFloorReached = 1;
+    this.dragonLairCleared = false;
+    this.dragonNoise = 0;
+    this.dragonAwake = false;
+    this.dragon = null;         // B30F 고룡 오브젝트 상태 (없으면 null)
+    this.dragonVeins = [];      // 고룡 주변의 강화된 광맥 암반들
 
     // 곡괭이 강화 단계표 (레벨, 비용)
     this.upgradeTiers = [
@@ -821,6 +865,7 @@ class MineScene extends Phaser.Scene {
       this.inventory.iron = saved.inventory?.iron ?? 0;
       this.inventory.mithril = saved.inventory?.mithril ?? 0;
       this.inventory.batwing = saved.inventory?.batwing ?? 0;
+      this.inventory.dragonScale = saved.inventory?.dragonScale ?? 0;
       this.level = saved.level ?? this.level;
       this.expPercent = saved.expPercent ?? this.expPercent;
       this.maxHP = saved.maxHP ?? this.maxHP;
@@ -832,9 +877,17 @@ class MineScene extends Phaser.Scene {
       this.floorNumber = saved.floorNumber ?? this.floorNumber;
       this.relics.owned = saved.relics?.owned ?? [];
       this.relics.equipped = saved.relics?.equipped ?? [];
+      this.playerTrait = saved.playerTrait ?? null;
+      this.maxFloorReached = saved.maxFloorReached ?? this.floorNumber;
+      this.dragonLairCleared = saved.dragonLairCleared ?? false;
+      if (this.floorNumber === DRAGON_LAIR_FLOOR) {
+        this.dragonNoise = saved.dragonNoise ?? 0;
+        this.dragonAwake = saved.dragonAwake ?? false;
+      }
     }
+    if (!this.playerTrait) this.playerTrait = rollRandomTrait(); // 최초 생성 시 1회 무작위 배정
     this.recalcBagCapacity();
-    const savedWorkerCount = Phaser.Math.Clamp(saved?.workerCount ?? 0, 0, WORKER_MAX);
+    const savedWorkerTraits = (saved?.workerTraits ?? []).slice(0, WORKER_MAX);
     const offlineReward = this.computeOfflineReward(saved);
 
     /* ---- 3-3. 아이소메트릭 바닥 그리드 + 암반(rock) 배치 ----
@@ -885,7 +938,7 @@ class MineScene extends Phaser.Scene {
     this.playerBaseScale = this.player.scaleX;
 
     // 저장된 만큼 미니 일꾼 슬라임을 복원한다 (골드 재차감 없이 스폰만).
-    for (let i = 0; i < savedWorkerCount; i++) this.spawnWorker();
+    savedWorkerTraits.forEach((trait) => this.spawnWorker(trait));
 
     // 채굴 진행 게이지 (플레이어 머리 위)
     this.gaugeBg = this.add.rectangle(0, 0, 40, 6, 0x222222).setOrigin(0, 0).setDepth(999).setVisible(false);
@@ -952,18 +1005,22 @@ class MineScene extends Phaser.Scene {
    * brokenCellsSet이 비어있으면(새 층) 안전 지대를 제외한 모든 칸이 암반으로 가득 찬다.
    */
   buildMine(brokenCellsSet) {
-    // 기존에 남아있던 바닥/암반/보물 상자 스프라이트를 정리한다 (최초 생성 시에는 비어있어 무해하다).
+    // 기존에 남아있던 바닥/암반/보물 상자/고룡 스프라이트를 정리한다 (최초 생성 시에는 비어있어 무해하다).
     this.floorTiles.forEach((t) => t.destroy());
     this.rockBlocks.forEach((r) => { if (!r.broken) r.sprite.destroy(); });
     if (this.chest) { this.chest.sprite.destroy(); this.chest.label.destroy(); }
+    if (this.dragon) { this.dragon.sprite.destroy(); this.dragon.label.destroy(); this.dragon.glow.destroy(); }
     this.chest = null;
     this.chestGuardians = [];
+    this.dragon = null;
+    this.dragonVeins = [];
     this.floorTiles = [];
     this.rockBlocks = [];
     this.brokenCells = brokenCellsSet;
 
     const floorBonus = this.floorNumber - 1; // B1F=0 → 층이 깊어질수록 암반이 단단해지고 고급 광석이 늘어난다
-    const oreMult = 1 + floorBonus * FLOOR_ORE_BONUS_MULT;
+    const theme = floorThemeOf(this.floorNumber);
+    const oreMult = (1 + floorBonus * FLOOR_ORE_BONUS_MULT) * theme.oreMult;
 
     for (let row = 0; row < GRID_ROWS; row++) {
       for (let col = 0; col < GRID_COLS; col++) {
@@ -981,7 +1038,7 @@ class MineScene extends Phaser.Scene {
         const baseTier = depthTierOf(depthM);
         const tier = {
           ...baseTier,
-          hp: baseTier.hp + floorBonus * FLOOR_HP_BONUS_PER_FLOOR,
+          hp: Math.round((baseTier.hp + floorBonus * FLOOR_HP_BONUS_PER_FLOOR) * theme.hpMult),
           ironBonus: baseTier.ironBonus * oreMult,
           mithrilBonus: baseTier.mithrilBonus * oreMult,
         };
@@ -989,7 +1046,7 @@ class MineScene extends Phaser.Scene {
           .setOrigin(0.5, ROCK_ORIGIN_Y)
           .setDisplaySize(ROCK_DISPLAY, ROCK_DISPLAY)
           .setDepth(y)
-          .setTint(tier.tint)
+          .setTint(theme.tint ?? baseTier.tint) // 11층 이상은 테마 색이 깊이별 색보다 우선한다 (한눈에 구역이 구분되도록)
           .setInteractive({ useHandCursor: true, pixelPerfect: true }); // 이웃 타일과 사각 히트박스가 겹치지 않도록 픽셀 단위 판정
         const rock = { sprite, col, row, depthM, tier, uses: tier.hp, maxUses: tier.hp, broken: false };
         sprite.on("pointerdown", () => this.onOreClicked(rock));
@@ -997,13 +1054,23 @@ class MineScene extends Phaser.Scene {
       }
     }
 
-    // 5층마다(B5F, B10F...) 맵에서 가장 깊은 칸에 가디언이 지키는 보물 상자를 배치한다.
-    if (this.floorNumber % TREASURE_FLOOR_INTERVAL === 0) this.spawnTreasureChest();
+    // 5층마다(B5F, B10F...) 맵에서 가장 깊은 칸에 가디언이 지키는 보물 상자를 배치한다 (30층은 고룡의 레어가 대신 차지한다).
+    if (this.floorNumber % TREASURE_FLOOR_INTERVAL === 0 && this.floorNumber !== DRAGON_LAIR_FLOOR) {
+      this.spawnTreasureChest();
+    }
+    if (this.floorNumber === DRAGON_LAIR_FLOOR) this.spawnDragonLair();
   }
 
   /** 광산 엘리베이터: 층수를 1 올리고 바닥/암반을 새로 채운 뒤 입구로 돌아간다. */
   descendFloor() {
+    if (this.floorNumber === DRAGON_LAIR_FLOOR && !this.dragonLairCleared) {
+      document.getElementById("shop-msg").textContent = "고룡의 레어에서 무사히 탈출하기 전에는 더 내려갈 수 없습니다!";
+      return;
+    }
     this.floorNumber += 1;
+    this.maxFloorReached = Math.max(this.maxFloorReached, this.floorNumber);
+    this.dragonNoise = 0;
+    this.dragonAwake = false;
     this.cancelMining();
     this.groundItems.forEach((item) => { this.tweens.killTweensOf(item.sprite); item.sprite.destroy(); });
     this.groundItems = [];
@@ -1017,7 +1084,9 @@ class MineScene extends Phaser.Scene {
     // 미니 일꾼 슬라임들도 새 층의 입구 안전지대로 재배치하고 채굴 상태를 초기화한다.
     this.workers.forEach((w) => {
       this.tweens.killTweensOf(w.sprite);
+      const labelOffsetY = SLIME_DISPLAY * WORKER_SCALE * SLIME_ORIGIN_Y + 4;
       w.sprite.setPosition(spawnCell.x, spawnCell.y).setDepth(spawnCell.y);
+      w.traitLabel.setPosition(spawnCell.x, spawnCell.y - labelOffsetY).setDepth(spawnCell.y + 1);
       w.col = 1; w.row = 1;
       w.state = "idle";
       w.mineTarget = null;
@@ -1161,6 +1230,107 @@ class MineScene extends Phaser.Scene {
     return candidates[Phaser.Math.Between(0, candidates.length - 1)];
   }
 
+  /* =========================================================================
+     최종 목표: B30F 잠든 고룡의 레어 (Dragon's Lair)
+     ========================================================================= */
+
+  /** 30층에 진입하면 가장 깊은 칸에 잠든 고룡과 그 주변 드래곤 광맥을 배치한다. */
+  spawnDragonLair() {
+    const dc = GRID_COLS - 1;
+    const dr = GRID_ROWS - 1;
+
+    const idx = this.rockBlocks.findIndex((r) => r.col === dc && r.row === dr && !r.broken);
+    if (idx >= 0) { this.rockBlocks[idx].sprite.destroy(); this.rockBlocks.splice(idx, 1); }
+    this.brokenCells.add(`${dc},${dr}`);
+
+    const { x, y } = this.gridToScreen(dc, dr);
+    const glow = this.add.image(x, y, "glow").setBlendMode(Phaser.BlendModes.ADD).setScale(2.6).setAlpha(0.8).setDepth(y - 1);
+    const sprite = this.add.image(x, y, "rock")
+      .setOrigin(0.5, ROCK_ORIGIN_Y)
+      .setDisplaySize(ROCK_DISPLAY * 1.6, ROCK_DISPLAY * 1.6)
+      .setTint(0xb02020)
+      .setDepth(y)
+      .setInteractive({ useHandCursor: true, pixelPerfect: true });
+    const label = this.add.text(x, y - ROCK_DISPLAY * 1.6, "🐉 잠든 고룡", {
+      fontSize: "13px", fontFamily: "Malgun Gothic, sans-serif", fontStyle: "bold",
+      color: "#ff8a6b", stroke: "#2e2013", strokeThickness: 3,
+    }).setOrigin(0.5, 1).setDepth(y + 1);
+    this.tweens.add({
+      targets: sprite, scaleX: sprite.scaleX * 1.04, scaleY: sprite.scaleY * 0.96,
+      duration: 1400, yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+    });
+
+    // 소음 게이지 (고룡 라벨 위쪽에 항상 보이는 작은 바)
+    const gaugeY = y - ROCK_DISPLAY * 1.6 - 14;
+    const noiseBarBg = this.add.rectangle(x, gaugeY, 70, 7, 0x1a1a1a).setStrokeStyle(1, 0x5a4a3a).setDepth(y + 1);
+    const noiseBarFill = this.add.rectangle(x - 35, gaugeY, 0, 7, 0xff5a3c).setOrigin(0, 0.5).setDepth(y + 2);
+
+    this.dragon = { sprite, label, glow, col: dc, row: dr, noiseBarBg, noiseBarFill };
+    sprite.on("pointerdown", () => this.addLog("고룡이 깊이 잠들어 있습니다. 주변 드래곤 광맥을 채굴하세요.", "#ff9a76", "battle"));
+    this.updateDragonNoiseGauge();
+
+    // 고룡 주변 광맥: 강화된 내구도 + 대량의 미스릴 드랍률 (전설급 '용의 보물' 컨셉)
+    [[-1, 0], [0, -1], [-1, -1], [-2, 0], [0, -2]].forEach(([dcc, drr]) => {
+      const rock = this.rockBlocks.find((r) => r.col === dc + dcc && r.row === dr + drr && !r.broken);
+      if (!rock) return;
+      rock.isDragonVein = true;
+      rock.tier = { ...rock.tier, mithrilBonus: rock.tier.mithrilBonus + 60 };
+      rock.sprite.setTint(0xffcf3c);
+      this.dragonVeins.push(rock);
+    });
+  }
+
+  /** 채굴할 때마다 소음 게이지를 채운다. 100%에 도달하면 고룡이 깨어난다. */
+  addDragonNoise(amount) {
+    if (this.dragonAwake || this.dragonLairCleared) return;
+    this.dragonNoise = Math.min(100, this.dragonNoise + amount);
+    this.updateDragonNoiseGauge();
+    if (this.dragonNoise >= 100) this.wakeDragon();
+  }
+
+  /** 고룡 머리 위 소음 게이지 바의 너비를 현재 dragonNoise(%)에 맞춰 갱신한다. */
+  updateDragonNoiseGauge() {
+    if (!this.dragon) return;
+    this.dragon.noiseBarFill.width = 70 * (this.dragonNoise / 100);
+  }
+
+  /** 고룡이 깨어나는 순간: 강한 경고 연출 + 로그. 이제부터는 포탈로 돌아가야 한다. */
+  wakeDragon() {
+    this.dragonAwake = true;
+    this.addLog("[경고] 잠들어 있던 고룡이 눈을 떴습니다! 즉시 포탈로 탈출해야 합니다!", "#ff4444", "battle");
+    if (this.dragon) {
+      this.dragon.sprite.setTint(0xff0000);
+      this.tweens.add({ targets: this.dragon.sprite, angle: { from: -2, to: 2 }, duration: 90, yoyo: true, repeat: -1 });
+      this.dragon.label.setText("🐉 고룡이 깨어났습니다!");
+    }
+    this.cameras.main.shake(400, 0.01);
+    this.cameras.main.flash(250, 255, 40, 20, false);
+    sfx.playBreakSound();
+    this.saveGame();
+  }
+
+  /** 고룡이 깬 채로 포탈에 도달: 무사히 탈출 성공 - 전설 보상 + 클리어 칭호. */
+  escapeDragonLair() {
+    this.dragonLairCleared = true;
+    this.inventory.dragonScale += DRAGON_ESCAPE_SCALES;
+    this.gold += DRAGON_ESCAPE_GOLD;
+    this.addLog(`🐉 무사히 탈출했습니다! 드래곤 비늘 ${DRAGON_ESCAPE_SCALES}개와 전설의 보상 ${DRAGON_ESCAPE_GOLD}G를 획득했습니다!`, "#ffd700", "battle");
+    this.addLog("🏆 칭호 획득: [고룡을 깨운 자] - 1회차 클리어를 달성했습니다!", "#ffd700", "battle");
+    this.spawnSparkle(this.player.x, this.player.y - 20, 0xffd700);
+    sfx.playFanfareSound();
+    this.updateUI();
+    this.saveGame();
+
+    // 탈출 직후에는 정상적으로 상점도 열어 정산 결과를 바로 확인할 수 있게 한다.
+    this.shopOpen = true;
+    this.cancelMining();
+    this.tweens.killTweensOf(this.player);
+    document.getElementById("shop-modal").style.display = "flex";
+    document.getElementById("shop-msg").textContent = "";
+    this.switchShopTab("trade");
+    this.refreshShopUI();
+  }
+
   clampToRoom(x, y) {
     const margin = 16;
     return {
@@ -1239,14 +1409,17 @@ class MineScene extends Phaser.Scene {
   }
 
   currentCycleMs() {
-    return Math.max(500, BASE_CYCLE_MS - (this.pickaxeLevel - 1) * 150);
+    const base = Math.max(500, BASE_CYCLE_MS - (this.pickaxeLevel - 1) * 150);
+    return this.hasTrait(this, "workaholic") ? base * 0.5 : base;
   }
 
   /** tier(깊이 등급)가 주어지면 그 등급의 철/미스릴 드랍 보너스를 더해 확률을 계산한다. */
   rollOreType(tier) {
     const bonus = (this.pickaxeLevel - 1) * 2; // 곡괭이 레벨당 희귀 확률 소폭 증가
-    // 발광 슬라임 진화(+20%/중첩) · 빛나는 광부 랜턴 유물(+30%)이 함께 희귀 확률을 끌어올린다.
-    const rareBonus = (1 + 0.2 * this.evolutionCounts.luminous) * (1 + 0.3 * this.hasRelic("lantern"));
+    // 발광 슬라임 진화(+20%/중첩) · 빛나는 광부 랜턴 유물(+30%) · 야행성 발광체 특성(+25%)이 함께 희귀 확률을 끌어올린다.
+    const rareBonus = (1 + 0.2 * this.evolutionCounts.luminous)
+      * (1 + 0.3 * this.hasRelic("lantern"))
+      * (1 + 0.25 * (this.hasTrait(this, "night_glow") ? 1 : 0));
     const weights = {
       rock: Math.max(10, ORE_TYPES.rock.weight - bonus * 1.5),
       iron: (ORE_TYPES.iron.weight + bonus + (tier?.ironBonus ?? 0)),
@@ -1266,9 +1439,14 @@ class MineScene extends Phaser.Scene {
     return this.relics.equipped.includes(id) ? 1 : 0;
   }
 
-  /** 빛나는 광부 랜턴을 장착했으면 안개 시야(erase 반경)가 넓어진다. */
+  /** owner(플레이어 자신인 this, 또는 일꾼 객체)가 특정 특성을 가지고 있는지 확인한다. */
+  hasTrait(owner, traitId) {
+    return (owner === this ? this.playerTrait : owner.trait) === traitId;
+  }
+
+  /** 빛나는 광부 랜턴 유물 또는 야행성 발광체 특성이 있으면 안개 시야(erase 반경)가 넓어진다. */
   visionMultiplier() {
-    return this.hasRelic("lantern") ? 1.6 : 1;
+    return (this.hasRelic("lantern") || this.hasTrait(this, "night_glow")) ? 1.6 : 1;
   }
 
   /** 곡괭이 파워 강화 단계 + 철갑 슬라임 진화(+30%) + 고대 거인의 장갑 유물(+50%)에 비례해 타격당 암반 내구도를 깎는다. */
@@ -1281,9 +1459,14 @@ class MineScene extends Phaser.Scene {
     this.bagCapacity = this.bagTiers[this.bagLevel] + 15 * this.evolutionCounts.giant;
   }
 
-  /** 미니 일꾼의 채굴 타격 주기 - 자동 태엽 곡괭이 유물을 장착하면 1.5배 빨라진다(간격이 줄어든다). */
-  workerMineInterval() {
-    return this.hasRelic("pickaxe") ? WORKER_MINE_INTERVAL / 1.5 : WORKER_MINE_INTERVAL;
+  /**
+   * 미니 일꾼의 채굴/배회 주기 배율 - 자동 태엽 곡괭이 유물(전체 1.5배) +
+   * 그 일꾼 개인의 워커홀릭 특성(추가 1.5배, 중첩 가능)을 함께 적용한다.
+   */
+  workerSpeedMultiplier(worker) {
+    let mult = this.hasRelic("pickaxe") ? 1.5 : 1;
+    if (this.hasTrait(worker, "workaholic")) mult *= 1.5;
+    return mult;
   }
 
   resolveMiningTick(cluster) {
@@ -1293,17 +1476,35 @@ class MineScene extends Phaser.Scene {
     sfx.playPickSound();
 
     const oreKey = this.rollOreType(cluster.tier);
-    this.spawnGroundItem(cluster.sprite.x, cluster.sprite.y, oreKey);
+    this.grantMiningRewards(this, cluster, oreKey);
     this.gainExp(4);
     this.spawnRockChips(cluster.sprite.x, cluster.sprite.y);
     this.cameras.main.shake(100, 0.0015);
     this.rollMiningEvent(cluster);
+    if (this.floorNumber === DRAGON_LAIR_FLOOR) this.addDragonNoise(DRAGON_NOISE_PER_HIT);
     this.updateUI();
     this.saveGame();
 
     if (cluster.uses <= 0) {
       this.breakRock(cluster);
       this.cancelMining();
+    }
+  }
+
+  /**
+   * 채굴 보상 지급 공용 로직 (플레이어/일꾼 공용). 돌연변이 식탐 특성이면 15% 확률로
+   * 같은 광물을 하나 더 드랍하고, 황금 손등 특성이면 일반 암석 채굴 시 5% 확률로
+   * 보너스 골드를 즉시 지급한다.
+   */
+  grantMiningRewards(owner, cluster, oreKey) {
+    this.spawnGroundItem(cluster.sprite.x, cluster.sprite.y, oreKey);
+    if (this.hasTrait(owner, "glutton") && Math.random() < 0.15) {
+      this.spawnGroundItem(cluster.sprite.x, cluster.sprite.y, oreKey);
+    }
+    if (oreKey === "rock" && this.hasTrait(owner, "golden_touch") && Math.random() < 0.05) {
+      this.gold += GOLDEN_TOUCH_BONUS_GOLD;
+      this.addLog(`🪙 황금 손등 발동! 보너스 골드 +${GOLDEN_TOUCH_BONUS_GOLD}G`, "#ffd166");
+      sfx.playCoinSound();
     }
   }
 
@@ -1389,8 +1590,10 @@ class MineScene extends Phaser.Scene {
     this.gainExp(MONSTER_EXP_REWARD);
     this.inventory.batwing += 1;
 
-    const dmg = Phaser.Math.Between(MONSTER_HP_DAMAGE[0], MONSTER_HP_DAMAGE[1]);
+    const immune = this.hasTrait(this, "iron_skin");
+    const dmg = immune ? 0 : Phaser.Math.Between(MONSTER_HP_DAMAGE[0], MONSTER_HP_DAMAGE[1]);
     this.hp = Math.max(1, this.hp - dmg);
+    if (immune) this.addLog("🦾 강철 피부 덕분에 피해를 받지 않았습니다!", "#9ad1ff", "battle");
 
     this.cameras.main.flash(150, 255, 80, 80, false);
     this.cameras.main.shake(180, 0.004);
@@ -1465,14 +1668,19 @@ class MineScene extends Phaser.Scene {
   }
 
   /** 골드 차감 없이 일꾼 한 마리를 스폰한다 (신규 고용 + 저장된 인원수 복원 양쪽에서 사용). */
-  spawnWorker() {
+  spawnWorker(trait) {
+    trait = trait ?? rollRandomTrait();
     const spawnCell = this.gridToScreen(1, 1);
     const sprite = this.add.image(spawnCell.x, spawnCell.y, "minislime")
       .setOrigin(0.5, SLIME_ORIGIN_Y)
       .setDisplaySize(SLIME_DISPLAY * WORKER_SCALE, SLIME_DISPLAY * WORKER_SCALE)
       .setAlpha(0.92)
       .setDepth(spawnCell.y);
-    const worker = { sprite, col: 1, row: 1, state: "idle", mineTarget: null, timer: null };
+    // 특성 뱃지: 일꾼 머리 위에 이모지 하나로 표시 (이동할 때마다 함께 옮겨진다)
+    const traitLabel = this.add.text(spawnCell.x, spawnCell.y - SLIME_DISPLAY * WORKER_SCALE * SLIME_ORIGIN_Y - 4, TRAIT_TYPES[trait].emoji, {
+      fontSize: "13px",
+    }).setOrigin(0.5, 1).setDepth(spawnCell.y + 1);
+    const worker = { sprite, traitLabel, trait, col: 1, row: 1, state: "idle", mineTarget: null, timer: null };
     this.workers.push(worker);
     this.scheduleWorkerTick(worker);
     return worker;
@@ -1480,9 +1688,10 @@ class MineScene extends Phaser.Scene {
 
   /** 채굴 중이면 3초, 배회 중이면 2~4초 뒤에 다음 행동을 하도록 스스로를 재예약한다. */
   scheduleWorkerTick(worker) {
-    const delay = worker.state === "mining"
-      ? this.workerMineInterval()
+    const baseDelay = worker.state === "mining"
+      ? WORKER_MINE_INTERVAL
       : Phaser.Math.Between(WORKER_WANDER_INTERVAL[0], WORKER_WANDER_INTERVAL[1]);
+    const delay = baseDelay / this.workerSpeedMultiplier(worker);
     worker.timer = this.time.delayedCall(delay, () => {
       this.workerTick(worker);
       if (this.workers.includes(worker)) this.scheduleWorkerTick(worker);
@@ -1513,12 +1722,16 @@ class MineScene extends Phaser.Scene {
       if (!this.isWalkableCell(nc, nr)) continue;
       const { x, y } = this.gridToScreen(nc, nr);
       worker.sprite.setFlipX(x < worker.sprite.x);
+      const labelOffsetY = SLIME_DISPLAY * WORKER_SCALE * SLIME_ORIGIN_Y + 4;
       this.tweens.add({
         targets: worker.sprite,
         x, y,
         duration: 500,
         ease: "Sine.easeInOut",
-        onUpdate: () => worker.sprite.setDepth(worker.sprite.y),
+        onUpdate: () => {
+          worker.sprite.setDepth(worker.sprite.y);
+          worker.traitLabel.setPosition(worker.sprite.x, worker.sprite.y - labelOffsetY).setDepth(worker.sprite.y + 1);
+        },
       });
       worker.col = nc;
       worker.row = nr;
@@ -1540,8 +1753,9 @@ class MineScene extends Phaser.Scene {
     sfx.playPickSound();
     this.spawnRockChips(target.sprite.x, target.sprite.y);
     const oreKey = this.rollOreType(target.tier);
-    this.spawnGroundItem(target.sprite.x, target.sprite.y, oreKey);
+    this.grantMiningRewards(worker, target, oreKey);
     this.addLog("[일꾼] 미니 슬라임이 암석을 채굴했습니다!", "#a8d8a8");
+    if (this.floorNumber === DRAGON_LAIR_FLOOR) this.addDragonNoise(DRAGON_NOISE_PER_HIT);
 
     if (target.uses <= 0) {
       this.breakRock(target);
@@ -1556,8 +1770,9 @@ class MineScene extends Phaser.Scene {
   hireWorker() {
     if (this.workers.length >= WORKER_MAX || this.gold < WORKER_COST) return;
     this.gold -= WORKER_COST;
-    this.spawnWorker();
-    const msg = `미니 일꾼 슬라임을 고용했습니다! (${this.workers.length}/${WORKER_MAX})`;
+    const worker = this.spawnWorker();
+    const trait = TRAIT_TYPES[worker.trait];
+    const msg = `미니 일꾼 슬라임을 고용했습니다! (${this.workers.length}/${WORKER_MAX}) - 특성: ${trait.emoji} ${trait.name}`;
     document.getElementById("shop-msg").textContent = msg;
     this.addLog(msg, "#a8d8a8");
     this.updateUI();
@@ -1745,6 +1960,11 @@ class MineScene extends Phaser.Scene {
      ========================================================================= */
 
   openShop() {
+    // 고룡의 레어(B30F)에서 눈을 뜬 고룡을 피해 포탈로 돌아온 경우: 평범한 상점 대신 탈출 정산을 먼저 처리한다.
+    if (this.floorNumber === DRAGON_LAIR_FLOOR && this.dragonAwake && !this.dragonLairCleared) {
+      this.escapeDragonLair();
+      return;
+    }
     this.shopOpen = true;
     this.cancelMining();
     this.tweens.killTweensOf(this.player);
@@ -1828,6 +2048,12 @@ class MineScene extends Phaser.Scene {
     document.getElementById("elevator-floor").textContent = `B${this.floorNumber}F`;
     document.getElementById("elevator-next-floor").textContent = this.floorNumber + 1;
 
+    if (this.playerTrait) {
+      const trait = TRAIT_TYPES[this.playerTrait];
+      document.getElementById("current-trait-note").textContent = `현재 특성: ${trait.emoji} ${trait.name} - ${trait.desc}`;
+    }
+    document.getElementById("btn-reroll-trait").disabled = this.gold < TRAIT_REROLL_COST;
+
     this.renderRelicsTab();
   }
 
@@ -1856,6 +2082,21 @@ class MineScene extends Phaser.Scene {
     this.sp = this.maxSP;
     document.getElementById("shop-msg").textContent = "따뜻한 온천에서 푹 쉬어 HP/SP가 가득 찼습니다!";
     this.addLog("온천에서 휴식하여 HP/SP를 모두 회복했습니다.", "#8fdc8f");
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 온천에서 골드를 내고 플레이어 특성을 무작위로 다시 뽑는다 (현재와 같은 결과는 제외). */
+  rerollTrait() {
+    if (this.gold < TRAIT_REROLL_COST) return;
+    this.gold -= TRAIT_REROLL_COST;
+    const candidates = Object.keys(TRAIT_TYPES).filter((id) => id !== this.playerTrait);
+    this.playerTrait = candidates[Phaser.Math.Between(0, candidates.length - 1)];
+    const trait = TRAIT_TYPES[this.playerTrait];
+    const msg = `특성이 [${trait.emoji} ${trait.name}](으)로 바뀌었습니다!`;
+    document.getElementById("shop-msg").textContent = msg;
+    this.addLog(msg, "#c9a6ff");
+    sfx.playCoinSound();
     this.updateUI();
     this.saveGame();
   }
@@ -1921,6 +2162,10 @@ class MineScene extends Phaser.Scene {
       <div class="inv-row"><span>🟫 철광석</span><span>${this.inventory.iron}</span></div>
       <div class="inv-row"><span>🟣 미스릴</span><span>${this.inventory.mithril}</span></div>
       <div class="inv-row"><span>🦇 ${BATWING_NAME}</span><span>${this.inventory.batwing}</span></div>
+      <div class="inv-row"><span>🐉 드래곤 비늘</span><span>${this.inventory.dragonScale}</span></div>
+      <hr>
+      <div class="inv-row"><span>최고 도달 층수</span><span>B${this.maxFloorReached}F</span></div>
+      ${this.dragonLairCleared ? `<div class="inv-row"><span>🏆 칭호</span><span>고룡을 깨운 자</span></div>` : ""}
     `;
     document.getElementById("inventory-modal").style.display = "block";
   }
@@ -1933,6 +2178,11 @@ class MineScene extends Phaser.Scene {
     document.getElementById("sp-text").textContent = `${Math.floor(this.sp)}/${this.maxSP}`;
     document.getElementById("hp-bar").style.width = `${(this.hp / this.maxHP) * 100}%`;
     document.getElementById("sp-bar").style.width = `${(this.sp / this.maxSP) * 100}%`;
+
+    if (this.playerTrait) {
+      const trait = TRAIT_TYPES[this.playerTrait];
+      document.getElementById("stat-trait").textContent = `특성: ${trait.emoji} ${trait.name}`;
+    }
 
     // 퀵슬롯 곡괭이 내구도
     document.getElementById("pickaxe-durability").textContent =
@@ -1974,8 +2224,9 @@ class MineScene extends Phaser.Scene {
 
     const depthM = this.currentDepthMeters();
     const tier = depthTierOf(depthM);
+    const theme = floorThemeOf(this.floorNumber);
     document.getElementById("depth-text").textContent = `깊이 ${depthM}m`;
-    document.getElementById("location-name").textContent = `B${this.floorNumber}F - ${tier.label}`;
+    document.getElementById("location-name").textContent = `B${this.floorNumber}F - ${theme.label ?? tier.label}`;
   }
 
   /** 플레이어의 현재 화면 y좌표를 아이소 그리드의 (col+row)로 역산해 깊이(m)를 계산한다. */
@@ -2009,7 +2260,7 @@ class MineScene extends Phaser.Scene {
 
   saveGame() {
     const data = {
-      version: 8,
+      version: 9,
       gold: this.gold,
       bagLevel: this.bagLevel,
       pickaxeLevel: this.pickaxeLevel,
@@ -2024,11 +2275,16 @@ class MineScene extends Phaser.Scene {
       brokenCells: Array.from(this.brokenCells ?? []),
       evolutionCounts: { ...this.evolutionCounts },
       evolutionPicks: { ...this.evolutionPicks },
-      workerCount: this.workers.length,
+      workerTraits: this.workers.map((w) => w.trait),
       floorNumber: this.floorNumber,
       relics: { owned: [...this.relics.owned], equipped: [...this.relics.equipped] },
       chestOpened: this.chest?.opened ?? false,
       lastSeenAt: Date.now(),
+      playerTrait: this.playerTrait,
+      maxFloorReached: this.maxFloorReached,
+      dragonLairCleared: this.dragonLairCleared,
+      dragonNoise: this.dragonNoise,
+      dragonAwake: this.dragonAwake,
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -2047,12 +2303,12 @@ class MineScene extends Phaser.Scene {
    * 일꾼이 없거나 자리를 비운 시간이 1분 미만이면 null을 반환해 모달을 띄우지 않는다.
    */
   computeOfflineReward(saved) {
-    if (!saved?.lastSeenAt || !saved?.workerCount) return null;
+    const workerCount = Phaser.Math.Clamp(saved?.workerTraits?.length ?? 0, 0, WORKER_MAX);
+    if (!saved?.lastSeenAt || !workerCount) return null;
     const elapsedMs = Math.min(Date.now() - saved.lastSeenAt, OFFLINE_CAP_MS);
     if (elapsedMs < OFFLINE_MIN_MS) return null;
 
     const minutes = elapsedMs / 60000;
-    const workerCount = Phaser.Math.Clamp(saved.workerCount, 0, WORKER_MAX);
     const gold = Math.round(minutes * workerCount * OFFLINE_GOLD_PER_WORKER_PER_MIN);
     const iron = Math.round(minutes * workerCount * OFFLINE_IRON_PER_WORKER_PER_MIN);
     if (gold <= 0 && iron <= 0) return null;
@@ -2178,6 +2434,7 @@ document.querySelectorAll(".chat-tab").forEach((btn) => {
 
 document.getElementById("btn-sell").addEventListener("click", () => window.gameScene?.sellAll());
 document.getElementById("btn-rest").addEventListener("click", () => window.gameScene?.restAtSpa());
+document.getElementById("btn-reroll-trait").addEventListener("click", () => window.gameScene?.rerollTrait());
 document.getElementById("btn-repair").addEventListener("click", () => window.gameScene?.repairPickaxe());
 document.getElementById("btn-upgrade").addEventListener("click", () => window.gameScene?.upgradePickaxe());
 document.getElementById("btn-expand").addEventListener("click", () => window.gameScene?.expandBag());
