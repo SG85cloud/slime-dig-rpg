@@ -202,7 +202,9 @@
     padding: 16px 18px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
-  .shop-panel h2 { margin: 0 0 10px 0; font-size: 18px; color: #ffd166; text-align: center; }
+  .shop-panel h2 { margin: 0; font-size: 18px; color: #ffd166; text-align: center; }
+  .shop-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .shop-header .win-close { font-size: 18px; color: #ccc; }
   .shop-row { display: flex; justify-content: space-between; font-size: 13px; color: #ddd; margin: 3px 0; }
   .shop-panel hr { border: none; border-top: 1px solid #5a4a3a; margin: 10px 0; }
   .shop-btn {
@@ -216,6 +218,42 @@
   #shop-msg { min-height: 18px; font-size: 12px; color: #ff9a76; text-align: center; margin-top: 4px; }
   #btn-close-shop { background: #6b2b2b; border-color: #a04b4b; text-align: center; }
   #btn-close-shop:hover { background: #833838; }
+
+  /* ---- 쉼터 상단 요약 + 탭 ---- */
+  .shop-stats-row {
+    display: flex; justify-content: space-between; background: #241c15;
+    border: 1px solid #5a4a3a; border-radius: 6px; padding: 6px 10px;
+    font-size: 12px; color: #cbb; margin-bottom: 10px;
+  }
+  .shop-stats-row b { color: #ffd166; }
+  .shop-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .shop-tab {
+    flex: 1; background: #241c15; color: #bbb; border: 1px solid #5a4a3a; border-radius: 6px;
+    padding: 7px 2px; font-size: 12px; cursor: pointer;
+  }
+  .shop-tab.active { background: #4a3c2f; color: #ffd166; border-color: #7a6248; }
+  .shop-tab-panel { min-height: 96px; }
+  .shop-note { font-size: 11px; color: #9a8a76; margin: 2px 2px 6px; }
+
+  /* ---- 온천(휴식) 탭 연출 ---- */
+  .spa-scene {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 6px 0 10px;
+  }
+  .spa-bubble {
+    position: relative;
+    background: #fff; color: #333; font-size: 11px; padding: 4px 10px;
+    border-radius: 10px; margin-bottom: 6px;
+  }
+  .spa-bubble::after {
+    content: ""; position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%);
+    border-width: 6px 5px 0 5px; border-style: solid; border-color: #fff transparent transparent transparent;
+  }
+  .spa-slime {
+    width: 56px; height: 56px; image-rendering: pixelated;
+    animation: spa-bob 1.6s ease-in-out infinite;
+  }
+  @keyframes spa-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
 </style>
 </head>
 <body>
@@ -290,21 +328,52 @@
     <div class="rpg-window-body" id="inventory-body"></div>
   </div>
 
-  <!-- 지상 거점 상점 모달 -->
+  <!-- 쉼터(베이스캠프) 모달 -->
   <div id="shop-modal">
     <div class="shop-panel">
-      <h2>🏠 지상 거점 상점</h2>
-      <div class="shop-row"><span>보유 골드</span><span id="shop-gold">0G</span></div>
-      <div class="shop-row"><span>가방</span><span id="shop-bag">0/15</span></div>
-      <div class="shop-row"><span>곡괭이</span><span id="shop-pickaxe">Lv.1 (35/50)</span></div>
-      <hr>
-      <button id="btn-sell" class="shop-btn">광물 일괄 판매 <span class="cost" id="cost-sell"></span></button>
-      <button id="btn-repair" class="shop-btn">곡괭이 수리 <span class="cost" id="cost-repair"></span></button>
-      <button id="btn-upgrade" class="shop-btn">곡괭이 강화 <span class="cost" id="cost-upgrade"></span></button>
-      <button id="btn-expand" class="shop-btn">가방 확장 <span class="cost" id="cost-expand"></span></button>
+      <div class="shop-header">
+        <h2>🏠 슬라임 쉼터</h2>
+        <button id="shop-close-x" class="win-close">×</button>
+      </div>
+      <div class="shop-stats-row">
+        <span>골드 <b id="shop-gold">0G</b></span>
+        <span>가방 <span id="shop-bag">0/15</span></span>
+        <span>곡괭이 <span id="shop-pickaxe">Lv.1 (35/50)</span></span>
+      </div>
+
+      <div class="shop-tabs">
+        <button class="shop-tab active" data-shoptab="trade">💰 교환소</button>
+        <button class="shop-tab" data-shoptab="spa">♨️ 온천</button>
+        <button class="shop-tab" data-shoptab="smithy">🔨 대장간</button>
+        <button class="shop-tab" data-shoptab="bag">🎒 가방상점</button>
+      </div>
+
+      <div class="shop-tab-panel" data-shoppanel="trade">
+        <button id="btn-sell" class="shop-btn">광물 일괄 판매 <span class="cost" id="cost-sell"></span></button>
+        <div class="shop-note">환전 시세 — 암석/흙 1G · 철광석 5G · 미스릴 20G</div>
+      </div>
+
+      <div class="shop-tab-panel" data-shoppanel="spa" style="display:none">
+        <div class="spa-scene">
+          <div class="spa-bubble" id="spa-bubble">쿨쿨...</div>
+          <img src="assets/slime.png" class="spa-slime" alt="쉬고 있는 슬라임">
+        </div>
+        <button id="btn-rest" class="shop-btn">휴식하기 (HP/SP 완전 회복)</button>
+      </div>
+
+      <div class="shop-tab-panel" data-shoppanel="smithy" style="display:none">
+        <button id="btn-repair" class="shop-btn">곡괭이 수리 <span class="cost" id="cost-repair"></span></button>
+        <button id="btn-upgrade" class="shop-btn">곡괭이 파워 강화 <span class="cost" id="cost-upgrade"></span></button>
+        <div class="shop-note">파워 강화 시 타격 한 번에 암반을 더 크게 깎습니다.</div>
+      </div>
+
+      <div class="shop-tab-panel" data-shoppanel="bag" style="display:none">
+        <button id="btn-expand" class="shop-btn">가방 확장 <span class="cost" id="cost-expand"></span></button>
+      </div>
+
       <div id="shop-msg"></div>
       <hr>
-      <button id="btn-close-shop" class="shop-btn">닫기 (Esc)</button>
+      <button id="btn-close-shop" class="shop-btn">갱도로 복귀 (Esc)</button>
     </div>
   </div>
 </div>
@@ -338,13 +407,13 @@ const SP_COST_PER_CYCLE = 5;
 const SP_REGEN_PER_SEC = 1;
 const PICKUP_RADIUS = 64;   // 드랍된 광물을 자동으로 줍는 거리 (채굴 접근 거리보다 넉넉하게)
 
-const SAVE_KEY = "slime_dig_rpg_save_v3";
+const SAVE_KEY = "slime_dig_rpg_save_v4";
 
-// 광물 종류: 이름 / 판매가 / 드랍 가중치(기본) / 파편·로그 색상
+// 광물 종류: 이름 / 판매가(교환소 시세) / 드랍 가중치(기본) / 파편·로그 색상
 const ORE_TYPES = {
-  iron:    { name: "철 광석", sell: 2,  weight: 70, color: 0xb0763c, logColor: "#7ec8e3" },
-  silver:  { name: "은 광석", sell: 5,  weight: 24, color: 0xd7d7e0, logColor: "#e8e8ff" },
-  mithril: { name: "미스릴", sell: 15, weight: 6,  color: 0x9b6bff, logColor: "#ffd166" },
+  rock:    { name: "암석/흙", sell: 1,  weight: 70, color: 0x8a7a63, logColor: "#c9b896" },
+  iron:    { name: "철광석",  sell: 5,  weight: 24, color: 0xb0763c, logColor: "#7ec8e3" },
+  mithril: { name: "미스릴",  sell: 20, weight: 6,  color: 0x9b6bff, logColor: "#ffd166" },
 };
 
 /* -------------------------------------------------------------------------
@@ -371,7 +440,7 @@ const FLOOR_DISPLAY  = 101; const FLOOR_ORIGIN_Y  = 0.48;
 const ROCK_DISPLAY   = 110; const ROCK_ORIGIN_Y   = 0.84;
 const PORTAL_DISPLAY = 195; const PORTAL_ORIGIN_Y = 0.85;
 const LAMP_DISPLAY   = 120; const LAMP_ORIGIN_Y   = 0.825;
-const SLIME_DISPLAY  = 119; const SLIME_ORIGIN_Y  = 0.75;
+const SLIME_DISPLAY  = 64; const SLIME_ORIGIN_Y  = 0.75;
 const ORE_ITEM_DISPLAY = 98; const ORE_ITEM_ORIGIN_Y = 0.68;
 
 /* -------------------------------------------------------------------------
@@ -401,7 +470,7 @@ class MineScene extends Phaser.Scene {
   constructor() {
     super("MineScene");
 
-    this.inventory = { iron: 0, silver: 0, mithril: 0 };
+    this.inventory = { rock: 0, iron: 0, mithril: 0 };
     this.rockBlocks = [];
     this.groundItems = [];
     this.miningTarget = null;
@@ -456,8 +525,8 @@ class MineScene extends Phaser.Scene {
       this.bagCapacity = this.bagTiers[this.bagLevel] ?? this.bagCapacity;
       this.pickaxeLevel = saved.pickaxeLevel ?? this.pickaxeLevel;
       this.pickaxeDurability = saved.pickaxeDurability ?? this.pickaxeDurability;
+      this.inventory.rock = saved.inventory?.rock ?? 0;
       this.inventory.iron = saved.inventory?.iron ?? 0;
-      this.inventory.silver = saved.inventory?.silver ?? 0;
       this.inventory.mithril = saved.inventory?.mithril ?? 0;
       this.level = saved.level ?? this.level;
       this.expPercent = saved.expPercent ?? this.expPercent;
@@ -466,10 +535,13 @@ class MineScene extends Phaser.Scene {
       this.maxSP = saved.maxSP ?? this.maxSP;
       this.sp = saved.sp ?? this.maxSP;
     }
+    // 이미 파괴된 암반 칸(col,row)의 집합 - "col,row" 문자열로 저장/복원한다.
+    const brokenCells = new Set(saved?.brokenCells ?? []);
+    this.brokenCells = brokenCells;
 
     /* ---- 3-3. 아이소메트릭 바닥 그리드 + 암반(rock) 배치 ----
-       그리드 전체에 바닥을 빈틈없이 깔고, 시작 빈터(SAFE_DEPTH 이내)를 제외한
-       모든 칸에 rock 블록을 채워 아래로 내려가는 길을 가로막는다.
+       그리드 전체에 바닥을 빈틈없이 깔고, 시작 빈터(SAFE_DEPTH 이내)와 이미 파괴된 칸을
+       제외한 모든 칸에 rock 블록을 채워 아래로 내려가는 길을 가로막는다.
        depth를 화면 y좌표로 주면 위쪽 블록이 먼저, 아래쪽 블록이 나중에 그려져
        입체적인 원근감(자연스러운 겹침)이 생긴다. ---- */
     for (let row = 0; row < GRID_ROWS; row++) {
@@ -481,6 +553,7 @@ class MineScene extends Phaser.Scene {
           .setDepth(-1000);
 
         if (col + row <= SAFE_DEPTH) continue; // 시작 빈터: 암반 없이 뚫려있는 칸
+        if (brokenCells.has(`${col},${row}`)) continue; // 이미 파괴한 칸: 바닥만 남기고 복원
 
         const sprite = this.add.image(x, y, "rock")
           .setOrigin(0.5, ROCK_ORIGIN_Y)
@@ -638,6 +711,10 @@ class MineScene extends Phaser.Scene {
 
   beginChannel(cluster) {
     if (cluster.broken) return;
+    if (this.pickaxeDurability <= 0) {
+      this.addLog("곡괭이가 망가졌습니다! 거점 상점에서 수리하세요.", "#ff9a76");
+      return;
+    }
     this.miningTarget = cluster;
     this.mineProgress = 0;
     this.gaugeBg.setVisible(true);
@@ -665,23 +742,28 @@ class MineScene extends Phaser.Scene {
   rollOreType() {
     const bonus = (this.pickaxeLevel - 1) * 2; // 곡괭이 레벨당 희귀 확률 소폭 증가
     const weights = {
-      iron: Math.max(10, ORE_TYPES.iron.weight - bonus * 1.5),
-      silver: ORE_TYPES.silver.weight + bonus,
+      rock: Math.max(10, ORE_TYPES.rock.weight - bonus * 1.5),
+      iron: ORE_TYPES.iron.weight + bonus,
       mithril: ORE_TYPES.mithril.weight + bonus * 0.5,
     };
-    const total = weights.iron + weights.silver + weights.mithril;
+    const total = weights.rock + weights.iron + weights.mithril;
     let r = Math.random() * total;
-    for (const key of ["iron", "silver", "mithril"]) {
+    for (const key of ["rock", "iron", "mithril"]) {
       if (r < weights[key]) return key;
       r -= weights[key];
     }
-    return "iron";
+    return "rock";
+  }
+
+  /** 곡괭이 파워 강화 단계에 비례해 타격 한 번당 암반 내구도를 더 크게 깎는다. */
+  get pickaxePower() {
+    return this.pickaxeLevel;
   }
 
   resolveMiningTick(cluster) {
     this.pickaxeDurability = Math.max(0, this.pickaxeDurability - 1);
     this.sp = Math.max(0, this.sp - SP_COST_PER_CYCLE);
-    cluster.uses -= 1;
+    cluster.uses -= this.pickaxePower;
 
     const oreKey = this.rollOreType();
     this.spawnGroundItem(cluster.sprite.x, cluster.sprite.y, oreKey);
@@ -701,7 +783,9 @@ class MineScene extends Phaser.Scene {
   breakRock(cluster) {
     cluster.broken = true;
     cluster.sprite.destroy();
+    this.brokenCells.add(`${cluster.col},${cluster.row}`);
     this.addLog("암반을 부쉈습니다! 길이 뚫렸습니다.", "#c9a86b");
+    this.saveGame();
   }
 
   /** 채굴 타격마다 그 자리에 광물 아이템을 떨어뜨린다. 슬라임이 다가가 밟으면 collectGroundItems()가 자동으로 줍는다. */
@@ -725,7 +809,7 @@ class MineScene extends Phaser.Scene {
       const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, item.sprite.x, item.sprite.y);
       if (dist > PICKUP_RADIUS) continue;
 
-      const total = this.inventory.iron + this.inventory.silver + this.inventory.mithril;
+      const total = this.inventory.rock + this.inventory.iron + this.inventory.mithril;
       if (total >= this.bagCapacity) {
         if (!item.warned) {
           this.addLog("가방이 가득 찼습니다! 상점에서 판매하고 오세요.", "#ff9a76");
@@ -822,7 +906,23 @@ class MineScene extends Phaser.Scene {
     this.tweens.killTweensOf(this.player);
     document.getElementById("shop-modal").style.display = "flex";
     document.getElementById("shop-msg").textContent = "";
+    this.switchShopTab("trade");
     this.refreshShopUI();
+  }
+
+  /** 쉼터 탭(교환소/온천/대장간/가방상점)을 전환한다. */
+  switchShopTab(tab) {
+    document.querySelectorAll(".shop-tab").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.shoptab === tab);
+    });
+    document.querySelectorAll(".shop-tab-panel").forEach((panel) => {
+      panel.style.display = panel.dataset.shoppanel === tab ? "block" : "none";
+    });
+    document.getElementById("shop-msg").textContent = "";
+    if (tab === "spa") {
+      const lines = ["쿨쿨...", "노곤노곤~", "개운해요!", "물이 참 따뜻하네요~"];
+      document.getElementById("spa-bubble").textContent = lines[Phaser.Math.Between(0, lines.length - 1)];
+    }
   }
 
   closeShop() {
@@ -832,14 +932,14 @@ class MineScene extends Phaser.Scene {
   }
 
   refreshShopUI() {
-    const total = this.inventory.iron + this.inventory.silver + this.inventory.mithril;
+    const total = this.inventory.rock + this.inventory.iron + this.inventory.mithril;
     document.getElementById("shop-gold").textContent = `${this.gold}G`;
     document.getElementById("shop-bag").textContent = `${total}/${this.bagCapacity}`;
     document.getElementById("shop-pickaxe").textContent =
       `Lv.${this.pickaxeLevel} (${this.pickaxeDurability}/${this.pickaxeMaxDurability})`;
 
-    const sellValue = this.inventory.iron * ORE_TYPES.iron.sell
-      + this.inventory.silver * ORE_TYPES.silver.sell
+    const sellValue = this.inventory.rock * ORE_TYPES.rock.sell
+      + this.inventory.iron * ORE_TYPES.iron.sell
       + this.inventory.mithril * ORE_TYPES.mithril.sell;
     document.getElementById("cost-sell").textContent = total > 0 ? `+${sellValue}G` : "-";
     document.getElementById("btn-sell").disabled = total <= 0;
@@ -872,15 +972,27 @@ class MineScene extends Phaser.Scene {
   }
 
   sellAll() {
-    const value = this.inventory.iron * ORE_TYPES.iron.sell
-      + this.inventory.silver * ORE_TYPES.silver.sell
+    const value = this.inventory.rock * ORE_TYPES.rock.sell
+      + this.inventory.iron * ORE_TYPES.iron.sell
       + this.inventory.mithril * ORE_TYPES.mithril.sell;
     if (value <= 0) return;
     this.gold += value;
+    this.inventory.rock = 0;
     this.inventory.iron = 0;
-    this.inventory.silver = 0;
     this.inventory.mithril = 0;
-    document.getElementById("shop-msg").textContent = `${value}G 를 받았습니다.`;
+    const msg = `정산 완료: ${value} 골드를 획득했습니다.`;
+    document.getElementById("shop-msg").textContent = msg;
+    this.addLog(msg, "#ffd166");
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 온천 휴식: HP/SP를 즉시 100% 회복한다. */
+  restAtSpa() {
+    this.hp = this.maxHP;
+    this.sp = this.maxSP;
+    document.getElementById("shop-msg").textContent = "따뜻한 온천에서 푹 쉬어 HP/SP가 가득 찼습니다!";
+    this.addLog("온천에서 휴식하여 HP/SP를 모두 회복했습니다.", "#8fdc8f");
     this.updateUI();
     this.saveGame();
   }
@@ -901,7 +1013,7 @@ class MineScene extends Phaser.Scene {
     if (!nextTier || this.gold < nextTier.cost) return;
     this.gold -= nextTier.cost;
     this.pickaxeLevel = nextTier.level;
-    document.getElementById("shop-msg").textContent = `곡괭이가 Lv.${this.pickaxeLevel}로 강화되었습니다!`;
+    document.getElementById("shop-msg").textContent = `곡괭이 파워가 Lv.${this.pickaxeLevel}로 강화되었습니다! (타격당 암반 ${this.pickaxePower} 깎음)`;
     this.updateUI();
     this.saveGame();
   }
@@ -937,13 +1049,13 @@ class MineScene extends Phaser.Scene {
   }
 
   openInventory() {
-    const total = this.inventory.iron + this.inventory.silver + this.inventory.mithril;
+    const total = this.inventory.rock + this.inventory.iron + this.inventory.mithril;
     document.getElementById("inventory-body").innerHTML = `
       <div class="inv-row"><span>골드</span><span>${this.gold}G</span></div>
       <div class="inv-row"><span>가방</span><span>${total}/${this.bagCapacity}</span></div>
       <hr>
-      <div class="inv-row"><span>🟫 철 광석</span><span>${this.inventory.iron}</span></div>
-      <div class="inv-row"><span>⚪ 은 광석</span><span>${this.inventory.silver}</span></div>
+      <div class="inv-row"><span>🪨 암석/흙</span><span>${this.inventory.rock}</span></div>
+      <div class="inv-row"><span>🟫 철광석</span><span>${this.inventory.iron}</span></div>
       <div class="inv-row"><span>🟣 미스릴</span><span>${this.inventory.mithril}</span></div>
     `;
     document.getElementById("inventory-modal").style.display = "block";
@@ -1014,7 +1126,7 @@ class MineScene extends Phaser.Scene {
 
   saveGame() {
     const data = {
-      version: 2,
+      version: 4,
       gold: this.gold,
       bagLevel: this.bagLevel,
       pickaxeLevel: this.pickaxeLevel,
@@ -1026,6 +1138,7 @@ class MineScene extends Phaser.Scene {
       maxSP: this.maxSP, sp: this.sp,
       playerX: this.player.x,
       playerY: this.player.y,
+      brokenCells: Array.from(this.brokenCells ?? []),
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -1140,10 +1253,16 @@ document.querySelectorAll(".chat-tab").forEach((btn) => {
 });
 
 document.getElementById("btn-sell").addEventListener("click", () => window.gameScene?.sellAll());
+document.getElementById("btn-rest").addEventListener("click", () => window.gameScene?.restAtSpa());
 document.getElementById("btn-repair").addEventListener("click", () => window.gameScene?.repairPickaxe());
 document.getElementById("btn-upgrade").addEventListener("click", () => window.gameScene?.upgradePickaxe());
 document.getElementById("btn-expand").addEventListener("click", () => window.gameScene?.expandBag());
 document.getElementById("btn-close-shop").addEventListener("click", () => window.gameScene?.closeShop());
+document.getElementById("shop-close-x").addEventListener("click", () => window.gameScene?.closeShop());
+
+document.querySelectorAll(".shop-tab").forEach((btn) => {
+  btn.addEventListener("click", () => window.gameScene?.switchShopTab(btn.dataset.shoptab));
+});
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && window.gameScene?.shopOpen) {
