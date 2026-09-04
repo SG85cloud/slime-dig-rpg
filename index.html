@@ -288,6 +288,34 @@
   .evo-emoji { font-size: 26px; }
   .evo-name { font-size: 12px; font-weight: bold; color: #d9c6ff; }
   .evo-effect { font-size: 10px; color: #bbb; line-height: 1.4; }
+
+  /* ---- 오프라인 보상 모달 (진화 모달과 같은 톤, 별도 오버레이) ---- */
+  #offline-modal {
+    display: none;
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.75);
+    align-items: center;
+    justify-content: center;
+    z-index: 26;
+  }
+  .offline-reward-box {
+    background: #3a3050; border: 1px solid #8a6fd8; border-radius: 8px;
+    padding: 10px; font-size: 13px; color: #ffd166; font-weight: bold;
+  }
+
+  /* ---- 유물 탭 ---- */
+  .relic-row {
+    display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;
+    background: #2e2013; color: #eee; border: 1px solid #5a4a3a; border-radius: 6px;
+    padding: 7px 9px; margin: 5px 0; cursor: pointer; text-align: left;
+  }
+  .relic-row.equipped { border-color: #ffd166; background: #4a3c2f; }
+  .relic-row:hover { background: #4a3c2f; }
+  .relic-emoji { font-size: 20px; }
+  .relic-info { flex: 1; font-size: 12px; line-height: 1.4; }
+  .relic-state { font-size: 11px; color: #ffd166; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -383,6 +411,7 @@
         <button class="shop-tab" data-shoptab="bag">🎒 가방상점</button>
         <button class="shop-tab" data-shoptab="workers">🛠️ 일꾼관리소</button>
         <button class="shop-tab" data-shoptab="elevator">🛗 엘리베이터</button>
+        <button class="shop-tab" data-shoptab="relics">🏺 유물</button>
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="trade">
@@ -419,6 +448,11 @@
         <div class="shop-note">바닥/암반이 새로 채워지고 암반이 더 단단해지는 대신 고급 광석이 더 잘 나옵니다. 골드·장비·진화·일꾼은 그대로 유지됩니다.</div>
       </div>
 
+      <div class="shop-tab-panel" data-shoppanel="relics" style="display:none">
+        <div id="relics-list"></div>
+        <div class="shop-note">최대 2개까지 동시 장착할 수 있습니다.</div>
+      </div>
+
       <div id="shop-msg"></div>
       <hr>
       <button id="btn-close-shop" class="shop-btn">갱도로 복귀 (Esc)</button>
@@ -447,6 +481,16 @@
           <div class="evo-effect">가방 기본 슬롯<br>+15칸 증가</div>
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- 오프라인(방치) 보상 요약 모달 -->
+  <div id="offline-modal">
+    <div class="evo-panel">
+      <h2>💤 어서오세요!</h2>
+      <div class="evo-desc" id="offline-summary">자리를 비운 동안 미니 일꾼들이 열심히 일했어요!</div>
+      <div class="offline-reward-box" id="offline-reward-text">골드 +0G / 철광석 +0개 획득</div>
+      <button id="btn-offline-close" class="shop-btn" style="margin-top:12px;">확인</button>
     </div>
   </div>
 </div>
@@ -495,6 +539,29 @@ const WORKER_WANDER_INTERVAL = [2000, 4000]; // ms, 배회 중일 때 다음 이
 // 광산 엘리베이터 (층수가 깊어질수록 암반이 단단해지고 고급 광석이 잘 나온다)
 const FLOOR_HP_BONUS_PER_FLOOR = 1;
 const FLOOR_ORE_BONUS_MULT = 0.2;
+const DESCEND_GOLD_BASE = 20;      // 층 이동(탐사) 시 기본 골드 보상
+const DESCEND_GOLD_PER_FLOOR = 10;
+
+// 지하 심층 보물 상자 (5층마다 등장)
+const TREASURE_FLOOR_INTERVAL = 5;
+const TREASURE_GUARDIAN_HP_MULT = 2; // 상자를 지키는 가디언 암석은 그 층 기본 내구도의 2배
+const TREASURE_GOLD_BASE = 200;
+const TREASURE_GOLD_PER_FLOOR = 30;
+
+// 고대 유물 / 악세서리 (최대 2개까지 동시 장착)
+const RELIC_EQUIP_MAX = 2;
+const RELIC_TYPES = {
+  gauntlet: { name: "고대 거인의 장갑", emoji: "🧤", desc: "채굴 데미지 +50%" },
+  lantern:  { name: "빛나는 광부 랜턴", emoji: "🏮", desc: "시야 확장 · 희귀 광석 확률 +30%" },
+  pickaxe:  { name: "자동 태엽 곡괭이", emoji: "⚙️", desc: "미니 일꾼 채굴 속도 1.5배" },
+  compass:  { name: "황금 나침반", emoji: "🧭", desc: "층 이동 시 골드 보너스 +25%" },
+};
+
+// 방치형 오프라인 보상 (일꾼 수에 비례, 최대 2시간분까지만 누적)
+const OFFLINE_CAP_MS = 2 * 60 * 60 * 1000;
+const OFFLINE_MIN_MS = 60 * 1000; // 이 이상 자리를 비웠을 때만 보상 모달을 띄운다
+const OFFLINE_GOLD_PER_WORKER_PER_MIN = 2;
+const OFFLINE_IRON_PER_WORKER_PER_MIN = 0.3;
 
 // 진화 형태별 효과 (Lv.5 단 한 번, 3종 중 1종을 영구 선택한다)
 const EVOLUTION_LEVELS = [5];
@@ -504,7 +571,7 @@ const EVOLUTION_TYPES = {
   giant:    { name: "거대 슬라임", emoji: "🐌", desc: "가방 기본 슬롯 +15칸 증가" },
 };
 
-const SAVE_KEY = "slime_dig_rpg_save_v7";
+const SAVE_KEY = "slime_dig_rpg_save_v8";
 
 // 광물 종류: 이름 / 판매가(교환소 시세) / 드랍 가중치(기본) / 파편·로그 색상
 const ORE_TYPES = {
@@ -605,6 +672,10 @@ class MineScene extends Phaser.Scene {
     this.workers = [];      // 고용한 미니 일꾼 슬라임 목록
     this.floorNumber = 1;   // 현재 지하 층수 (B1F부터 시작)
 
+    this.relics = { owned: [], equipped: [] }; // 획득/장착한 고대 유물 id 목록
+    this.chest = null;          // 이번 층의 보물 상자 상태 (없으면 null)
+    this.chestGuardians = [];   // 상자를 지키는 가디언 암반들
+
     // 곡괭이 강화 단계표 (레벨, 비용)
     this.upgradeTiers = [
       { level: 1, cost: 0 },
@@ -664,9 +735,12 @@ class MineScene extends Phaser.Scene {
       this.evolutionCounts = { ...this.evolutionCounts, ...(saved.evolutionCounts ?? {}) };
       this.evolutionPicks = saved.evolutionPicks ?? {};
       this.floorNumber = saved.floorNumber ?? this.floorNumber;
+      this.relics.owned = saved.relics?.owned ?? [];
+      this.relics.equipped = saved.relics?.equipped ?? [];
     }
     this.recalcBagCapacity();
     const savedWorkerCount = Phaser.Math.Clamp(saved?.workerCount ?? 0, 0, WORKER_MAX);
+    const offlineReward = this.computeOfflineReward(saved);
 
     /* ---- 3-3. 아이소메트릭 바닥 그리드 + 암반(rock) 배치 ----
        그리드 전체에 바닥을 빈틈없이 깔고, 시작 빈터(SAFE_DEPTH 이내)와 이미 파괴된 칸을
@@ -676,6 +750,7 @@ class MineScene extends Phaser.Scene {
        광산 엘리베이터로 층을 내려갈 때도 이 메서드를 그대로 재사용한다. ---- */
     this.floorTiles = [];
     this.buildMine(new Set(saved?.brokenCells ?? []));
+    if (this.chest && saved?.chestOpened) this.markChestAlreadyOpened();
 
     /* ---- 3-4. 시작 지점: 포탈(거점 상점) + 랜턴 ---- */
     this.lampSpots = []; // 안개(어둠)에 뚫어둘 정적 조명 위치들
@@ -728,7 +803,7 @@ class MineScene extends Phaser.Scene {
     this.playerLight = this.add.image(this.player.x, this.player.y, "glow")
       .setBlendMode(Phaser.BlendModes.ADD)
       .setAlpha(0.85)
-      .setScale(PLAYER_LIGHT_SCALE)
+      .setScale(PLAYER_LIGHT_SCALE * this.visionMultiplier())
       .setDepth(890);
 
     // 안개에 구멍을 뚫을 때 쓰는 스탬프 (화면에는 직접 그려지지 않는다)
@@ -760,6 +835,8 @@ class MineScene extends Phaser.Scene {
     this.time.addEvent({ delay: 5000, loop: true, callback: () => this.saveGame() });
     this.time.addEvent({ delay: 900, loop: true, callback: () => this.ambientSparkle() });
     window.addEventListener("beforeunload", () => this.saveGame());
+
+    if (offlineReward) this.showOfflineRewardModal(offlineReward);
   }
 
   /* =========================================================================
@@ -780,9 +857,12 @@ class MineScene extends Phaser.Scene {
    * brokenCellsSet이 비어있으면(새 층) 안전 지대를 제외한 모든 칸이 암반으로 가득 찬다.
    */
   buildMine(brokenCellsSet) {
-    // 기존에 남아있던 바닥/암반 스프라이트를 정리한다 (최초 생성 시에는 비어있어 무해하다).
+    // 기존에 남아있던 바닥/암반/보물 상자 스프라이트를 정리한다 (최초 생성 시에는 비어있어 무해하다).
     this.floorTiles.forEach((t) => t.destroy());
     this.rockBlocks.forEach((r) => { if (!r.broken) r.sprite.destroy(); });
+    if (this.chest) { this.chest.sprite.destroy(); this.chest.label.destroy(); }
+    this.chest = null;
+    this.chestGuardians = [];
     this.floorTiles = [];
     this.rockBlocks = [];
     this.brokenCells = brokenCellsSet;
@@ -821,6 +901,9 @@ class MineScene extends Phaser.Scene {
         this.rockBlocks.push(rock);
       }
     }
+
+    // 5층마다(B5F, B10F...) 맵에서 가장 깊은 칸에 가디언이 지키는 보물 상자를 배치한다.
+    if (this.floorNumber % TREASURE_FLOOR_INTERVAL === 0) this.spawnTreasureChest();
   }
 
   /** 광산 엘리베이터: 층수를 1 올리고 바닥/암반을 새로 채운 뒤 입구로 돌아간다. */
@@ -845,10 +928,140 @@ class MineScene extends Phaser.Scene {
       w.mineTarget = null;
     });
 
-    this.addLog(`🛗 광산 엘리베이터로 B${this.floorNumber}F까지 내려왔습니다! 암반이 새로 채워졌습니다.`, "#9ad1ff");
+    // 탐사 보상 골드 (황금 나침반 유물 장착 시 +25%)
+    const exploreGold = Math.round(
+      (DESCEND_GOLD_BASE + DESCEND_GOLD_PER_FLOOR * this.floorNumber) * (1 + 0.25 * this.hasRelic("compass"))
+    );
+    this.gold += exploreGold;
+
+    this.addLog(`🛗 광산 엘리베이터로 B${this.floorNumber}F까지 내려왔습니다! 암반이 새로 채워졌습니다. (탐사 보상 +${exploreGold}G)`, "#9ad1ff");
     this.closeShop();
     this.updateUI();
     this.saveGame();
+  }
+
+  /* =========================================================================
+     지하 심층 보물 상자 (5층마다)
+     ========================================================================= */
+
+  /** 그리드에서 가장 깊은 칸에 보물 상자를 배치하고, 그 주변 암반을 가디언으로 강화한다. */
+  spawnTreasureChest() {
+    const tc = GRID_COLS - 1;
+    const tr = GRID_ROWS - 1;
+
+    // 원래 그 칸에 만들어졌던 일반 암반이 있다면 제거하고 상자 자리로 비워둔다.
+    const idx = this.rockBlocks.findIndex((r) => r.col === tc && r.row === tr && !r.broken);
+    if (idx >= 0) { this.rockBlocks[idx].sprite.destroy(); this.rockBlocks.splice(idx, 1); }
+    this.brokenCells.add(`${tc},${tr}`);
+
+    const { x, y } = this.gridToScreen(tc, tr);
+    const sprite = this.add.image(x, y, "ore_item")
+      .setOrigin(0.5, ORE_ITEM_ORIGIN_Y)
+      .setDisplaySize(ROCK_DISPLAY * 0.8, ROCK_DISPLAY * 0.8)
+      .setDepth(y)
+      .setTint(0x6b5a42)
+      .setInteractive({ useHandCursor: true, pixelPerfect: true });
+    const label = this.add.text(x, y - ROCK_DISPLAY * 0.8, "🔒 봉인된 보물 상자", {
+      fontSize: "11px", fontFamily: "Malgun Gothic, sans-serif", color: "#ffd166",
+      stroke: "#2e2013", strokeThickness: 3,
+    }).setOrigin(0.5, 1).setDepth(y + 1);
+
+    this.chest = {
+      sprite, label, col: tc, row: tr, unlocked: false, opened: false,
+      baseScaleX: sprite.scaleX, baseScaleY: sprite.scaleY,
+    };
+    sprite.on("pointerdown", () => this.onChestClicked());
+
+    // 인접한 최대 3칸(상하좌우+대각선 중 그리드 안쪽)을 가디언 암반으로 강화한다.
+    [[-1, 0], [0, -1], [-1, -1]].forEach(([dc, dr]) => {
+      const rock = this.rockBlocks.find((r) => r.col === tc + dc && r.row === tr + dr && !r.broken);
+      if (!rock) return;
+      rock.isGuardian = true;
+      rock.uses = rock.maxUses = rock.maxUses * TREASURE_GUARDIAN_HP_MULT;
+      rock.sprite.setTint(0xffb84d);
+      this.chestGuardians.push(rock);
+    });
+
+    if (this.chestGuardians.length === 0) this.unlockChest(); // 극히 드물게 가디언이 하나도 없으면 바로 개봉 가능
+  }
+
+  /** 가디언 암반이 하나라도 부서지면 호출되어, 전부 사라졌는지 확인한다. */
+  checkChestUnlock() {
+    if (!this.chest || this.chest.unlocked) return;
+    if (this.chestGuardians.every((r) => r.broken)) this.unlockChest();
+  }
+
+  /** 상자를 열 수 있는 상태로 전환한다 (색/문구 변경 + 은은한 펄스 연출). */
+  unlockChest() {
+    if (!this.chest) return;
+    this.chest.unlocked = true;
+    this.chest.sprite.setTint(0xffd700);
+    this.chest.label.setText("🎁 보물 상자 (클릭해서 열기)");
+    this.tweens.add({
+      targets: this.chest.sprite,
+      scaleX: this.chest.sprite.scaleX * 1.12, scaleY: this.chest.sprite.scaleY * 1.12,
+      duration: 650, yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+    });
+    this.addLog("가디언 암반을 모두 물리쳤습니다! 보물 상자를 열 수 있습니다.", "#ffd700", "battle");
+  }
+
+  /** 이미 개봉된 상자로 저장돼 있던 경우, 재입장 시 곧바로 '빈 상자' 상태로 표시한다. */
+  markChestAlreadyOpened() {
+    this.chest.opened = true;
+    this.chest.unlocked = true;
+    this.chest.sprite.setTint(0x777777);
+    this.chest.label.setText("빈 보물 상자");
+  }
+
+  onChestClicked() {
+    if (!this.chest || this.chest.opened || this.evolutionOpen) return;
+    if (!this.chest.unlocked) {
+      this.addLog("보물 상자가 가디언 암반에 봉인되어 있습니다. 주변 암반을 먼저 부수세요.", "#ff9a76");
+      return;
+    }
+    const dx = this.player.x - this.chest.sprite.x;
+    const dy = this.player.y - this.chest.sprite.y;
+    const dist = Math.max(1, Math.hypot(dx, dy));
+    const ax = this.chest.sprite.x + (dx / dist) * MINE_APPROACH_DIST;
+    const ay = this.chest.sprite.y + (dy / dist) * MINE_APPROACH_DIST;
+    this.moveTo(ax, ay, () => this.openChest());
+  }
+
+  /** 상자 개봉: 골드 + 아직 없는 고대 유물 1종을 확정 지급한다 (전부 모았다면 골드로 대체). */
+  openChest() {
+    if (!this.chest || this.chest.opened || !this.chest.unlocked) return;
+    this.chest.opened = true;
+    this.chest.sprite.setTint(0x777777);
+    this.tweens.killTweensOf(this.chest.sprite);
+    this.chest.sprite.setScale(this.chest.baseScaleX, this.chest.baseScaleY);
+    this.chest.label.setText("빈 보물 상자");
+
+    const gold = TREASURE_GOLD_BASE + TREASURE_GOLD_PER_FLOOR * this.floorNumber;
+    this.gold += gold;
+
+    const relicId = this.rollRelic();
+    if (relicId) {
+      this.relics.owned.push(relicId);
+      const relic = RELIC_TYPES[relicId];
+      this.addLog(`[희귀 발견!] 고대 보물 상자에서 ${relic.name}을(를) 획득했습니다!`, "#ffd700", "battle");
+      this.addLog(`골드 +${gold}G 도 함께 획득했습니다.`, "#ffd166", "battle");
+    } else {
+      const bonusGold = Math.round(gold * 0.5);
+      this.gold += bonusGold;
+      this.addLog(`[희귀 발견!] 이미 모든 유물을 보유하고 있어, 보너스 골드 +${gold + bonusGold}G를 획득했습니다!`, "#ffd700", "battle");
+    }
+
+    this.spawnSparkle(this.chest.sprite.x, this.chest.sprite.y, 0xffd700);
+    this.cameras.main.flash(200, 255, 215, 0, false);
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 아직 보유하지 않은 유물 중 하나를 무작위로 고른다. 전부 있으면 null. */
+  rollRelic() {
+    const candidates = Object.keys(RELIC_TYPES).filter((id) => !this.relics.owned.includes(id));
+    if (candidates.length === 0) return null;
+    return candidates[Phaser.Math.Between(0, candidates.length - 1)];
   }
 
   clampToRoom(x, y) {
@@ -935,11 +1148,12 @@ class MineScene extends Phaser.Scene {
   /** tier(깊이 등급)가 주어지면 그 등급의 철/미스릴 드랍 보너스를 더해 확률을 계산한다. */
   rollOreType(tier) {
     const bonus = (this.pickaxeLevel - 1) * 2; // 곡괭이 레벨당 희귀 확률 소폭 증가
-    const luminousBonus = 1 + 0.2 * this.evolutionCounts.luminous; // 발광 슬라임: 희귀 광석 확률 +20%/중첩
+    // 발광 슬라임 진화(+20%/중첩) · 빛나는 광부 랜턴 유물(+30%)이 함께 희귀 확률을 끌어올린다.
+    const rareBonus = (1 + 0.2 * this.evolutionCounts.luminous) * (1 + 0.3 * this.hasRelic("lantern"));
     const weights = {
       rock: Math.max(10, ORE_TYPES.rock.weight - bonus * 1.5),
       iron: (ORE_TYPES.iron.weight + bonus + (tier?.ironBonus ?? 0)),
-      mithril: (ORE_TYPES.mithril.weight + bonus * 0.5 + (tier?.mithrilBonus ?? 0)) * luminousBonus,
+      mithril: (ORE_TYPES.mithril.weight + bonus * 0.5 + (tier?.mithrilBonus ?? 0)) * rareBonus,
     };
     const total = weights.rock + weights.iron + weights.mithril;
     let r = Math.random() * total;
@@ -950,14 +1164,29 @@ class MineScene extends Phaser.Scene {
     return "rock";
   }
 
-  /** 곡괭이 파워 강화 단계 + 철갑 슬라임 진화(+30%)에 비례해 타격 한 번당 암반 내구도를 깎는다. */
+  /** 유물 슬롯에 해당 id가 장착되어 있으면 true (0 또는 1, 곱셈 배율 계산에 그대로 쓰기 좋다). */
+  hasRelic(id) {
+    return this.relics.equipped.includes(id) ? 1 : 0;
+  }
+
+  /** 빛나는 광부 랜턴을 장착했으면 안개 시야(erase 반경)가 넓어진다. */
+  visionMultiplier() {
+    return this.hasRelic("lantern") ? 1.6 : 1;
+  }
+
+  /** 곡괭이 파워 강화 단계 + 철갑 슬라임 진화(+30%) + 고대 거인의 장갑 유물(+50%)에 비례해 타격당 암반 내구도를 깎는다. */
   get pickaxePower() {
-    return this.pickaxeLevel * (1 + 0.3 * this.evolutionCounts.ironclad);
+    return this.pickaxeLevel * (1 + 0.3 * this.evolutionCounts.ironclad) * (1 + 0.5 * this.hasRelic("gauntlet"));
   }
 
   /** 가방 기본 용량(강화 단계) + 거대 슬라임 진화 보너스(+15칸)를 합산해 최신화한다. */
   recalcBagCapacity() {
     this.bagCapacity = this.bagTiers[this.bagLevel] + 15 * this.evolutionCounts.giant;
+  }
+
+  /** 미니 일꾼의 채굴 타격 주기 - 자동 태엽 곡괭이 유물을 장착하면 1.5배 빨라진다(간격이 줄어든다). */
+  workerMineInterval() {
+    return this.hasRelic("pickaxe") ? WORKER_MINE_INTERVAL / 1.5 : WORKER_MINE_INTERVAL;
   }
 
   resolveMiningTick(cluster) {
@@ -985,7 +1214,11 @@ class MineScene extends Phaser.Scene {
     cluster.broken = true;
     cluster.sprite.destroy();
     this.brokenCells.add(`${cluster.col},${cluster.row}`);
-    this.addLog("암반을 부쉈습니다! 길이 뚫렸습니다.", "#c9a86b");
+    this.addLog(
+      cluster.isGuardian ? "가디언 암반을 부쉈습니다!" : "암반을 부쉈습니다! 길이 뚫렸습니다.",
+      "#c9a86b"
+    );
+    if (cluster.isGuardian) this.checkChestUnlock();
     this.saveGame();
   }
 
@@ -1093,7 +1326,7 @@ class MineScene extends Phaser.Scene {
   /** 채굴 중이면 3초, 배회 중이면 2~4초 뒤에 다음 행동을 하도록 스스로를 재예약한다. */
   scheduleWorkerTick(worker) {
     const delay = worker.state === "mining"
-      ? WORKER_MINE_INTERVAL
+      ? this.workerMineInterval()
       : Phaser.Math.Between(WORKER_WANDER_INTERVAL[0], WORKER_WANDER_INTERVAL[1]);
     worker.timer = this.time.delayedCall(delay, () => {
       this.workerTick(worker);
@@ -1173,6 +1406,52 @@ class MineScene extends Phaser.Scene {
     this.addLog(msg, "#a8d8a8");
     this.updateUI();
     this.saveGame();
+  }
+
+  /* =========================================================================
+     고대 유물 / 악세서리
+     ========================================================================= */
+
+  /** 유물을 장착한다 (최대 2개). 이미 장착 중이면 대신 해제한다. */
+  toggleRelicEquip(relicId) {
+    if (!this.relics.owned.includes(relicId)) return;
+    const equipped = this.relics.equipped;
+    const at = equipped.indexOf(relicId);
+    if (at >= 0) {
+      equipped.splice(at, 1);
+      this.addLog(`${RELIC_TYPES[relicId].name} 장착을 해제했습니다.`, "#bbbbbb");
+    } else {
+      if (equipped.length >= RELIC_EQUIP_MAX) {
+        document.getElementById("shop-msg").textContent = `유물은 최대 ${RELIC_EQUIP_MAX}개까지만 장착할 수 있습니다.`;
+        return;
+      }
+      equipped.push(relicId);
+      this.addLog(`${RELIC_TYPES[relicId].name}을(를) 장착했습니다!`, "#c9a6ff");
+    }
+    if (relicId === "lantern") this.playerLight.setScale(PLAYER_LIGHT_SCALE * this.visionMultiplier());
+    this.recalcBagCapacity();
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 쉼터 유물 탭의 목록 HTML을 현재 보유/장착 상태에 맞춰 다시 그린다. */
+  renderRelicsTab() {
+    const list = document.getElementById("relics-list");
+    if (!list) return;
+    if (this.relics.owned.length === 0) {
+      list.innerHTML = `<div class="shop-note">아직 발견한 유물이 없습니다. B5F 이후의 보물 상자를 찾아보세요!</div>`;
+      return;
+    }
+    list.innerHTML = this.relics.owned.map((id) => {
+      const relic = RELIC_TYPES[id];
+      const equipped = this.relics.equipped.includes(id);
+      return `
+        <button class="relic-row${equipped ? " equipped" : ""}" data-relic="${id}">
+          <span class="relic-emoji">${relic.emoji}</span>
+          <span class="relic-info"><b>${relic.name}</b><br><span class="shop-note" style="margin:0;">${relic.desc}</span></span>
+          <span class="relic-state">${equipped ? "장착중" : "장착"}</span>
+        </button>`;
+    }).join("");
   }
 
   gainExp(amount) {
@@ -1391,6 +1670,8 @@ class MineScene extends Phaser.Scene {
 
     document.getElementById("elevator-floor").textContent = `B${this.floorNumber}F`;
     document.getElementById("elevator-next-floor").textContent = this.floorNumber + 1;
+
+    this.renderRelicsTab();
   }
 
   sellAll() {
@@ -1562,7 +1843,7 @@ class MineScene extends Phaser.Scene {
 
   saveGame() {
     const data = {
-      version: 7,
+      version: 8,
       gold: this.gold,
       bagLevel: this.bagLevel,
       pickaxeLevel: this.pickaxeLevel,
@@ -1579,12 +1860,49 @@ class MineScene extends Phaser.Scene {
       evolutionPicks: { ...this.evolutionPicks },
       workerCount: this.workers.length,
       floorNumber: this.floorNumber,
+      relics: { owned: [...this.relics.owned], equipped: [...this.relics.equipped] },
+      chestOpened: this.chest?.opened ?? false,
+      lastSeenAt: Date.now(),
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn("게임 저장에 실패했습니다.", e);
     }
+  }
+
+  /* =========================================================================
+     방치형 오프라인 보상
+     ========================================================================= */
+
+  /**
+   * 마지막 저장 시각과 지금 사이의 경과 시간(최대 2시간)만큼, 고용된 일꾼 수에 비례한
+   * 골드/철광석 보상을 즉시 인벤토리·골드에 반영하고, 모달에 띄울 요약값을 반환한다.
+   * 일꾼이 없거나 자리를 비운 시간이 1분 미만이면 null을 반환해 모달을 띄우지 않는다.
+   */
+  computeOfflineReward(saved) {
+    if (!saved?.lastSeenAt || !saved?.workerCount) return null;
+    const elapsedMs = Math.min(Date.now() - saved.lastSeenAt, OFFLINE_CAP_MS);
+    if (elapsedMs < OFFLINE_MIN_MS) return null;
+
+    const minutes = elapsedMs / 60000;
+    const workerCount = Phaser.Math.Clamp(saved.workerCount, 0, WORKER_MAX);
+    const gold = Math.round(minutes * workerCount * OFFLINE_GOLD_PER_WORKER_PER_MIN);
+    const iron = Math.round(minutes * workerCount * OFFLINE_IRON_PER_WORKER_PER_MIN);
+    if (gold <= 0 && iron <= 0) return null;
+
+    this.gold += gold;
+    this.inventory.iron += iron;
+    return { gold, iron, minutes: Math.round(minutes) };
+  }
+
+  /** 오프라인 보상 요약 모달을 띄운다. */
+  showOfflineRewardModal(reward) {
+    document.getElementById("offline-summary").textContent =
+      `자리를 비운 동안 미니 일꾼들이 열심히 일했어요! (약 ${reward.minutes}분)`;
+    document.getElementById("offline-reward-text").textContent =
+      `골드 +${reward.gold}G / 철광석 +${reward.iron}개 획득`;
+    document.getElementById("offline-modal").style.display = "flex";
   }
 
   /* ---- 매 프레임 실행 ---- */
@@ -1632,7 +1950,7 @@ class MineScene extends Phaser.Scene {
       this.lightStampLamp.setPosition(lx, ly).setScale(2.0);
       this.fog.erase(this.lightStampLamp);
     });
-    this.lightStampPlayer.setPosition(this.player.x, this.player.y).setScale(PLAYER_LIGHT_STAMP_SCALE);
+    this.lightStampPlayer.setPosition(this.player.x, this.player.y).setScale(PLAYER_LIGHT_STAMP_SCALE * this.visionMultiplier());
     this.fog.erase(this.lightStampPlayer);
 
     this.drawMinimap();
@@ -1708,6 +2026,16 @@ document.querySelectorAll(".shop-tab").forEach((btn) => {
 
 document.querySelectorAll(".evo-option").forEach((btn) => {
   btn.addEventListener("click", () => window.gameScene?.chooseEvolution(btn.dataset.evo));
+});
+
+// 유물 목록은 매번 다시 그려지므로(renderRelicsTab), 위임(delegation) 방식으로 클릭을 받는다.
+document.getElementById("relics-list").addEventListener("click", (e) => {
+  const row = e.target.closest(".relic-row");
+  if (row) window.gameScene?.toggleRelicEquip(row.dataset.relic);
+});
+
+document.getElementById("btn-offline-close").addEventListener("click", () => {
+  document.getElementById("offline-modal").style.display = "none";
 });
 
 document.addEventListener("keydown", (e) => {
