@@ -310,18 +310,18 @@
 </div>
 
 <div id="help">
-  바닥을 <b>좌클릭</b>하면 슬라임이 이동합니다. <b>광맥(수정 더미)</b>을 클릭하면 다가가서 자동으로 채굴을 시작합니다.<br>
-  좌측 하단 <b>상점</b> 아이콘을 클릭하면 거점 상점이 열립니다. 진행 상황은 자동 저장됩니다.
+  바닥을 <b>좌클릭</b>하면 슬라임이 이동합니다. <b>암반(바위)</b>을 클릭하면 다가가서 자동으로 곡괭이질을 시작합니다.<br>
+  부순 암반 자리에 떨어진 <b>광물</b>은 슬라임이 다가가면 자동으로 줍습니다. <b>포탈</b>을 클릭하면 거점 상점이 열립니다. 진행 상황은 자동 저장됩니다.
 </div>
 
-<!-- Phaser 3 라이브러리를 CDN에서 불러온다 (외부 에셋 파일 없이 코드만으로 동작) -->
+<!-- Phaser 3 라이브러리를 CDN에서 불러온다. 게임 스프라이트는 assets/ 폴더의 PNG를 사용한다. -->
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
 
 <script>
 /* =========================================================================
    슬라임 지하 광산 굴착 RPG - 쿼터뷰 갱도 프로토타입
    - 라그나로크 온라인풍 클래식 UI(상태창/채팅로그/퀵슬롯/미니맵) + 클릭 이동/채굴.
-   - 외부 이미지 없이 Phaser Graphics로 픽셀 텍스처를 코드에서 직접 생성한다.
+   - assets/ 폴더의 PNG 스프라이트를 this.load.image()로 불러와 사용한다.
    ========================================================================= */
 
 /* -------------------------------------------------------------------------
@@ -329,17 +329,16 @@
    ------------------------------------------------------------------------- */
 const ROOM_W = 800;
 const ROOM_H = 600;
-const ROOM_BORDER = 40;     // 벽 두께
 const MOVE_SPEED = 180;     // px/sec, 클릭 이동 속도
-const MINE_APPROACH_DIST = 42; // 광맥에서 이만큼 떨어진 위치까지 접근
-const SHOP_APPROACH_DIST = 40;
-const CLUSTER_MAX_USES = 5;
-const CLUSTER_RESPAWN_MS = 15000;
+const MINE_APPROACH_DIST = 46; // 암반에서 이만큼 떨어진 위치까지 접근
+const SHOP_APPROACH_DIST = 60;
+const ROCK_HP = 5;          // 암반 한 칸을 부수는 데 필요한 타격 횟수
 const BASE_CYCLE_MS = 1200; // 채굴 한 사이클(게이지 한 바퀴) 기본 시간
 const SP_COST_PER_CYCLE = 5;
 const SP_REGEN_PER_SEC = 1;
+const PICKUP_RADIUS = 64;   // 드랍된 광물을 자동으로 줍는 거리 (채굴 접근 거리보다 넉넉하게)
 
-const SAVE_KEY = "slime_dig_rpg_save_v2";
+const SAVE_KEY = "slime_dig_rpg_save_v3";
 
 // 광물 종류: 이름 / 판매가 / 드랍 가중치(기본) / 파편·로그 색상
 const ORE_TYPES = {
@@ -349,136 +348,37 @@ const ORE_TYPES = {
 };
 
 /* -------------------------------------------------------------------------
-   2. 픽셀 아트 텍스처 정의
+   1b. 아이소메트릭 그리드 좌표계
+   - (col, row) 그리드 칸을 다이아몬드 화면 좌표로 변환하는 2:1 아이소 투영.
+   - 각 스프라이트의 표시 크기/기준점(origin)은 assets/ 원본 이미지에서
+     실제 그림이 차지하는 영역(투명 여백 제외)을 측정해서 계산한 값이다.
    ------------------------------------------------------------------------- */
+const GRID_COLS = 6;
+const GRID_ROWS = 9;
+const TILE_W = 96;          // 바닥 다이아몬드 한 칸의 화면 폭
+const TILE_H = 48;          // 바닥 다이아몬드 한 칸의 화면 높이 (2:1 비율)
+const GRID_ORIGIN_X = 472;  // 그리드 (0,0)칸 = 포탈이 놓이는 화면 좌표
+const GRID_ORIGIN_Y = 180;
+const SAFE_DEPTH = 2;       // col+row가 이 값 이하인 칸은 처음부터 뚫려있는 시작 빈터
 
-// 슬라임 캐릭터 (탑다운 시점, 안전모를 쓴 둥근 몸통)
-const SLIME_PATTERN = [
-  "..3333..",
-  ".333333.",
-  "..2222..",
-  "21111112",
-  "21411412",
-  "21111112",
-  ".211112.",
-  "..2222..",
-];
-const SLIME_PALETTE = { 1: 0x6bdb6b, 2: 0x2f8f4e, 3: 0xf1c40f, 4: 0x1b1b1b };
+const GRID_MIN_X = GRID_ORIGIN_X - (GRID_ROWS - 1) * (TILE_W / 2);
+const GRID_MAX_X = GRID_ORIGIN_X + (GRID_COLS - 1) * (TILE_W / 2);
+const GRID_MIN_Y = GRID_ORIGIN_Y;
+const GRID_MAX_Y = GRID_ORIGIN_Y + (GRID_COLS - 1 + GRID_ROWS - 1) * (TILE_H / 2);
 
-// 바닥 텍스처는 makeFloorTexture()가 노이즈 + 균열로 절차적으로 그린다 (아래 참고).
+// 스프라이트별 표시 크기(px)와 origin(0~1). 전부 정사각 캔버스 이미지라 크기는 한 변 길이로 표현한다.
+const FLOOR_DISPLAY  = 101; const FLOOR_ORIGIN_Y  = 0.48;
+const ROCK_DISPLAY   = 110; const ROCK_ORIGIN_Y   = 0.84;
+const PORTAL_DISPLAY = 195; const PORTAL_ORIGIN_Y = 0.85;
+const LAMP_DISPLAY   = 120; const LAMP_ORIGIN_Y   = 0.825;
+const SLIME_DISPLAY  = 119; const SLIME_ORIGIN_Y  = 0.75;
+const ORE_ITEM_DISPLAY = 98; const ORE_ITEM_ORIGIN_Y = 0.68;
 
-// 채굴 가능한 수정 광맥 더미 (바위 베이스 + 광물 결정) - 팔레트만 바꿔 3종류로 사용
-const ORE_CLUSTER_PATTERN = [
-  "........",
-  "..2.3...",
-  ".222333.",
-  "1222333.",
-  "11122233",
-  "11112223",
-  ".111122.",
-  "..1111..",
-];
-const ORE_CLUSTER_PALETTES = {
-  purple: { 1: 0x4a4a4a, 2: 0x7a52c9, 3: 0x5fc9d8 }, // 자수정 계열
-  ruby:   { 1: 0x454045, 2: 0x8f2233, 3: 0xd9455f }, // 루비 계열
-  silver: { 1: 0x40404a, 2: 0xb8b8c2, 3: 0xe8e8f0 }, // 은/철광 계열
-};
-
-// 목재 기둥
-const PILLAR_PATTERN = [
-  "111111",
-  "122221",
-  "121121",
-  "121121",
-  "121121",
-  "121121",
-  "121121",
-  "121121",
-  "121121",
-  "121121",
-  "121121",
-  "121121",
-  "121121",
-  "121121",
-  "122221",
-  "111111",
-];
-const PILLAR_PALETTE = { 1: 0x4a3626, 2: 0x6b4a30 };
-
-// 랜턴 (기둥 위 조명)
-const LANTERN_PATTERN = ["11", "11"];
-const LANTERN_PALETTE = { 1: 0xffcf6b };
-
-// 지상 거점 상점(모루) 아이콘
-const SHOP_PATTERN = [
-  "........",
-  ".222222.",
-  "22222222",
-  "22222222",
-  ".211112.",
-  "..1111..",
-  "..1111..",
-  "..2222..",
-];
-const SHOP_PALETTE = { 1: 0x8a8a99, 2: 0x45454f };
-
-// 채굴/이동 시 튀는 작은 파편 파티클
-const PARTICLE_PATTERN = ["11", "11"];
-const PARTICLE_PALETTE = { 1: 0xffffff };
-
-// 바닥에 깔린 녹슨 철도 레일 (가로로 이어 붙여 타일링)
-const RAIL_PATTERN = [
-  "........",
-  "11111111",
-  "22222222",
-  "22222222",
-  "11111111",
-  "........",
-];
-const RAIL_PALETTE = { 1: 0x6b5a4a, 2: 0x4a3626 };
-
-// 원석이 담긴 목재 광차(수레)
-const CART_PATTERN = [
-  "..111111..",
-  ".11333311.",
-  "1133333311",
-  "1111111111",
-  "..2....2..",
-  "..2....2..",
-];
-const CART_PALETTE = { 1: 0x5a4a3a, 2: 0x1c1c1c, 3: 0x9a9aa0 };
-
-// 구석에 쌓인 와인통 / 나무 상자
-const BARREL_PATTERN = [
-  ".1111.",
-  "111111",
-  "122221",
-  "121121",
-  "121121",
-  "122221",
-  "111111",
-  ".1111.",
-];
-const BARREL_PALETTE = { 1: 0x6b4a30, 2: 0x2e2013 };
-
-/**
- * 픽셀 패턴 배열 + 팔레트를 이용해 텍스처를 생성해서 등록한다.
- */
-function makePixelTexture(scene, key, pattern, palette, pixelSize) {
-  const g = scene.make.graphics({ x: 0, y: 0, add: false });
-  const rows = pattern.length;
-  const cols = pattern[0].length;
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const ch = pattern[r][c];
-      if (ch === "." || !palette[ch]) continue;
-      g.fillStyle(palette[ch], 1);
-      g.fillRect(c * pixelSize, r * pixelSize, pixelSize, pixelSize);
-    }
-  }
-  g.generateTexture(key, cols * pixelSize, rows * pixelSize);
-  g.destroy();
-}
+/* -------------------------------------------------------------------------
+   2. 조명(Fog of War) 글로우 텍스처
+   - 안개 마스크용 원형 그라디언트만 예외적으로 코드에서 생성한다.
+     (일반 스프라이트가 아니라 블렌드용 광원 마스크라 PNG로 대체하지 않는다.)
+   ------------------------------------------------------------------------- */
 
 /** 랜턴 주변에 은은하게 퍼지는 원형 글로우 텍스처를 만든다 (동심원 여러 겹). */
 function makeGlowTexture(scene, key, radius, color) {
@@ -494,36 +394,6 @@ function makeGlowTexture(scene, key, radius, color) {
   g.destroy();
 }
 
-/** 픽셀 노이즈 + 무작위 균열(크랙) 선을 섞어 리얼한 동굴 바닥 질감을 절차적으로 그린다. */
-function makeFloorTexture(scene, key, size, pixelSize) {
-  const g = scene.make.graphics({ x: 0, y: 0, add: false });
-  const shades = [0x3b2f26, 0x362a22, 0x33281f, 0x2c231c, 0x40332a];
-  const cells = Math.floor(size / pixelSize);
-  for (let ry = 0; ry < cells; ry++) {
-    for (let rx = 0; rx < cells; rx++) {
-      const shade = shades[Phaser.Math.Between(0, shades.length - 1)];
-      g.fillStyle(shade, 1);
-      g.fillRect(rx * pixelSize, ry * pixelSize, pixelSize, pixelSize);
-    }
-  }
-  g.lineStyle(1, 0x15100b, 0.85);
-  for (let i = 0; i < 3; i++) {
-    let x = Phaser.Math.Between(0, size);
-    let y = Phaser.Math.Between(0, size);
-    g.beginPath();
-    g.moveTo(x, y);
-    const segments = Phaser.Math.Between(4, 7);
-    for (let s = 0; s < segments; s++) {
-      x += Phaser.Math.Between(-16, 16);
-      y += Phaser.Math.Between(-16, 16);
-      g.lineTo(x, y);
-    }
-    g.strokePath();
-  }
-  g.generateTexture(key, size, size);
-  g.destroy();
-}
-
 /* -------------------------------------------------------------------------
    3. 메인 게임 씬
    ------------------------------------------------------------------------- */
@@ -532,7 +402,8 @@ class MineScene extends Phaser.Scene {
     super("MineScene");
 
     this.inventory = { iron: 0, silver: 0, mithril: 0 };
-    this.oreClusters = [];
+    this.rockBlocks = [];
+    this.groundItems = [];
     this.miningTarget = null;
     this.mineProgress = 0;
     this.shopOpen = false;
@@ -552,20 +423,18 @@ class MineScene extends Phaser.Scene {
     this.bagCosts = [0, 80, 200, 400];
   }
 
+  preload() {
+    /* ---- assets/ 폴더의 고화질 픽셀 스프라이트를 불러온다 ---- */
+    this.load.image("slime", "assets/slime.png");
+    this.load.image("floor", "assets/floor.png");
+    this.load.image("rock", "assets/rock.png");
+    this.load.image("portal", "assets/portal.png");
+    this.load.image("lamp", "assets/lamp.png");
+    this.load.image("ore_item", "assets/ore_item.png");
+  }
+
   create() {
-    /* ---- 3-1. 텍스처 생성 ---- */
-    makePixelTexture(this, "player_slime", SLIME_PATTERN, SLIME_PALETTE, 4);
-    makeFloorTexture(this, "floor_tile", 96, 3);
-    makePixelTexture(this, "ore_cluster_purple", ORE_CLUSTER_PATTERN, ORE_CLUSTER_PALETTES.purple, 5);
-    makePixelTexture(this, "ore_cluster_ruby", ORE_CLUSTER_PATTERN, ORE_CLUSTER_PALETTES.ruby, 5);
-    makePixelTexture(this, "ore_cluster_silver", ORE_CLUSTER_PATTERN, ORE_CLUSTER_PALETTES.silver, 5);
-    makePixelTexture(this, "pillar", PILLAR_PATTERN, PILLAR_PALETTE, 4);
-    makePixelTexture(this, "lantern", LANTERN_PATTERN, LANTERN_PALETTE, 4);
-    makePixelTexture(this, "shop_icon", SHOP_PATTERN, SHOP_PALETTE, 4);
-    makePixelTexture(this, "particle", PARTICLE_PATTERN, PARTICLE_PALETTE, 3);
-    makePixelTexture(this, "rail_track", RAIL_PATTERN, RAIL_PALETTE, 4);
-    makePixelTexture(this, "ore_cart", CART_PATTERN, CART_PALETTE, 4);
-    makePixelTexture(this, "barrel", BARREL_PATTERN, BARREL_PALETTE, 4);
+    /* ---- 3-1. 조명 마스크 텍스처 생성 (안개용 글로우만 예외적으로 절차 생성) ---- */
     makeGlowTexture(this, "glow", 46, 0xffcf6b);
 
     /* ---- 3-2. 경제 상태 기본값 + 세이브 데이터 불러오기 ---- */
@@ -598,61 +467,66 @@ class MineScene extends Phaser.Scene {
       this.sp = saved.sp ?? this.maxSP;
     }
 
-    /* ---- 3-3. 배경: 바닥 타일 + 벽 프레임 ---- */
-    this.add.tileSprite(ROOM_W / 2, ROOM_H / 2, ROOM_W - ROOM_BORDER * 2, ROOM_H - ROOM_BORDER * 2, "floor_tile")
-      .setDepth(-20);
-    const wallColor = 0x140f0a;
-    this.add.rectangle(ROOM_W / 2, ROOM_BORDER / 2, ROOM_W, ROOM_BORDER, wallColor).setDepth(-15);
-    this.add.rectangle(ROOM_W / 2, ROOM_H - ROOM_BORDER / 2, ROOM_W, ROOM_BORDER, wallColor).setDepth(-15);
-    this.add.rectangle(ROOM_BORDER / 2, ROOM_H / 2, ROOM_BORDER, ROOM_H, wallColor).setDepth(-15);
-    this.add.rectangle(ROOM_W - ROOM_BORDER / 2, ROOM_H / 2, ROOM_BORDER, ROOM_H, wallColor).setDepth(-15);
+    /* ---- 3-3. 아이소메트릭 바닥 그리드 + 암반(rock) 배치 ----
+       그리드 전체에 바닥을 빈틈없이 깔고, 시작 빈터(SAFE_DEPTH 이내)를 제외한
+       모든 칸에 rock 블록을 채워 아래로 내려가는 길을 가로막는다.
+       depth를 화면 y좌표로 주면 위쪽 블록이 먼저, 아래쪽 블록이 나중에 그려져
+       입체적인 원근감(자연스러운 겹침)이 생긴다. ---- */
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        const { x, y } = this.gridToScreen(col, row);
+        this.add.image(x, y, "floor")
+          .setOrigin(0.5, FLOOR_ORIGIN_Y)
+          .setDisplaySize(FLOOR_DISPLAY, FLOOR_DISPLAY)
+          .setDepth(-1000);
 
-    /* ---- 3-4. 기둥 + 랜턴(글로우) + 대들보 + 선로/광차/술통 배치 ---- */
+        if (col + row <= SAFE_DEPTH) continue; // 시작 빈터: 암반 없이 뚫려있는 칸
+
+        const sprite = this.add.image(x, y, "rock")
+          .setOrigin(0.5, ROCK_ORIGIN_Y)
+          .setDisplaySize(ROCK_DISPLAY, ROCK_DISPLAY)
+          .setDepth(y)
+          .setInteractive({ useHandCursor: true, pixelPerfect: true }); // 이웃 타일과 사각 히트박스가 겹치지 않도록 픽셀 단위 판정
+        const rock = { sprite, col, row, uses: ROCK_HP, maxUses: ROCK_HP, broken: false };
+        sprite.on("pointerdown", () => this.onOreClicked(rock));
+        this.rockBlocks.push(rock);
+      }
+    }
+
+    /* ---- 3-4. 시작 지점: 포탈(거점 상점) + 랜턴 ---- */
     this.lampSpots = []; // 안개(어둠)에 뚫어둘 정적 조명 위치들
-    const pillarSpots = [[220, 150], [580, 150]];
-    pillarSpots.forEach(([px, py]) => {
-      this.add.image(px, py, "pillar").setOrigin(0.5, 1).setDepth(py);
-      this.add.image(px, py - 62, "glow").setBlendMode(Phaser.BlendModes.ADD).setDepth(900).setAlpha(0.9);
-      const lantern = this.add.image(px, py - 62, "lantern").setDepth(901);
-      this.tweens.add({ targets: lantern, alpha: 0.6, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
-      this.lampSpots.push([px, py - 62]);
-    });
-
-    // 기둥을 잇는 목재 대들보 (갱도 입구 프레임)
-    this.add.rectangle(400, 96, pillarSpots[1][0] - pillarSpots[0][0] + 20, 14, 0x4a3626).setDepth(148);
-
-    // 바닥에 깔린 녹슨 철도 레일
-    this.add.tileSprite(400, 132, 420, 24, "rail_track").setDepth(60);
-
-    // 구석에 놓인 원석 광차와 술통 더미
-    this.add.image(690, 452, "ore_cart").setOrigin(0.5, 1).setDepth(452);
-    this.add.image(720, 448, "barrel").setOrigin(0.5, 1).setDepth(448);
-    this.add.image(738, 462, "barrel").setOrigin(0.5, 1).setDepth(462);
-
-    /* ---- 3-5. 채굴 가능한 광맥 배치 (자수정/루비/은광 텍스처를 번갈아 사용) ---- */
-    const clusterSpots = [[400, 220], [190, 330], [610, 330], [400, 470]];
-    const clusterTextures = ["ore_cluster_purple", "ore_cluster_ruby", "ore_cluster_silver", "ore_cluster_purple"];
-    clusterSpots.forEach(([cx, cy], i) => {
-      const sprite = this.add.image(cx, cy, clusterTextures[i]).setDepth(cy).setInteractive({ useHandCursor: true });
-      const cluster = { sprite, uses: CLUSTER_MAX_USES, maxUses: CLUSTER_MAX_USES, depleted: false };
-      sprite.on("pointerdown", () => this.onOreClicked(cluster));
-      this.oreClusters.push(cluster);
-    });
-
-    /* ---- 3-6. 지상 거점 상점 오브젝트 ----
-       좌측 하단 채팅창 등 화면 고정 UI 패널과 겹치지 않도록,
-       기둥 사이 상단 여백(항상 UI가 없는 구역)에 배치한다. */
-    this.shopSprite = this.add.image(400, 100, "shop_icon").setDepth(500).setInteractive({ useHandCursor: true });
-    this.add.text(400, 78, "상점", {
+    const portalPos = this.gridToScreen(0, 0);
+    this.shopSprite = this.add.image(portalPos.x, portalPos.y, "portal")
+      .setOrigin(0.5, PORTAL_ORIGIN_Y)
+      .setDisplaySize(PORTAL_DISPLAY, PORTAL_DISPLAY)
+      .setDepth(portalPos.y)
+      .setInteractive({ useHandCursor: true, pixelPerfect: true });
+    this.add.text(portalPos.x, portalPos.y + 6, "상점", {
       fontSize: "12px", fontFamily: "Malgun Gothic, sans-serif", color: "#ffd166",
-    }).setOrigin(0.5, 1).setDepth(500);
+      stroke: "#2e2013", strokeThickness: 3,
+    }).setOrigin(0.5, 0).setDepth(portalPos.y + 1);
     this.shopSprite.on("pointerdown", () => this.onShopClicked());
-    this.lampSpots.push([400, 92]); // 상점(시작 게이트) 주변에도 은은한 조명
+    this.lampSpots.push([portalPos.x, portalPos.y - 30]);
 
-    /* ---- 3-7. 슬라임 플레이어 ---- */
-    const spawnX = saved?.playerX ?? 400;
-    const spawnY = saved?.playerY ?? 530;
-    this.player = this.add.image(spawnX, spawnY, "player_slime").setDepth(spawnY);
+    [[1, 0], [0, 1]].forEach(([lcol, lrow]) => {
+      const { x, y } = this.gridToScreen(lcol, lrow);
+      this.add.image(x, y, "glow").setBlendMode(Phaser.BlendModes.ADD).setDepth(y + 1).setAlpha(0.85).setScale(1.1);
+      const lamp = this.add.image(x, y, "lamp")
+        .setOrigin(0.5, LAMP_ORIGIN_Y)
+        .setDisplaySize(LAMP_DISPLAY, LAMP_DISPLAY)
+        .setDepth(y + 2);
+      this.tweens.add({ targets: lamp, alpha: 0.65, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+      this.lampSpots.push([x, y - 40]);
+    });
+
+    /* ---- 3-5. 슬라임 플레이어: 포탈 바로 앞 빈터에서 스폰 ---- */
+    const spawnCell = this.gridToScreen(1, 1);
+    const spawnX = saved?.playerX ?? spawnCell.x;
+    const spawnY = saved?.playerY ?? spawnCell.y;
+    this.player = this.add.image(spawnX, spawnY, "slime")
+      .setOrigin(0.5, SLIME_ORIGIN_Y)
+      .setDisplaySize(SLIME_DISPLAY, SLIME_DISPLAY)
+      .setDepth(spawnY);
 
     // 채굴 진행 게이지 (플레이어 머리 위)
     this.gaugeBg = this.add.rectangle(0, 0, 40, 6, 0x222222).setOrigin(0, 0).setDepth(999).setVisible(false);
@@ -703,11 +577,19 @@ class MineScene extends Phaser.Scene {
      이동 / 채굴
      ========================================================================= */
 
-  clampToRoom(x, y) {
-    const margin = 20;
+  /** 그리드 (col,row)를 2:1 아이소메트릭 화면 좌표로 변환한다. */
+  gridToScreen(col, row) {
     return {
-      x: Phaser.Math.Clamp(x, ROOM_BORDER + margin, ROOM_W - ROOM_BORDER - margin),
-      y: Phaser.Math.Clamp(y, ROOM_BORDER + margin, ROOM_H - ROOM_BORDER - margin),
+      x: GRID_ORIGIN_X + (col - row) * (TILE_W / 2),
+      y: GRID_ORIGIN_Y + (col + row) * (TILE_H / 2),
+    };
+  }
+
+  clampToRoom(x, y) {
+    const margin = 16;
+    return {
+      x: Phaser.Math.Clamp(x, GRID_MIN_X + margin, GRID_MAX_X - margin),
+      y: Phaser.Math.Clamp(y, GRID_MIN_Y + margin, GRID_MAX_Y - margin),
     };
   }
 
@@ -735,10 +617,7 @@ class MineScene extends Phaser.Scene {
   }
 
   onOreClicked(cluster) {
-    if (cluster.depleted) {
-      this.addLog("이미 캐낸 광맥입니다. 잠시 후 다시 차오릅니다.", "#aaaaaa");
-      return;
-    }
+    if (cluster.broken) return;
     const dx = this.player.x - cluster.sprite.x;
     const dy = this.player.y - cluster.sprite.y;
     const dist = Math.max(1, Math.hypot(dx, dy));
@@ -758,7 +637,7 @@ class MineScene extends Phaser.Scene {
   }
 
   beginChannel(cluster) {
-    if (cluster.depleted) return;
+    if (cluster.broken) return;
     this.miningTarget = cluster;
     this.mineProgress = 0;
     this.gaugeBg.setVisible(true);
@@ -805,40 +684,66 @@ class MineScene extends Phaser.Scene {
     cluster.uses -= 1;
 
     const oreKey = this.rollOreType();
-    const ore = ORE_TYPES[oreKey];
-    const total = this.inventory.iron + this.inventory.silver + this.inventory.mithril;
-
-    if (total < this.bagCapacity) {
-      this.inventory[oreKey] += 1;
-      this.addLog(`${ore.name} 1개 획득`, ore.logColor);
-    } else {
-      this.addLog("가방이 가득 찼습니다! 상점에서 판매하고 오세요.", "#ff9a76");
-    }
-
+    this.spawnGroundItem(cluster.sprite.x, cluster.sprite.y, oreKey);
     this.gainExp(4);
-    this.spawnSparkle(cluster.sprite.x, cluster.sprite.y - 8, ore.color);
     this.spawnRockChips(cluster.sprite.x, cluster.sprite.y);
     this.cameras.main.shake(100, 0.0015);
     this.updateUI();
     this.saveGame();
 
     if (cluster.uses <= 0) {
-      this.depleteCluster(cluster);
+      this.breakRock(cluster);
       this.cancelMining();
     }
   }
 
-  depleteCluster(cluster) {
-    cluster.depleted = true;
-    cluster.sprite.setAlpha(0.3);
-    cluster.sprite.disableInteractive();
-    this.time.delayedCall(CLUSTER_RESPAWN_MS, () => this.respawnCluster(cluster));
+  /** 암반을 완전히 파괴한다 - 스프라이트를 제거해 원래 깔려있던 바닥이 드러나며 통로가 된다. */
+  breakRock(cluster) {
+    cluster.broken = true;
+    cluster.sprite.destroy();
+    this.addLog("암반을 부쉈습니다! 길이 뚫렸습니다.", "#c9a86b");
   }
 
-  respawnCluster(cluster) {
-    cluster.depleted = false;
-    cluster.uses = cluster.maxUses;
-    cluster.sprite.setAlpha(1).setInteractive({ useHandCursor: true });
+  /** 채굴 타격마다 그 자리에 광물 아이템을 떨어뜨린다. 슬라임이 다가가 밟으면 collectGroundItems()가 자동으로 줍는다. */
+  spawnGroundItem(x, y, oreKey) {
+    const ore = ORE_TYPES[oreKey];
+    const ox = x + Phaser.Math.Between(-16, 16);
+    const oy = y - 4 + Phaser.Math.Between(-8, 8);
+    const sprite = this.add.image(ox, oy, "ore_item")
+      .setDisplaySize(ORE_ITEM_DISPLAY * 0.55, ORE_ITEM_DISPLAY * 0.55)
+      .setOrigin(0.5, ORE_ITEM_ORIGIN_Y)
+      .setDepth(oy)
+      .setTint(ore.color);
+    this.tweens.add({ targets: sprite, y: oy - 6, duration: 480, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    this.groundItems.push({ sprite, oreKey, warned: false });
+  }
+
+  /** 매 프레임 슬라임과의 거리를 검사해 가까이 있는 드랍 아이템을 가방에 자동으로 담는다. */
+  collectGroundItems() {
+    for (let i = this.groundItems.length - 1; i >= 0; i--) {
+      const item = this.groundItems[i];
+      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, item.sprite.x, item.sprite.y);
+      if (dist > PICKUP_RADIUS) continue;
+
+      const total = this.inventory.iron + this.inventory.silver + this.inventory.mithril;
+      if (total >= this.bagCapacity) {
+        if (!item.warned) {
+          this.addLog("가방이 가득 찼습니다! 상점에서 판매하고 오세요.", "#ff9a76");
+          item.warned = true;
+        }
+        continue;
+      }
+
+      const ore = ORE_TYPES[item.oreKey];
+      this.inventory[item.oreKey] += 1;
+      this.addLog(`${ore.name} 1개 획득`, ore.logColor);
+      this.spawnSparkle(item.sprite.x, item.sprite.y, ore.color);
+      this.tweens.killTweensOf(item.sprite);
+      item.sprite.destroy();
+      this.groundItems.splice(i, 1);
+      this.updateUI();
+      this.saveGame();
+    }
   }
 
   gainExp(amount) {
@@ -855,10 +760,11 @@ class MineScene extends Phaser.Scene {
   }
 
   spawnSparkle(x, y, color) {
-    const emitter = this.add.particles(x, y, "particle", {
+    // ore_item.png는 500px 원본이라 파티클 스케일을 아주 작게 잡아야 알갱이처럼 보인다.
+    const emitter = this.add.particles(x, y, "ore_item", {
       speed: { min: 30, max: 100 },
       angle: { min: 200, max: 340 },
-      scale: { start: 1.4, end: 0 },
+      scale: { start: 0.055, end: 0 },
       lifespan: 350,
       gravityY: 300,
       quantity: 8,
@@ -871,31 +777,32 @@ class MineScene extends Phaser.Scene {
   /** 타격 순간 사방으로 튀는 작은 바위 파편 (채굴 손맛 강화) */
   spawnRockChips(x, y) {
     const count = Phaser.Math.Between(3, 5);
-    const emitter = this.add.particles(x, y, "particle", {
+    // rock.png는 732px 원본이라 파티클 스케일을 아주 작게 잡아야 잔돌처럼 보인다.
+    const emitter = this.add.particles(x, y, "rock", {
       speed: { min: 60, max: 160 },
       angle: { min: 0, max: 360 },
-      scale: { start: 1.2, end: 0 },
+      scale: { start: 0.022, end: 0 },
       lifespan: 300,
       gravityY: 500,
       quantity: count,
-      tint: 0x6b6b6b,
+      tint: 0x8a7a63,
     }).setDepth(1001);
     emitter.explode(count);
     this.time.delayedCall(350, () => emitter.destroy());
   }
 
-  /** 랜턴 불빛이 닿는 광맥에서 가끔씩 반짝이는 앰비언트 스파클 */
+  /** 랜턴 불빛이 닿는 암반에서 가끔씩 반짝이는 앰비언트 스파클 */
   ambientSparkle() {
-    this.oreClusters.forEach((cluster) => {
-      if (cluster.depleted) return;
+    this.rockBlocks.forEach((cluster) => {
+      if (cluster.broken) return;
       const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, cluster.sprite.x, cluster.sprite.y);
       if (dist > 190) return; // 조명이 닿는 범위 밖이면 반짝이지 않는다
       if (Math.random() > 0.35) return;
       const ox = cluster.sprite.x + Phaser.Math.Between(-10, 10);
       const oy = cluster.sprite.y + Phaser.Math.Between(-10, 10);
-      const emitter = this.add.particles(ox, oy, "particle", {
+      const emitter = this.add.particles(ox, oy, "ore_item", {
         speed: { min: 5, max: 20 },
-        scale: { start: 1, end: 0 },
+        scale: { start: 0.02, end: 0 },
         lifespan: 500,
         quantity: 1,
         tint: 0xffffff,
@@ -1068,8 +975,8 @@ class MineScene extends Phaser.Scene {
     ctx.fillRect(0, 0, w, h);
     const sx = w / ROOM_W, sy = h / ROOM_H;
 
-    this.oreClusters.forEach((c) => {
-      if (c.depleted) return;
+    this.rockBlocks.forEach((c) => {
+      if (c.broken) return;
       ctx.fillStyle = "#8a5fd8";
       ctx.beginPath();
       ctx.arc(c.sprite.x * sx, c.sprite.y * sy, 2, 0, Math.PI * 2);
@@ -1150,8 +1057,9 @@ class MineScene extends Phaser.Scene {
       } else {
         this.mineProgress += delta;
         const ratio = Phaser.Math.Clamp(this.mineProgress / this.currentCycleMs(), 0, 1);
-        this.gaugeBg.setPosition(this.player.x - 20, this.player.y - 42);
-        this.gaugeFill.setPosition(this.player.x - 20, this.player.y - 42);
+        const gaugeY = this.player.y - SLIME_DISPLAY * SLIME_ORIGIN_Y - 14; // 슬라임 머리 위
+        this.gaugeBg.setPosition(this.player.x - 20, gaugeY);
+        this.gaugeFill.setPosition(this.player.x - 20, gaugeY);
         this.gaugeFill.setSize(40 * ratio, 6);
 
         if (this.mineProgress >= this.currentCycleMs()) {
@@ -1160,6 +1068,8 @@ class MineScene extends Phaser.Scene {
         }
       }
     }
+
+    this.collectGroundItems();
 
     // 조명 + 안개(Fog of War) 갱신 - 플레이어 랜턴을 따라다니는 원형 시야만 밝힌다
     this.playerLight.setPosition(this.player.x, this.player.y);
