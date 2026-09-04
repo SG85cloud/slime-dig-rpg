@@ -99,6 +99,15 @@
 
   /* ---- 미니맵 ---- */
   #minimap-window { top: 12px; right: 12px; width: 172px; }
+
+  /* ---- 우측 상단 음소거 토글 ---- */
+  #btn-mute {
+    position: absolute; top: 12px; right: 192px;
+    width: 32px; height: 32px;
+    background: rgba(20,15,10,0.82); border: 2px solid #7a5a34; border-radius: 6px;
+    color: #eee; font-size: 15px; cursor: pointer; z-index: 15;
+  }
+  #btn-mute:hover { border-color: #ffd166; }
   #minimap-window .rpg-window-header span { font-size: 12px; }
   #minimap-canvas { display: block; background: #0c0a08; border: 1px solid #555; border-radius: 3px; }
   .coord-text { margin-top: 4px; color: #9ad1ff; font-size: 11px; text-align: center; }
@@ -219,6 +228,11 @@
   #shop-msg { min-height: 18px; font-size: 12px; color: #ff9a76; text-align: center; margin-top: 4px; }
   #btn-close-shop { background: #6b2b2b; border-color: #a04b4b; text-align: center; }
   #btn-close-shop:hover { background: #833838; }
+  .reset-btn {
+    background: transparent; border: 1px dashed #6b4a4a; color: #a87a7a;
+    text-align: center; font-size: 11px; padding: 5px; margin-top: 2px;
+  }
+  .reset-btn:hover { color: #ff8a8a; border-color: #ff8a8a; }
 
   /* ---- 쉼터 상단 요약 + 탭 ---- */
   .shop-stats-row {
@@ -347,6 +361,9 @@
   </div>
   <button id="status-reopen">슬라임 광부 ▾</button>
 
+  <!-- 우측 상단: 음소거 토글 -->
+  <button id="btn-mute" title="음소거">🔊</button>
+
   <!-- 우측 상단: 미니맵 -->
   <div id="minimap-window" class="rpg-window">
     <div class="rpg-window-header"><span id="location-name">지하 1층 갱도</span></div>
@@ -456,6 +473,7 @@
       <div id="shop-msg"></div>
       <hr>
       <button id="btn-close-shop" class="shop-btn">갱도로 복귀 (Esc)</button>
+      <button id="btn-reset-save" class="shop-btn reset-btn">⚠️ 세이브 데이터 초기화</button>
     </div>
   </div>
 
@@ -646,6 +664,83 @@ function makeGlowTexture(scene, key, radius, color) {
   g.generateTexture(key, radius * 2, radius * 2);
   g.destroy();
 }
+
+/* -------------------------------------------------------------------------
+   2b. 타격감(Screen Juice) 상수
+   ------------------------------------------------------------------------- */
+const CRITICAL_CHANCE = 0.10;
+const CRITICAL_MULTIPLIER = 2;
+
+/* -------------------------------------------------------------------------
+   2c. Web Audio API 기반 8비트 효과음 - 외부 음원 파일 없이 오실레이터로 직접 합성한다.
+   AudioContext는 브라우저 자동재생 정책 때문에 첫 사용자 입력 이후에만 소리가 나므로,
+   실제 재생 시점(클릭으로 이어지는 게임 동작)에 지연 생성한다.
+   ------------------------------------------------------------------------- */
+class SfxEngine {
+  constructor() {
+    this.ctx = null;
+    this.muted = localStorage.getItem("slime_dig_rpg_muted") === "1";
+  }
+
+  ensureCtx() {
+    if (!this.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new AC();
+    }
+    if (this.ctx.state === "suspended") this.ctx.resume();
+    return this.ctx;
+  }
+
+  setMuted(muted) {
+    this.muted = muted;
+    localStorage.setItem("slime_dig_rpg_muted", muted ? "1" : "0");
+  }
+
+  /** 오실레이터 하나로 짧은 톤을 하나 재생한다. endFreq를 주면 피치가 미끄러지듯 변한다. */
+  tone({ freq, endFreq, duration, type = "square", startTime = 0, gain = 0.16 }) {
+    if (this.muted) return;
+    try {
+      const ctx = this.ensureCtx();
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type;
+      const t0 = ctx.currentTime + startTime;
+      osc.frequency.setValueAtTime(freq, t0);
+      if (endFreq) osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), t0 + duration);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + duration + 0.03);
+    } catch (e) { /* 오디오를 지원하지 않는 환경이면 조용히 무시한다 */ }
+  }
+
+  /** 곡괭이질: 둔탁하고 짧은 '땅-' 타격음 (하강 피치 블립). */
+  playPickSound() {
+    this.tone({ freq: 260, endFreq: 120, duration: 0.08, type: "square", gain: 0.14 });
+  }
+
+  /** 바위 파괴: 낮은 저음 두 겹이 함께 무너지는 '콰르릉' 느낌. */
+  playBreakSound() {
+    this.tone({ freq: 140, endFreq: 40, duration: 0.26, type: "sawtooth", gain: 0.2 });
+    this.tone({ freq: 70, endFreq: 28, duration: 0.3, type: "square", startTime: 0.02, gain: 0.14 });
+  }
+
+  /** 아이템/골드 획득: 맑고 높은 2음 '피링-'. */
+  playCoinSound() {
+    this.tone({ freq: 988, duration: 0.07, type: "square", gain: 0.12 });
+    this.tone({ freq: 1568, duration: 0.13, type: "square", startTime: 0.06, gain: 0.12 });
+  }
+
+  /** 레벨업/보물 발견: 3화음이 계단식으로 올라가는 경쾌한 팡파레. */
+  playFanfareSound() {
+    this.tone({ freq: 523.25, duration: 0.16, type: "triangle", gain: 0.16 });
+    this.tone({ freq: 659.25, duration: 0.16, type: "triangle", startTime: 0.13, gain: 0.16 });
+    this.tone({ freq: 783.99, duration: 0.3, type: "triangle", startTime: 0.26, gain: 0.18 });
+  }
+}
+const sfx = new SfxEngine();
 
 /* -------------------------------------------------------------------------
    3. 메인 게임 씬
@@ -935,6 +1030,7 @@ class MineScene extends Phaser.Scene {
     this.gold += exploreGold;
 
     this.addLog(`🛗 광산 엘리베이터로 B${this.floorNumber}F까지 내려왔습니다! 암반이 새로 채워졌습니다. (탐사 보상 +${exploreGold}G)`, "#9ad1ff");
+    sfx.playCoinSound();
     this.closeShop();
     this.updateUI();
     this.saveGame();
@@ -1053,6 +1149,7 @@ class MineScene extends Phaser.Scene {
 
     this.spawnSparkle(this.chest.sprite.x, this.chest.sprite.y, 0xffd700);
     this.cameras.main.flash(200, 255, 215, 0, false);
+    sfx.playFanfareSound();
     this.updateUI();
     this.saveGame();
   }
@@ -1192,7 +1289,8 @@ class MineScene extends Phaser.Scene {
   resolveMiningTick(cluster) {
     this.pickaxeDurability = Math.max(0, this.pickaxeDurability - 1);
     this.sp = Math.max(0, this.sp - SP_COST_PER_CYCLE);
-    cluster.uses -= this.pickaxePower;
+    this.applyMiningDamage(cluster, this.pickaxePower);
+    sfx.playPickSound();
 
     const oreKey = this.rollOreType(cluster.tier);
     this.spawnGroundItem(cluster.sprite.x, cluster.sprite.y, oreKey);
@@ -1209,8 +1307,42 @@ class MineScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * 암반 하나에 타격 데미지를 적용한다 (플레이어/일꾼 공용). 10% 확률로 크리티컬이 터져
+   * 데미지가 2배가 되고, 부서진 내구도만큼 떠오르는 데미지 텍스트를 함께 띄운다.
+   */
+  applyMiningDamage(rock, baseDamage) {
+    const isCritical = Math.random() < CRITICAL_CHANCE;
+    const amount = Math.max(1, Math.round(baseDamage * (isCritical ? CRITICAL_MULTIPLIER : 1)));
+    rock.uses -= amount;
+    this.spawnDamageText(rock.sprite.x, rock.sprite.y, amount, isCritical);
+    return isCritical;
+  }
+
+  /** 타격 지점 위로 깎인 내구도 숫자를 띄웠다가 위로 떠오르며 페이드아웃시킨다. */
+  spawnDamageText(x, y, amount, isCritical) {
+    const text = this.add.text(x, y - 20, isCritical ? `CRITICAL! -${amount}` : `-${amount}`, {
+      fontSize: isCritical ? "18px" : "13px",
+      fontFamily: "Malgun Gothic, sans-serif",
+      fontStyle: "bold",
+      color: isCritical ? "#ffe066" : "#ffffff",
+      stroke: "#2e2013",
+      strokeThickness: isCritical ? 4 : 3,
+    }).setOrigin(0.5, 1).setDepth(3000);
+    this.tweens.add({
+      targets: text,
+      y: y - 20 - (isCritical ? 44 : 28),
+      alpha: 0,
+      duration: isCritical ? 650 : 480,
+      ease: "Cubic.easeOut",
+      onComplete: () => text.destroy(),
+    });
+  }
+
   /** 암반을 완전히 파괴한다 - 스프라이트를 제거해 원래 깔려있던 바닥이 드러나며 통로가 된다. */
   breakRock(cluster) {
+    const bx = cluster.sprite.x;
+    const by = cluster.sprite.y;
     cluster.broken = true;
     cluster.sprite.destroy();
     this.brokenCells.add(`${cluster.col},${cluster.row}`);
@@ -1218,8 +1350,30 @@ class MineScene extends Phaser.Scene {
       cluster.isGuardian ? "가디언 암반을 부쉈습니다!" : "암반을 부쉈습니다! 길이 뚫렸습니다.",
       "#c9a86b"
     );
+
+    // 파괴의 순간 - 살짝 더 강한 화면 흔들림 + 튀어오르는 파편 + 묵직한 파괴음
+    this.cameras.main.shake(100, 0.003);
+    this.spawnBreakDebris(bx, by);
+    sfx.playBreakSound();
+
     if (cluster.isGuardian) this.checkChestUnlock();
     this.saveGame();
+  }
+
+  /** 암반이 완전히 부서지는 순간 튀는 굵직한 파편 4~6개 (매 타격의 spawnRockChips보다 화려하다). */
+  spawnBreakDebris(x, y) {
+    const count = Phaser.Math.Between(4, 6);
+    const emitter = this.add.particles(x, y, "rock", {
+      speed: { min: 90, max: 200 },
+      angle: { min: 0, max: 360 },
+      scale: { start: 0.03, end: 0 },
+      lifespan: 450,
+      gravityY: 600,
+      quantity: count,
+      tint: 0x6b5a42,
+    }).setDepth(1001);
+    emitter.explode(count);
+    this.time.delayedCall(500, () => emitter.destroy());
   }
 
   /** 타격마다 일정 확률로 몬스터 조우 이벤트를 굴린다 (긴장감 요소, 별도 렌더링 없이 로그로만 처리). */
@@ -1278,6 +1432,7 @@ class MineScene extends Phaser.Scene {
       this.inventory[item.oreKey] += 1;
       this.addLog(`${ore.name} 1개 획득`, ore.logColor);
       this.spawnSparkle(item.sprite.x, item.sprite.y, ore.color);
+      sfx.playCoinSound();
       this.tweens.killTweensOf(item.sprite);
       item.sprite.destroy();
       this.groundItems.splice(i, 1);
@@ -1381,7 +1536,8 @@ class MineScene extends Phaser.Scene {
       return;
     }
 
-    target.uses -= 1;
+    this.applyMiningDamage(target, 1);
+    sfx.playPickSound();
     this.spawnRockChips(target.sprite.x, target.sprite.y);
     const oreKey = this.rollOreType(target.tier);
     this.spawnGroundItem(target.sprite.x, target.sprite.y, oreKey);
@@ -1465,6 +1621,7 @@ class MineScene extends Phaser.Scene {
       this.sp = this.maxSP;
       this.addLog(`축하합니다! 레벨이 상승하여 Lv.${this.level}이 되었습니다.`, "#ffe066");
       this.spawnLevelUpEffect();
+      sfx.playFanfareSound();
       if (EVOLUTION_LEVELS.includes(this.level) && !this.evolutionPicks[this.level]) {
         this.pendingEvolutions.push(this.level);
       }
@@ -1688,6 +1845,7 @@ class MineScene extends Phaser.Scene {
     const msg = `정산 완료: ${value} 골드를 획득했습니다.`;
     document.getElementById("shop-msg").textContent = msg;
     this.addLog(msg, "#ffd166");
+    sfx.playCoinSound();
     this.updateUI();
     this.saveGame();
   }
@@ -1839,6 +1997,14 @@ class MineScene extends Phaser.Scene {
       console.warn("세이브 데이터를 불러오지 못했습니다.", e);
       return null;
     }
+  }
+
+  /** 쉼터의 [세이브 데이터 초기화] 버튼: 확인 후 저장 데이터를 지우고 새로고침한다. */
+  resetSaveData() {
+    const ok = window.confirm("정말 모든 진행도를 초기화하고 처음부터 시작하시겠습니까?");
+    if (!ok) return;
+    localStorage.removeItem(SAVE_KEY);
+    location.reload();
   }
 
   saveGame() {
@@ -2036,6 +2202,15 @@ document.getElementById("relics-list").addEventListener("click", (e) => {
 
 document.getElementById("btn-offline-close").addEventListener("click", () => {
   document.getElementById("offline-modal").style.display = "none";
+});
+
+document.getElementById("btn-reset-save").addEventListener("click", () => window.gameScene?.resetSaveData());
+
+const muteBtn = document.getElementById("btn-mute");
+muteBtn.textContent = sfx.muted ? "🔇" : "🔊";
+muteBtn.addEventListener("click", () => {
+  sfx.setMuted(!sfx.muted);
+  muteBtn.textContent = sfx.muted ? "🔇" : "🔊";
 });
 
 document.addEventListener("keydown", (e) => {
