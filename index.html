@@ -196,7 +196,7 @@
     z-index: 20;
   }
   .shop-panel {
-    width: 300px;
+    width: 330px;
     background: #2b2320;
     border: 3px solid #6b4423;
     border-radius: 10px;
@@ -227,10 +227,10 @@
     font-size: 12px; color: #cbb; margin-bottom: 10px;
   }
   .shop-stats-row b { color: #ffd166; }
-  .shop-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .shop-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
   .shop-tab {
-    flex: 1; background: #241c15; color: #bbb; border: 1px solid #5a4a3a; border-radius: 6px;
-    padding: 7px 2px; font-size: 12px; cursor: pointer;
+    flex: 1 1 30%; background: #241c15; color: #bbb; border: 1px solid #5a4a3a; border-radius: 6px;
+    padding: 7px 2px; font-size: 11px; cursor: pointer; white-space: nowrap;
   }
   .shop-tab.active { background: #4a3c2f; color: #ffd166; border-color: #7a6248; }
   .shop-tab-panel { min-height: 96px; }
@@ -381,6 +381,8 @@
         <button class="shop-tab" data-shoptab="spa">♨️ 온천</button>
         <button class="shop-tab" data-shoptab="smithy">🔨 대장간</button>
         <button class="shop-tab" data-shoptab="bag">🎒 가방상점</button>
+        <button class="shop-tab" data-shoptab="workers">🛠️ 일꾼관리소</button>
+        <button class="shop-tab" data-shoptab="elevator">🛗 엘리베이터</button>
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="trade">
@@ -404,6 +406,17 @@
 
       <div class="shop-tab-panel" data-shoppanel="bag" style="display:none">
         <button id="btn-expand" class="shop-btn">가방 확장 <span class="cost" id="cost-expand"></span></button>
+      </div>
+
+      <div class="shop-tab-panel" data-shoppanel="workers" style="display:none">
+        <button id="btn-hire-worker" class="shop-btn">미니 일꾼 슬라임 고용 <span class="cost" id="cost-hire-worker">100G</span></button>
+        <div class="shop-note">현재 고용: <span id="worker-count">0</span>/3 · 갱도를 자유롭게 돌아다니며 인접한 암반을 알아서 캡니다.</div>
+      </div>
+
+      <div class="shop-tab-panel" data-shoppanel="elevator" style="display:none">
+        <div class="shop-note" style="margin:2px 2px 8px;">현재 위치: <b id="elevator-floor">B1F</b></div>
+        <button id="btn-descend" class="shop-btn">🛗 지하 심층으로 이동 (B<span id="elevator-next-floor">2</span>F)</button>
+        <div class="shop-note">바닥/암반이 새로 채워지고 암반이 더 단단해지는 대신 고급 광석이 더 잘 나옵니다. 골드·장비·진화·일꾼은 그대로 유지됩니다.</div>
       </div>
 
       <div id="shop-msg"></div>
@@ -472,6 +485,17 @@ const MONSTER_EXP_REWARD = 25;
 const BATWING_NAME = "박쥐 날개";
 const BATWING_SELL_PRICE = 10;
 
+// 미니 일꾼 슬라임 (자율 배회형 방치 채굴 AI)
+const WORKER_COST = 100;
+const WORKER_MAX = 3;
+const WORKER_SCALE = 0.6;
+const WORKER_MINE_INTERVAL = 3000;       // ms, 채굴 중일 때 타격 주기
+const WORKER_WANDER_INTERVAL = [2000, 4000]; // ms, 배회 중일 때 다음 이동까지 대기 범위
+
+// 광산 엘리베이터 (층수가 깊어질수록 암반이 단단해지고 고급 광석이 잘 나온다)
+const FLOOR_HP_BONUS_PER_FLOOR = 1;
+const FLOOR_ORE_BONUS_MULT = 0.2;
+
 // 진화 형태별 효과 (Lv.5 단 한 번, 3종 중 1종을 영구 선택한다)
 const EVOLUTION_LEVELS = [5];
 const EVOLUTION_TYPES = {
@@ -480,7 +504,7 @@ const EVOLUTION_TYPES = {
   giant:    { name: "거대 슬라임", emoji: "🐌", desc: "가방 기본 슬롯 +15칸 증가" },
 };
 
-const SAVE_KEY = "slime_dig_rpg_save_v6";
+const SAVE_KEY = "slime_dig_rpg_save_v7";
 
 // 광물 종류: 이름 / 판매가(교환소 시세) / 드랍 가중치(기본) / 파편·로그 색상
 const ORE_TYPES = {
@@ -578,6 +602,9 @@ class MineScene extends Phaser.Scene {
     this.pendingEvolutions = []; // 아직 선택하지 않은 진화 레벨 대기열
     this.evolutionOpen = false;
 
+    this.workers = [];      // 고용한 미니 일꾼 슬라임 목록
+    this.floorNumber = 1;   // 현재 지하 층수 (B1F부터 시작)
+
     // 곡괭이 강화 단계표 (레벨, 비용)
     this.upgradeTiers = [
       { level: 1, cost: 0 },
@@ -594,6 +621,7 @@ class MineScene extends Phaser.Scene {
   preload() {
     /* ---- assets/ 폴더의 고화질 픽셀 스프라이트를 불러온다 ---- */
     this.load.image("slime", "assets/slime.png");
+    this.load.image("minislime", "assets/minislime.png");
     this.load.image("floor", "assets/floor.png");
     this.load.image("rock", "assets/rock.png");
     this.load.image("portal", "assets/portal.png");
@@ -635,41 +663,19 @@ class MineScene extends Phaser.Scene {
       this.sp = saved.sp ?? this.maxSP;
       this.evolutionCounts = { ...this.evolutionCounts, ...(saved.evolutionCounts ?? {}) };
       this.evolutionPicks = saved.evolutionPicks ?? {};
+      this.floorNumber = saved.floorNumber ?? this.floorNumber;
     }
     this.recalcBagCapacity();
-    // 이미 파괴된 암반 칸(col,row)의 집합 - "col,row" 문자열로 저장/복원한다.
-    const brokenCells = new Set(saved?.brokenCells ?? []);
-    this.brokenCells = brokenCells;
+    const savedWorkerCount = Phaser.Math.Clamp(saved?.workerCount ?? 0, 0, WORKER_MAX);
 
     /* ---- 3-3. 아이소메트릭 바닥 그리드 + 암반(rock) 배치 ----
        그리드 전체에 바닥을 빈틈없이 깔고, 시작 빈터(SAFE_DEPTH 이내)와 이미 파괴된 칸을
        제외한 모든 칸에 rock 블록을 채워 아래로 내려가는 길을 가로막는다.
        depth를 화면 y좌표로 주면 위쪽 블록이 먼저, 아래쪽 블록이 나중에 그려져
-       입체적인 원근감(자연스러운 겹침)이 생긴다. ---- */
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const { x, y } = this.gridToScreen(col, row);
-        this.add.image(x, y, "floor")
-          .setOrigin(0.5, FLOOR_ORIGIN_Y)
-          .setDisplaySize(FLOOR_DISPLAY, FLOOR_DISPLAY)
-          .setDepth(-1000);
-
-        if (col + row <= SAFE_DEPTH) continue; // 시작 빈터: 암반 없이 뚫려있는 칸
-        if (brokenCells.has(`${col},${row}`)) continue; // 이미 파괴한 칸: 바닥만 남기고 복원
-
-        const depthM = depthMetersOf(col, row);
-        const tier = depthTierOf(depthM);
-        const sprite = this.add.image(x, y, "rock")
-          .setOrigin(0.5, ROCK_ORIGIN_Y)
-          .setDisplaySize(ROCK_DISPLAY, ROCK_DISPLAY)
-          .setDepth(y)
-          .setTint(tier.tint)
-          .setInteractive({ useHandCursor: true, pixelPerfect: true }); // 이웃 타일과 사각 히트박스가 겹치지 않도록 픽셀 단위 판정
-        const rock = { sprite, col, row, depthM, tier, uses: tier.hp, maxUses: tier.hp, broken: false };
-        sprite.on("pointerdown", () => this.onOreClicked(rock));
-        this.rockBlocks.push(rock);
-      }
-    }
+       입체적인 원근감(자연스러운 겹침)이 생긴다. 실제 생성 로직은 buildMine()에 있고,
+       광산 엘리베이터로 층을 내려갈 때도 이 메서드를 그대로 재사용한다. ---- */
+    this.floorTiles = [];
+    this.buildMine(new Set(saved?.brokenCells ?? []));
 
     /* ---- 3-4. 시작 지점: 포탈(거점 상점) + 랜턴 ---- */
     this.lampSpots = []; // 안개(어둠)에 뚫어둘 정적 조명 위치들
@@ -705,6 +711,11 @@ class MineScene extends Phaser.Scene {
       .setOrigin(0.5, SLIME_ORIGIN_Y)
       .setDisplaySize(SLIME_DISPLAY, SLIME_DISPLAY)
       .setDepth(spawnY);
+    // 채굴 스윙 트윈이 scaleX/Y를 직접 건드리므로, setDisplaySize가 만든 실제 배율을 기억해둔다.
+    this.playerBaseScale = this.player.scaleX;
+
+    // 저장된 만큼 미니 일꾼 슬라임을 복원한다 (골드 재차감 없이 스폰만).
+    for (let i = 0; i < savedWorkerCount; i++) this.spawnWorker();
 
     // 채굴 진행 게이지 (플레이어 머리 위)
     this.gaugeBg = this.add.rectangle(0, 0, 40, 6, 0x222222).setOrigin(0, 0).setDepth(999).setVisible(false);
@@ -761,6 +772,83 @@ class MineScene extends Phaser.Scene {
       x: GRID_ORIGIN_X + (col - row) * (TILE_W / 2),
       y: GRID_ORIGIN_Y + (col + row) * (TILE_H / 2),
     };
+  }
+
+  /**
+   * 바닥 + 암반 그리드를 (다시) 채워 넣는다. 최초 생성(create)과 광산 엘리베이터로
+   * 층을 내려갈 때(descendFloor) 모두 이 메서드 하나로 처리한다.
+   * brokenCellsSet이 비어있으면(새 층) 안전 지대를 제외한 모든 칸이 암반으로 가득 찬다.
+   */
+  buildMine(brokenCellsSet) {
+    // 기존에 남아있던 바닥/암반 스프라이트를 정리한다 (최초 생성 시에는 비어있어 무해하다).
+    this.floorTiles.forEach((t) => t.destroy());
+    this.rockBlocks.forEach((r) => { if (!r.broken) r.sprite.destroy(); });
+    this.floorTiles = [];
+    this.rockBlocks = [];
+    this.brokenCells = brokenCellsSet;
+
+    const floorBonus = this.floorNumber - 1; // B1F=0 → 층이 깊어질수록 암반이 단단해지고 고급 광석이 늘어난다
+    const oreMult = 1 + floorBonus * FLOOR_ORE_BONUS_MULT;
+
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        const { x, y } = this.gridToScreen(col, row);
+        const floorTile = this.add.image(x, y, "floor")
+          .setOrigin(0.5, FLOOR_ORIGIN_Y)
+          .setDisplaySize(FLOOR_DISPLAY, FLOOR_DISPLAY)
+          .setDepth(-1000);
+        this.floorTiles.push(floorTile);
+
+        if (col + row <= SAFE_DEPTH) continue; // 시작 빈터: 암반 없이 뚫려있는 칸
+        if (this.brokenCells.has(`${col},${row}`)) continue; // 이미 파괴한 칸: 바닥만 남기고 복원
+
+        const depthM = depthMetersOf(col, row);
+        const baseTier = depthTierOf(depthM);
+        const tier = {
+          ...baseTier,
+          hp: baseTier.hp + floorBonus * FLOOR_HP_BONUS_PER_FLOOR,
+          ironBonus: baseTier.ironBonus * oreMult,
+          mithrilBonus: baseTier.mithrilBonus * oreMult,
+        };
+        const sprite = this.add.image(x, y, "rock")
+          .setOrigin(0.5, ROCK_ORIGIN_Y)
+          .setDisplaySize(ROCK_DISPLAY, ROCK_DISPLAY)
+          .setDepth(y)
+          .setTint(tier.tint)
+          .setInteractive({ useHandCursor: true, pixelPerfect: true }); // 이웃 타일과 사각 히트박스가 겹치지 않도록 픽셀 단위 판정
+        const rock = { sprite, col, row, depthM, tier, uses: tier.hp, maxUses: tier.hp, broken: false };
+        sprite.on("pointerdown", () => this.onOreClicked(rock));
+        this.rockBlocks.push(rock);
+      }
+    }
+  }
+
+  /** 광산 엘리베이터: 층수를 1 올리고 바닥/암반을 새로 채운 뒤 입구로 돌아간다. */
+  descendFloor() {
+    this.floorNumber += 1;
+    this.cancelMining();
+    this.groundItems.forEach((item) => { this.tweens.killTweensOf(item.sprite); item.sprite.destroy(); });
+    this.groundItems = [];
+
+    this.buildMine(new Set());
+
+    const spawnCell = this.gridToScreen(1, 1);
+    this.tweens.killTweensOf(this.player);
+    this.player.setPosition(spawnCell.x, spawnCell.y).setDepth(spawnCell.y);
+
+    // 미니 일꾼 슬라임들도 새 층의 입구 안전지대로 재배치하고 채굴 상태를 초기화한다.
+    this.workers.forEach((w) => {
+      this.tweens.killTweensOf(w.sprite);
+      w.sprite.setPosition(spawnCell.x, spawnCell.y).setDepth(spawnCell.y);
+      w.col = 1; w.row = 1;
+      w.state = "idle";
+      w.mineTarget = null;
+    });
+
+    this.addLog(`🛗 광산 엘리베이터로 B${this.floorNumber}F까지 내려왔습니다! 암반이 새로 채워졌습니다.`, "#9ad1ff");
+    this.closeShop();
+    this.updateUI();
+    this.saveGame();
   }
 
   clampToRoom(x, y) {
@@ -826,7 +914,7 @@ class MineScene extends Phaser.Scene {
     this.gaugeFill.setVisible(true);
     this.swingTween = this.tweens.add({
       targets: this.player,
-      scaleX: 1.15, scaleY: 0.88,
+      scaleX: this.playerBaseScale * 1.15, scaleY: this.playerBaseScale * 0.88,
       duration: 180,
       yoyo: true,
       repeat: -1,
@@ -837,7 +925,7 @@ class MineScene extends Phaser.Scene {
     this.miningTarget = null;
     this.mineProgress = 0;
     if (this.gaugeBg) { this.gaugeBg.setVisible(false); this.gaugeFill.setVisible(false); }
-    if (this.swingTween) { this.swingTween.stop(); this.swingTween = null; this.player.setScale(1, 1); }
+    if (this.swingTween) { this.swingTween.stop(); this.swingTween = null; this.player.setScale(this.playerBaseScale, this.playerBaseScale); }
   }
 
   currentCycleMs() {
@@ -963,6 +1051,128 @@ class MineScene extends Phaser.Scene {
       this.updateUI();
       this.saveGame();
     }
+  }
+
+  /* =========================================================================
+     미니 일꾼 슬라임 (방치형 자동 채굴)
+     ========================================================================= */
+
+  /** (col,row)가 그리드 안이고 암반이 없는(=걸어다닐 수 있는) 칸인지 판정한다. */
+  isWalkableCell(col, row) {
+    if (col < 0 || col >= GRID_COLS || row < 0 || row >= GRID_ROWS) return false;
+    if (col + row <= SAFE_DEPTH) return true;
+    return this.brokenCells.has(`${col},${row}`);
+  }
+
+  /** (col,row) 기준 8방향(상하좌우+대각선) 중 부서지지 않은 암반이 있으면 그 암반을 반환한다. */
+  findAdjacentRock(col, row) {
+    for (let dc = -1; dc <= 1; dc++) {
+      for (let dr = -1; dr <= 1; dr++) {
+        if (dc === 0 && dr === 0) continue;
+        const rock = this.rockBlocks.find((r) => !r.broken && r.col === col + dc && r.row === row + dr);
+        if (rock) return rock;
+      }
+    }
+    return null;
+  }
+
+  /** 골드 차감 없이 일꾼 한 마리를 스폰한다 (신규 고용 + 저장된 인원수 복원 양쪽에서 사용). */
+  spawnWorker() {
+    const spawnCell = this.gridToScreen(1, 1);
+    const sprite = this.add.image(spawnCell.x, spawnCell.y, "minislime")
+      .setOrigin(0.5, SLIME_ORIGIN_Y)
+      .setDisplaySize(SLIME_DISPLAY * WORKER_SCALE, SLIME_DISPLAY * WORKER_SCALE)
+      .setAlpha(0.92)
+      .setDepth(spawnCell.y);
+    const worker = { sprite, col: 1, row: 1, state: "idle", mineTarget: null, timer: null };
+    this.workers.push(worker);
+    this.scheduleWorkerTick(worker);
+    return worker;
+  }
+
+  /** 채굴 중이면 3초, 배회 중이면 2~4초 뒤에 다음 행동을 하도록 스스로를 재예약한다. */
+  scheduleWorkerTick(worker) {
+    const delay = worker.state === "mining"
+      ? WORKER_MINE_INTERVAL
+      : Phaser.Math.Between(WORKER_WANDER_INTERVAL[0], WORKER_WANDER_INTERVAL[1]);
+    worker.timer = this.time.delayedCall(delay, () => {
+      this.workerTick(worker);
+      if (this.workers.includes(worker)) this.scheduleWorkerTick(worker);
+    });
+  }
+
+  /** 매 주기마다: 채굴 중이면 한 번 타격, 아니면 인접 암반을 찾아 채굴을 시작하거나 배회한다. */
+  workerTick(worker) {
+    if (worker.state === "mining") {
+      this.workerMineStep(worker);
+      return;
+    }
+    const adjacentRock = this.findAdjacentRock(worker.col, worker.row);
+    if (adjacentRock) {
+      worker.state = "mining";
+      worker.mineTarget = adjacentRock;
+      return; // 실제 타격은 다음 tick(3초 뒤)부터 시작한다
+    }
+    this.workerWanderStep(worker);
+  }
+
+  /** 이미 뚫린 바닥 타일 중 이동 가능한 인접 칸 하나를 골라 걸어간다. */
+  workerWanderStep(worker) {
+    const dirs = Phaser.Utils.Array.Shuffle([[1, 0], [-1, 0], [0, 1], [0, -1]]);
+    for (const [dc, dr] of dirs) {
+      const nc = worker.col + dc;
+      const nr = worker.row + dr;
+      if (!this.isWalkableCell(nc, nr)) continue;
+      const { x, y } = this.gridToScreen(nc, nr);
+      worker.sprite.setFlipX(x < worker.sprite.x);
+      this.tweens.add({
+        targets: worker.sprite,
+        x, y,
+        duration: 500,
+        ease: "Sine.easeInOut",
+        onUpdate: () => worker.sprite.setDepth(worker.sprite.y),
+      });
+      worker.col = nc;
+      worker.row = nr;
+      return;
+    }
+    // 갈 수 있는 칸이 없으면(고립) 이번 주기는 제자리에서 대기한다.
+  }
+
+  /** 지정된 암반을 한 번 타격한다. 다 깎이면 통로가 열리고, 아니면 계속 채굴 상태를 유지한다. */
+  workerMineStep(worker) {
+    const target = worker.mineTarget;
+    if (!target || target.broken) { // 다른 일꾼/플레이어가 먼저 부순 경우
+      worker.state = "idle";
+      worker.mineTarget = null;
+      return;
+    }
+
+    target.uses -= 1;
+    this.spawnRockChips(target.sprite.x, target.sprite.y);
+    const oreKey = this.rollOreType(target.tier);
+    this.spawnGroundItem(target.sprite.x, target.sprite.y, oreKey);
+    this.addLog("[일꾼] 미니 슬라임이 암석을 채굴했습니다!", "#a8d8a8");
+
+    if (target.uses <= 0) {
+      this.breakRock(target);
+      worker.state = "idle";
+      worker.mineTarget = null;
+    }
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 쉼터 일꾼 관리소: 골드를 내고 미니 일꾼 슬라임을 고용한다 (최대 3마리). */
+  hireWorker() {
+    if (this.workers.length >= WORKER_MAX || this.gold < WORKER_COST) return;
+    this.gold -= WORKER_COST;
+    this.spawnWorker();
+    const msg = `미니 일꾼 슬라임을 고용했습니다! (${this.workers.length}/${WORKER_MAX})`;
+    document.getElementById("shop-msg").textContent = msg;
+    this.addLog(msg, "#a8d8a8");
+    this.updateUI();
+    this.saveGame();
   }
 
   gainExp(amount) {
@@ -1168,6 +1378,19 @@ class MineScene extends Phaser.Scene {
       document.getElementById("cost-expand").textContent = "MAX";
       expandBtn.disabled = true;
     }
+
+    document.getElementById("worker-count").textContent = this.workers.length;
+    const hireBtn = document.getElementById("btn-hire-worker");
+    if (this.workers.length >= WORKER_MAX) {
+      document.getElementById("cost-hire-worker").textContent = "MAX";
+      hireBtn.disabled = true;
+    } else {
+      document.getElementById("cost-hire-worker").textContent = `${WORKER_COST}G`;
+      hireBtn.disabled = this.gold < WORKER_COST;
+    }
+
+    document.getElementById("elevator-floor").textContent = `B${this.floorNumber}F`;
+    document.getElementById("elevator-next-floor").textContent = this.floorNumber + 1;
   }
 
   sellAll() {
@@ -1313,7 +1536,7 @@ class MineScene extends Phaser.Scene {
     const depthM = this.currentDepthMeters();
     const tier = depthTierOf(depthM);
     document.getElementById("depth-text").textContent = `깊이 ${depthM}m`;
-    document.getElementById("location-name").textContent = `지하 갱도 - ${tier.label}`;
+    document.getElementById("location-name").textContent = `B${this.floorNumber}F - ${tier.label}`;
   }
 
   /** 플레이어의 현재 화면 y좌표를 아이소 그리드의 (col+row)로 역산해 깊이(m)를 계산한다. */
@@ -1339,7 +1562,7 @@ class MineScene extends Phaser.Scene {
 
   saveGame() {
     const data = {
-      version: 6,
+      version: 7,
       gold: this.gold,
       bagLevel: this.bagLevel,
       pickaxeLevel: this.pickaxeLevel,
@@ -1354,6 +1577,8 @@ class MineScene extends Phaser.Scene {
       brokenCells: Array.from(this.brokenCells ?? []),
       evolutionCounts: { ...this.evolutionCounts },
       evolutionPicks: { ...this.evolutionPicks },
+      workerCount: this.workers.length,
+      floorNumber: this.floorNumber,
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -1472,6 +1697,8 @@ document.getElementById("btn-rest").addEventListener("click", () => window.gameS
 document.getElementById("btn-repair").addEventListener("click", () => window.gameScene?.repairPickaxe());
 document.getElementById("btn-upgrade").addEventListener("click", () => window.gameScene?.upgradePickaxe());
 document.getElementById("btn-expand").addEventListener("click", () => window.gameScene?.expandBag());
+document.getElementById("btn-hire-worker").addEventListener("click", () => window.gameScene?.hireWorker());
+document.getElementById("btn-descend").addEventListener("click", () => window.gameScene?.descendFloor());
 document.getElementById("btn-close-shop").addEventListener("click", () => window.gameScene?.closeShop());
 document.getElementById("shop-close-x").addEventListener("click", () => window.gameScene?.closeShop());
 
