@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>슬라임 지하 광산 굴착 RPG - 프로토타입</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #1a1a1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-family: "Malgun Gothic", sans-serif;
+    color: #eee;
+  }
+  #title {
+    margin: 16px 0 8px 0;
+    font-size: 20px;
+  }
+  #game-wrap {
+    position: relative;
+    box-shadow: 0 0 24px rgba(0,0,0,0.6);
+    user-select: none;
+  }
+  #help {
+    margin: 10px 0 20px 0;
+    font-size: 14px;
+    color: #ccc;
+    text-align: center;
+    line-height: 1.6;
+  }
+  #help b { color: #ffd166; }
+
+  /* ==================== 공통 RPG 창 스타일 ==================== */
+  .rpg-window {
+    position: absolute;
+    background: rgba(20, 15, 10, 0.82);
+    border: 2px solid #7a5a34;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+    font-size: 12px;
+    z-index: 15;
+  }
+  .rpg-window-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(180deg, #4a3620, #2e2013);
+    border-bottom: 1px solid #7a5a34;
+    padding: 5px 8px;
+    font-size: 13px;
+    color: #ffd166;
+    border-radius: 4px 4px 0 0;
+  }
+  .win-close {
+    background: none;
+    border: none;
+    color: #ddd;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+  }
+  .win-close:hover { color: #ff8080; }
+  .rpg-window-body { padding: 8px 10px; }
+
+  /* ---- 캐릭터 상태창 ---- */
+  #status-window { top: 12px; left: 12px; width: 230px; }
+  .stat-line { margin-bottom: 6px; color: #f0e0c0; }
+  .stat-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+  .stat-label { width: 22px; color: #ccc; }
+  .stat-bar-bg {
+    flex: 1;
+    height: 10px;
+    background: #2a2a2a;
+    border: 1px solid #555;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .stat-bar-fill { height: 100%; width: 100%; transition: width 0.2s; }
+  .stat-bar-fill.hp { background: linear-gradient(180deg, #6bdb6b, #2f8f4e); }
+  .stat-bar-fill.sp { background: linear-gradient(180deg, #6bb9ff, #2f6f9f); }
+  .stat-value { width: 62px; text-align: right; color: #ccc; font-size: 11px; }
+
+  #status-reopen {
+    display: none;
+    position: absolute;
+    top: 12px; left: 12px;
+    background: rgba(20,15,10,0.82);
+    border: 2px solid #7a5a34;
+    color: #ffd166;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    z-index: 15;
+  }
+
+  /* ---- 미니맵 ---- */
+  #minimap-window { top: 12px; right: 12px; width: 148px; }
+  #minimap-canvas { display: block; background: #0c0a08; border: 1px solid #555; border-radius: 3px; }
+  .coord-text { margin-top: 4px; color: #9ad1ff; font-size: 11px; text-align: center; }
+
+  /* ---- 채팅 / 로그 창 ---- */
+  #chat-window { left: 12px; bottom: 64px; width: 320px; height: 150px; display: flex; flex-direction: column; }
+  .chat-tabs { display: flex; border-bottom: 1px solid #7a5a34; }
+  .chat-tab {
+    flex: 1;
+    background: #2e2013;
+    color: #bbb;
+    border: none;
+    padding: 6px 4px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .chat-tab.active { background: rgba(20,15,10,0.82); color: #ffd166; }
+  .chat-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 8px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  /* ---- 하단 퀵슬롯 바 ---- */
+  #quickslot-bar {
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 4px;
+    background: rgba(20,15,10,0.82);
+    border: 2px solid #7a5a34;
+    border-radius: 6px;
+    padding: 5px;
+    z-index: 15;
+  }
+  .quick-slot {
+    width: 38px; height: 38px;
+    background: #2a2118;
+    border: 1px solid #6b4a30;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    position: relative;
+  }
+  .quick-slot.filled { border-color: #ffd166; }
+  .slot-durability {
+    position: absolute;
+    bottom: -14px;
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 9px;
+    color: #9ad1ff;
+  }
+
+  /* ---- 우측 하단 메뉴 아이콘 ---- */
+  #menu-icons {
+    position: absolute;
+    right: 12px;
+    bottom: 8px;
+    display: flex;
+    gap: 6px;
+    z-index: 15;
+  }
+  .menu-icon {
+    width: 40px; height: 40px;
+    background: rgba(20,15,10,0.82);
+    border: 2px solid #7a5a34;
+    border-radius: 6px;
+    color: #eee;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .menu-icon:hover { border-color: #ffd166; }
+
+  /* ---- 가방(인벤토리) 팝업 ---- */
+  #inventory-modal { right: 12px; bottom: 56px; width: 210px; display: none; }
+  .inv-row { display: flex; justify-content: space-between; padding: 3px 0; color: #ddd; }
+  #inventory-modal hr { border: none; border-top: 1px solid #5a4a3a; margin: 6px 0; }
+
+  /* ---- 상점 모달 오버레이 ---- */
+  #shop-modal {
+    display: none;
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.68);
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+  }
+  .shop-panel {
+    width: 300px;
+    background: #2b2320;
+    border: 3px solid #6b4423;
+    border-radius: 10px;
+    padding: 16px 18px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .shop-panel h2 { margin: 0 0 10px 0; font-size: 18px; color: #ffd166; text-align: center; }
+  .shop-row { display: flex; justify-content: space-between; font-size: 13px; color: #ddd; margin: 3px 0; }
+  .shop-panel hr { border: none; border-top: 1px solid #5a4a3a; margin: 10px 0; }
+  .shop-btn {
+    display: block; width: 100%; box-sizing: border-box; text-align: left;
+    background: #4a3c2f; color: #fff; border: 1px solid #7a6248; border-radius: 6px;
+    padding: 8px 10px; margin: 6px 0; font-size: 13px; cursor: pointer;
+  }
+  .shop-btn:hover:not(:disabled) { background: #5f4d3b; }
+  .shop-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .shop-btn .cost { float: right; color: #ffd166; }
+  #shop-msg { min-height: 18px; font-size: 12px; color: #ff9a76; text-align: center; margin-top: 4px; }
+  #btn-close-shop { background: #6b2b2b; border-color: #a04b4b; text-align: center; }
+  #btn-close-shop:hover { background: #833838; }
+</style>
+</head>
+<body>
+
+<div id="title">⛏️ 슬라임 지하 광산 굴착 RPG - 쿼터뷰 갱도 프로토타입</div>
+
+<div id="game-wrap">
+  <div id="game-container"></div>
+
+  <!-- 좌측 상단: 캐릭터 상태창 -->
+  <div id="status-window" class="rpg-window">
+    <div class="rpg-window-header">
+      <span>슬라임 광부</span>
+      <button id="status-close" class="win-close">×</button>
+    </div>
+    <div class="rpg-window-body">
+      <div class="stat-line">Lv.<span id="stat-level">1</span> / Job Lv.1 / Exp. <span id="stat-exp">0</span>%</div>
+      <div class="stat-row">
+        <span class="stat-label">HP</span>
+        <div class="stat-bar-bg"><div id="hp-bar" class="stat-bar-fill hp"></div></div>
+        <span class="stat-value" id="hp-text">100/100</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">SP</span>
+        <div class="stat-bar-bg"><div id="sp-bar" class="stat-bar-fill sp"></div></div>
+        <span class="stat-value" id="sp-text">50/50</span>
+      </div>
+    </div>
+  </div>
+  <button id="status-reopen">슬라임 광부 ▾</button>
+
+  <!-- 우측 상단: 미니맵 -->
+  <div id="minimap-window" class="rpg-window">
+    <div class="rpg-window-header"><span id="location-name">지하 1층 갱도</span></div>
+    <div class="rpg-window-body" style="padding:6px;">
+      <canvas id="minimap-canvas" width="128" height="88"></canvas>
+      <div id="coord-text" class="coord-text">(0, 0)</div>
+    </div>
+  </div>
+
+  <!-- 좌측 하단: 시스템/채팅 로그 창 -->
+  <div id="chat-window" class="rpg-window">
+    <div class="chat-tabs">
+      <button class="chat-tab active" data-tab="general">일반 메시지</button>
+      <button class="chat-tab" data-tab="battle">배틀 메시지</button>
+    </div>
+    <div id="chat-log" class="chat-log"></div>
+  </div>
+
+  <!-- 하단 중앙: 퀵슬롯 바 -->
+  <div id="quickslot-bar">
+    <div class="quick-slot filled" title="곡괭이">
+      ⛏️
+      <div class="slot-durability" id="pickaxe-durability">50/50</div>
+    </div>
+    <div class="quick-slot"></div>
+    <div class="quick-slot"></div>
+    <div class="quick-slot"></div>
+    <div class="quick-slot"></div>
+  </div>
+
+  <!-- 우측 하단: 메뉴 아이콘 -->
+  <div id="menu-icons">
+    <button id="btn-inventory" class="menu-icon" title="가방">🎒</button>
+    <button id="btn-equip" class="menu-icon" title="장비창">🛡️</button>
+    <button id="btn-skill" class="menu-icon" title="스킬북">📖</button>
+  </div>
+
+  <!-- 가방(인벤토리) 팝업 -->
+  <div id="inventory-modal" class="rpg-window">
+    <div class="rpg-window-header"><span>가방</span><button id="inv-close" class="win-close">×</button></div>
+    <div class="rpg-window-body" id="inventory-body"></div>
+  </div>
+
+  <!-- 지상 거점 상점 모달 -->
+  <div id="shop-modal">
+    <div class="shop-panel">
+      <h2>🏠 지상 거점 상점</h2>
+      <div class="shop-row"><span>보유 골드</span><span id="shop-gold">0G</span></div>
+      <div class="shop-row"><span>가방</span><span id="shop-bag">0/15</span></div>
+      <div class="shop-row"><span>곡괭이</span><span id="shop-pickaxe">Lv.1 (35/50)</span></div>
+      <hr>
+      <button id="btn-sell" class="shop-btn">광물 일괄 판매 <span class="cost" id="cost-sell"></span></button>
+      <button id="btn-repair" class="shop-btn">곡괭이 수리 <span class="cost" id="cost-repair"></span></button>
+      <button id="btn-upgrade" class="shop-btn">곡괭이 강화 <span class="cost" id="cost-upgrade"></span></button>
+      <button id="btn-expand" class="shop-btn">가방 확장 <span class="cost" id="cost-expand"></span></button>
+      <div id="shop-msg"></div>
+      <hr>
+      <button id="btn-close-shop" class="shop-btn">닫기 (Esc)</button>
+    </div>
+  </div>
+</div>
+
+<div id="help">
+  바닥을 <b>좌클릭</b>하면 슬라임이 이동합니다. <b>광맥(수정 더미)</b>을 클릭하면 다가가서 자동으로 채굴을 시작합니다.<br>
+  좌측 하단 <b>상점</b> 아이콘을 클릭하면 거점 상점이 열립니다. 진행 상황은 자동 저장됩니다.
+</div>
+
+<!-- Phaser 3 라이브러리를 CDN에서 불러온다 (외부 에셋 파일 없이 코드만으로 동작) -->
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+
+<script>
+/* =========================================================================
+   슬라임 지하 광산 굴착 RPG - 쿼터뷰 갱도 프로토타입
+   - 라그나로크 온라인풍 클래식 UI(상태창/채팅로그/퀵슬롯/미니맵) + 클릭 이동/채굴.
+   - 외부 이미지 없이 Phaser Graphics로 픽셀 텍스처를 코드에서 직접 생성한다.
+   ========================================================================= */
+
+/* -------------------------------------------------------------------------
+   1. 기본 상수
+   ------------------------------------------------------------------------- */
+const ROOM_W = 800;
+const ROOM_H = 600;
+const ROOM_BORDER = 40;     // 벽 두께
+const MOVE_SPEED = 180;     // px/sec, 클릭 이동 속도
+const MINE_APPROACH_DIST = 42; // 광맥에서 이만큼 떨어진 위치까지 접근
+const SHOP_APPROACH_DIST = 40;
+const CLUSTER_MAX_USES = 5;
+const CLUSTER_RESPAWN_MS = 15000;
+const BASE_CYCLE_MS = 1200; // 채굴 한 사이클(게이지 한 바퀴) 기본 시간
+const SP_COST_PER_CYCLE = 5;
+const SP_REGEN_PER_SEC = 1;
+
+const SAVE_KEY = "slime_dig_rpg_save_v2";
+
+// 광물 종류: 이름 / 판매가 / 드랍 가중치(기본) / 파편·로그 색상
+const ORE_TYPES = {
+  iron:    { name: "철 광석", sell: 2,  weight: 70, color: 0xb0763c, logColor: "#7ec8e3" },
+  silver:  { name: "은 광석", sell: 5,  weight: 24, color: 0xd7d7e0, logColor: "#e8e8ff" },
+  mithril: { name: "미스릴", sell: 15, weight: 6,  color: 0x9b6bff, logColor: "#ffd166" },
+};
+
+/* -------------------------------------------------------------------------
+   2. 픽셀 아트 텍스처 정의
+   ------------------------------------------------------------------------- */
+
+// 슬라임 캐릭터 (탑다운 시점, 안전모를 쓴 둥근 몸통)
+const SLIME_PATTERN = [
+  "..3333..",
+  ".333333.",
+  "..2222..",
+  "21111112",
+  "21411412",
+  "21111112",
+  ".211112.",
+  "..2222..",
+];
+const SLIME_PALETTE = { 1: 0x6bdb6b, 2: 0x2f8f4e, 3: 0xf1c40f, 4: 0x1b1b1b };
+
+// 바닥 텍스처는 makeFloorTexture()가 노이즈 + 균열로 절차적으로 그린다 (아래 참고).
+
+// 채굴 가능한 수정 광맥 더미 (바위 베이스 + 광물 결정) - 팔레트만 바꿔 3종류로 사용
+const ORE_CLUSTER_PATTERN = [
+  "........",
+  "..2.3...",
+  ".222333.",
+  "1222333.",
+  "11122233",
+  "11112223",
+  ".111122.",
+  "..1111..",
+];
+const ORE_CLUSTER_PALETTES = {
+  purple: { 1: 0x4a4a4a, 2: 0x7a52c9, 3: 0x5fc9d8 }, // 자수정 계열
+  ruby:   { 1: 0x454045, 2: 0x8f2233, 3: 0xd9455f }, // 루비 계열
+  silver: { 1: 0x40404a, 2: 0xb8b8c2, 3: 0xe8e8f0 }, // 은/철광 계열
+};
+
+// 목재 기둥
+const PILLAR_PATTERN = [
+  "111111",
+  "122221",
+  "121121",
+  "121121",
+  "121121",
+  "121121",
+  "121121",
+  "121121",
+  "121121",
+  "121121",
+  "121121",
+  "121121",
+  "121121",
+  "121121",
+  "122221",
+  "111111",
+];
+const PILLAR_PALETTE = { 1: 0x4a3626, 2: 0x6b4a30 };
+
+// 랜턴 (기둥 위 조명)
+const LANTERN_PATTERN = ["11", "11"];
+const LANTERN_PALETTE = { 1: 0xffcf6b };
+
+// 지상 거점 상점(모루) 아이콘
+const SHOP_PATTERN = [
+  "........",
+  ".222222.",
+  "22222222",
+  "22222222",
+  ".211112.",
+  "..1111..",
+  "..1111..",
+  "..2222..",
+];
+const SHOP_PALETTE = { 1: 0x8a8a99, 2: 0x45454f };
+
+// 채굴/이동 시 튀는 작은 파편 파티클
+const PARTICLE_PATTERN = ["11", "11"];
+const PARTICLE_PALETTE = { 1: 0xffffff };
+
+// 바닥에 깔린 녹슨 철도 레일 (가로로 이어 붙여 타일링)
+const RAIL_PATTERN = [
+  "........",
+  "11111111",
+  "22222222",
+  "22222222",
+  "11111111",
+  "........",
+];
+const RAIL_PALETTE = { 1: 0x6b5a4a, 2: 0x4a3626 };
+
+// 원석이 담긴 목재 광차(수레)
+const CART_PATTERN = [
+  "..111111..",
+  ".11333311.",
+  "1133333311",
+  "1111111111",
+  "..2....2..",
+  "..2....2..",
+];
+const CART_PALETTE = { 1: 0x5a4a3a, 2: 0x1c1c1c, 3: 0x9a9aa0 };
+
+// 구석에 쌓인 와인통 / 나무 상자
+const BARREL_PATTERN = [
+  ".1111.",
+  "111111",
+  "122221",
+  "121121",
+  "121121",
+  "122221",
+  "111111",
+  ".1111.",
+];
+const BARREL_PALETTE = { 1: 0x6b4a30, 2: 0x2e2013 };
+
+/**
+ * 픽셀 패턴 배열 + 팔레트를 이용해 텍스처를 생성해서 등록한다.
+ */
+function makePixelTexture(scene, key, pattern, palette, pixelSize) {
+  const g = scene.make.graphics({ x: 0, y: 0, add: false });
+  const rows = pattern.length;
+  const cols = pattern[0].length;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const ch = pattern[r][c];
+      if (ch === "." || !palette[ch]) continue;
+      g.fillStyle(palette[ch], 1);
+      g.fillRect(c * pixelSize, r * pixelSize, pixelSize, pixelSize);
+    }
+  }
+  g.generateTexture(key, cols * pixelSize, rows * pixelSize);
+  g.destroy();
+}
+
+/** 랜턴 주변에 은은하게 퍼지는 원형 글로우 텍스처를 만든다 (동심원 여러 겹). */
+function makeGlowTexture(scene, key, radius, color) {
+  const g = scene.make.graphics({ x: 0, y: 0, add: false });
+  const steps = 8;
+  for (let i = steps; i >= 1; i--) {
+    const r = radius * (i / steps);
+    const alpha = 0.5 * Math.pow(1 - i / steps, 1.6) + 0.03;
+    g.fillStyle(color, alpha);
+    g.fillCircle(radius, radius, r);
+  }
+  g.generateTexture(key, radius * 2, radius * 2);
+  g.destroy();
+}
+
+/** 픽셀 노이즈 + 무작위 균열(크랙) 선을 섞어 리얼한 동굴 바닥 질감을 절차적으로 그린다. */
+function makeFloorTexture(scene, key, size, pixelSize) {
+  const g = scene.make.graphics({ x: 0, y: 0, add: false });
+  const shades = [0x3b2f26, 0x362a22, 0x33281f, 0x2c231c, 0x40332a];
+  const cells = Math.floor(size / pixelSize);
+  for (let ry = 0; ry < cells; ry++) {
+    for (let rx = 0; rx < cells; rx++) {
+      const shade = shades[Phaser.Math.Between(0, shades.length - 1)];
+      g.fillStyle(shade, 1);
+      g.fillRect(rx * pixelSize, ry * pixelSize, pixelSize, pixelSize);
+    }
+  }
+  g.lineStyle(1, 0x15100b, 0.85);
+  for (let i = 0; i < 3; i++) {
+    let x = Phaser.Math.Between(0, size);
+    let y = Phaser.Math.Between(0, size);
+    g.beginPath();
+    g.moveTo(x, y);
+    const segments = Phaser.Math.Between(4, 7);
+    for (let s = 0; s < segments; s++) {
+      x += Phaser.Math.Between(-16, 16);
+      y += Phaser.Math.Between(-16, 16);
+      g.lineTo(x, y);
+    }
+    g.strokePath();
+  }
+  g.generateTexture(key, size, size);
+  g.destroy();
+}
+
+/* -------------------------------------------------------------------------
+   3. 메인 게임 씬
+   ------------------------------------------------------------------------- */
+class MineScene extends Phaser.Scene {
+  constructor() {
+    super("MineScene");
+
+    this.inventory = { iron: 0, silver: 0, mithril: 0 };
+    this.oreClusters = [];
+    this.miningTarget = null;
+    this.mineProgress = 0;
+    this.shopOpen = false;
+    this.activeTab = "general";
+    this.chatMessages = [];
+
+    // 곡괭이 강화 단계표 (레벨, 비용)
+    this.upgradeTiers = [
+      { level: 1, cost: 0 },
+      { level: 2, cost: 60 },
+      { level: 3, cost: 150 },
+      { level: 4, cost: 320 },
+      { level: 5, cost: 600 },
+    ];
+    // 가방 확장 단계표
+    this.bagTiers = [15, 25, 40, 60];
+    this.bagCosts = [0, 80, 200, 400];
+  }
+
+  create() {
+    /* ---- 3-1. 텍스처 생성 ---- */
+    makePixelTexture(this, "player_slime", SLIME_PATTERN, SLIME_PALETTE, 4);
+    makeFloorTexture(this, "floor_tile", 96, 3);
+    makePixelTexture(this, "ore_cluster_purple", ORE_CLUSTER_PATTERN, ORE_CLUSTER_PALETTES.purple, 5);
+    makePixelTexture(this, "ore_cluster_ruby", ORE_CLUSTER_PATTERN, ORE_CLUSTER_PALETTES.ruby, 5);
+    makePixelTexture(this, "ore_cluster_silver", ORE_CLUSTER_PATTERN, ORE_CLUSTER_PALETTES.silver, 5);
+    makePixelTexture(this, "pillar", PILLAR_PATTERN, PILLAR_PALETTE, 4);
+    makePixelTexture(this, "lantern", LANTERN_PATTERN, LANTERN_PALETTE, 4);
+    makePixelTexture(this, "shop_icon", SHOP_PATTERN, SHOP_PALETTE, 4);
+    makePixelTexture(this, "particle", PARTICLE_PATTERN, PARTICLE_PALETTE, 3);
+    makePixelTexture(this, "rail_track", RAIL_PATTERN, RAIL_PALETTE, 4);
+    makePixelTexture(this, "ore_cart", CART_PATTERN, CART_PALETTE, 4);
+    makePixelTexture(this, "barrel", BARREL_PATTERN, BARREL_PALETTE, 4);
+    makeGlowTexture(this, "glow", 46, 0xffcf6b);
+
+    /* ---- 3-2. 경제 상태 기본값 + 세이브 데이터 불러오기 ---- */
+    this.gold = 0;
+    this.bagLevel = 0;
+    this.bagCapacity = this.bagTiers[this.bagLevel];
+    this.pickaxeLevel = 1;
+    this.pickaxeMaxDurability = 50;
+    this.pickaxeDurability = this.pickaxeMaxDurability;
+    this.level = 1;
+    this.expPercent = 0;
+    this.maxHP = 100; this.hp = 100;
+    this.maxSP = 50; this.sp = 50;
+
+    const saved = this.loadSaveData();
+    if (saved) {
+      this.gold = saved.gold ?? this.gold;
+      this.bagLevel = saved.bagLevel ?? this.bagLevel;
+      this.bagCapacity = this.bagTiers[this.bagLevel] ?? this.bagCapacity;
+      this.pickaxeLevel = saved.pickaxeLevel ?? this.pickaxeLevel;
+      this.pickaxeDurability = saved.pickaxeDurability ?? this.pickaxeDurability;
+      this.inventory.iron = saved.inventory?.iron ?? 0;
+      this.inventory.silver = saved.inventory?.silver ?? 0;
+      this.inventory.mithril = saved.inventory?.mithril ?? 0;
+      this.level = saved.level ?? this.level;
+      this.expPercent = saved.expPercent ?? this.expPercent;
+      this.maxHP = saved.maxHP ?? this.maxHP;
+      this.hp = saved.hp ?? this.maxHP;
+      this.maxSP = saved.maxSP ?? this.maxSP;
+      this.sp = saved.sp ?? this.maxSP;
+    }
+
+    /* ---- 3-3. 배경: 바닥 타일 + 벽 프레임 ---- */
+    this.add.tileSprite(ROOM_W / 2, ROOM_H / 2, ROOM_W - ROOM_BORDER * 2, ROOM_H - ROOM_BORDER * 2, "floor_tile")
+      .setDepth(-20);
+    const wallColor = 0x140f0a;
+    this.add.rectangle(ROOM_W / 2, ROOM_BORDER / 2, ROOM_W, ROOM_BORDER, wallColor).setDepth(-15);
+    this.add.rectangle(ROOM_W / 2, ROOM_H - ROOM_BORDER / 2, ROOM_W, ROOM_BORDER, wallColor).setDepth(-15);
+    this.add.rectangle(ROOM_BORDER / 2, ROOM_H / 2, ROOM_BORDER, ROOM_H, wallColor).setDepth(-15);
+    this.add.rectangle(ROOM_W - ROOM_BORDER / 2, ROOM_H / 2, ROOM_BORDER, ROOM_H, wallColor).setDepth(-15);
+
+    /* ---- 3-4. 기둥 + 랜턴(글로우) + 대들보 + 선로/광차/술통 배치 ---- */
+    this.lampSpots = []; // 안개(어둠)에 뚫어둘 정적 조명 위치들
+    const pillarSpots = [[220, 150], [580, 150]];
+    pillarSpots.forEach(([px, py]) => {
+      this.add.image(px, py, "pillar").setOrigin(0.5, 1).setDepth(py);
+      this.add.image(px, py - 62, "glow").setBlendMode(Phaser.BlendModes.ADD).setDepth(900).setAlpha(0.9);
+      const lantern = this.add.image(px, py - 62, "lantern").setDepth(901);
+      this.tweens.add({ targets: lantern, alpha: 0.6, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+      this.lampSpots.push([px, py - 62]);
+    });
+
+    // 기둥을 잇는 목재 대들보 (갱도 입구 프레임)
+    this.add.rectangle(400, 96, pillarSpots[1][0] - pillarSpots[0][0] + 20, 14, 0x4a3626).setDepth(148);
+
+    // 바닥에 깔린 녹슨 철도 레일
+    this.add.tileSprite(400, 132, 420, 24, "rail_track").setDepth(60);
+
+    // 구석에 놓인 원석 광차와 술통 더미
+    this.add.image(690, 452, "ore_cart").setOrigin(0.5, 1).setDepth(452);
+    this.add.image(720, 448, "barrel").setOrigin(0.5, 1).setDepth(448);
+    this.add.image(738, 462, "barrel").setOrigin(0.5, 1).setDepth(462);
+
+    /* ---- 3-5. 채굴 가능한 광맥 배치 (자수정/루비/은광 텍스처를 번갈아 사용) ---- */
+    const clusterSpots = [[400, 220], [190, 330], [610, 330], [400, 470]];
+    const clusterTextures = ["ore_cluster_purple", "ore_cluster_ruby", "ore_cluster_silver", "ore_cluster_purple"];
+    clusterSpots.forEach(([cx, cy], i) => {
+      const sprite = this.add.image(cx, cy, clusterTextures[i]).setDepth(cy).setInteractive({ useHandCursor: true });
+      const cluster = { sprite, uses: CLUSTER_MAX_USES, maxUses: CLUSTER_MAX_USES, depleted: false };
+      sprite.on("pointerdown", () => this.onOreClicked(cluster));
+      this.oreClusters.push(cluster);
+    });
+
+    /* ---- 3-6. 지상 거점 상점 오브젝트 ----
+       좌측 하단 채팅창 등 화면 고정 UI 패널과 겹치지 않도록,
+       기둥 사이 상단 여백(항상 UI가 없는 구역)에 배치한다. */
+    this.shopSprite = this.add.image(400, 100, "shop_icon").setDepth(500).setInteractive({ useHandCursor: true });
+    this.add.text(400, 78, "상점", {
+      fontSize: "12px", fontFamily: "Malgun Gothic, sans-serif", color: "#ffd166",
+    }).setOrigin(0.5, 1).setDepth(500);
+    this.shopSprite.on("pointerdown", () => this.onShopClicked());
+    this.lampSpots.push([400, 92]); // 상점(시작 게이트) 주변에도 은은한 조명
+
+    /* ---- 3-7. 슬라임 플레이어 ---- */
+    const spawnX = saved?.playerX ?? 400;
+    const spawnY = saved?.playerY ?? 530;
+    this.player = this.add.image(spawnX, spawnY, "player_slime").setDepth(spawnY);
+
+    // 채굴 진행 게이지 (플레이어 머리 위)
+    this.gaugeBg = this.add.rectangle(0, 0, 40, 6, 0x222222).setOrigin(0, 0).setDepth(999).setVisible(false);
+    this.gaugeFill = this.add.rectangle(0, 0, 40, 6, 0xffd166).setOrigin(0, 0).setDepth(1000).setVisible(false);
+
+    /* ---- 3-7b. 동적 조명 + 암흑 시야(Fog of War) ----
+       슬라임 안전모 랜턴을 중심으로 한 원형 빛만 밝게 보이고, 나머지는 짙은 어둠으로
+       덮어 미지의 갱도를 탐험하는 분위기를 낸다. 안개는 매 프레임 다시 그리는
+       RenderTexture이며, ERASE 블렌드로 빛이 닿는 자리에만 구멍을 뚫는다. */
+    this.playerLight = this.add.image(this.player.x, this.player.y, "glow")
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0.85)
+      .setScale(3.4)
+      .setDepth(890);
+
+    // 안개에 구멍을 뚫을 때 쓰는 스탬프 (화면에는 직접 그려지지 않는다)
+    this.lightStampPlayer = this.make.image({ x: 0, y: 0, key: "glow" }, false);
+    this.lightStampLamp = this.make.image({ x: 0, y: 0, key: "glow" }, false);
+
+    this.fog = this.add.renderTexture(0, 0, ROOM_W, ROOM_H).setOrigin(0, 0).setDepth(2000);
+
+    /* ---- 3-8. 입력: 바닥 클릭 = 이동, 오브젝트 클릭은 각자 핸들러가 처리 ---- */
+    this.input.on("pointerdown", (pointer) => {
+      if (this.shopOpen) return;
+      const hits = this.input.hitTestPointer(pointer);
+      if (hits.length > 0) return; // 광맥/상점 등 인터랙티브 오브젝트는 자체 핸들러가 처리
+      this.moveTo(pointer.worldX, pointer.worldY, null);
+    });
+
+    this.input.keyboard.on("keydown-ESC", () => {
+      if (this.shopOpen) this.closeShop();
+    });
+
+    /* ---- 3-9. 최초 안내 로그 ---- */
+    this.addLog("슬라임 광부: 오늘도 열심히 캐보자~!", "#8fdc8f");
+
+    /* ---- 3-10. UI 초기 갱신 + DOM 연결 ---- */
+    window.gameScene = this;
+    this.updateUI();
+    this.renderChatLog();
+
+    this.time.addEvent({ delay: 5000, loop: true, callback: () => this.saveGame() });
+    this.time.addEvent({ delay: 900, loop: true, callback: () => this.ambientSparkle() });
+    window.addEventListener("beforeunload", () => this.saveGame());
+  }
+
+  /* =========================================================================
+     이동 / 채굴
+     ========================================================================= */
+
+  clampToRoom(x, y) {
+    const margin = 20;
+    return {
+      x: Phaser.Math.Clamp(x, ROOM_BORDER + margin, ROOM_W - ROOM_BORDER - margin),
+      y: Phaser.Math.Clamp(y, ROOM_BORDER + margin, ROOM_H - ROOM_BORDER - margin),
+    };
+  }
+
+  moveTo(x, y, onArrive) {
+    this.cancelMining();
+    this.tweens.killTweensOf(this.player);
+    const target = this.clampToRoom(x, y);
+    const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, target.x, target.y);
+
+    if (dist < 2) {
+      if (onArrive) onArrive();
+      return;
+    }
+
+    this.player.setFlipX(target.x < this.player.x);
+    const duration = (dist / MOVE_SPEED) * 1000;
+    this.tweens.add({
+      targets: this.player,
+      x: target.x,
+      y: target.y,
+      duration,
+      onUpdate: () => this.player.setDepth(this.player.y),
+      onComplete: () => { if (onArrive) onArrive(); },
+    });
+  }
+
+  onOreClicked(cluster) {
+    if (cluster.depleted) {
+      this.addLog("이미 캐낸 광맥입니다. 잠시 후 다시 차오릅니다.", "#aaaaaa");
+      return;
+    }
+    const dx = this.player.x - cluster.sprite.x;
+    const dy = this.player.y - cluster.sprite.y;
+    const dist = Math.max(1, Math.hypot(dx, dy));
+    const ax = cluster.sprite.x + (dx / dist) * MINE_APPROACH_DIST;
+    const ay = cluster.sprite.y + (dy / dist) * MINE_APPROACH_DIST;
+    this.moveTo(ax, ay, () => this.beginChannel(cluster));
+  }
+
+  onShopClicked() {
+    if (this.shopOpen) return;
+    const dx = this.player.x - this.shopSprite.x;
+    const dy = this.player.y - this.shopSprite.y;
+    const dist = Math.max(1, Math.hypot(dx, dy));
+    const ax = this.shopSprite.x + (dx / dist) * SHOP_APPROACH_DIST;
+    const ay = this.shopSprite.y + (dy / dist) * SHOP_APPROACH_DIST;
+    this.moveTo(ax, ay, () => this.openShop());
+  }
+
+  beginChannel(cluster) {
+    if (cluster.depleted) return;
+    this.miningTarget = cluster;
+    this.mineProgress = 0;
+    this.gaugeBg.setVisible(true);
+    this.gaugeFill.setVisible(true);
+    this.swingTween = this.tweens.add({
+      targets: this.player,
+      scaleX: 1.15, scaleY: 0.88,
+      duration: 180,
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  cancelMining() {
+    this.miningTarget = null;
+    this.mineProgress = 0;
+    if (this.gaugeBg) { this.gaugeBg.setVisible(false); this.gaugeFill.setVisible(false); }
+    if (this.swingTween) { this.swingTween.stop(); this.swingTween = null; this.player.setScale(1, 1); }
+  }
+
+  currentCycleMs() {
+    return Math.max(500, BASE_CYCLE_MS - (this.pickaxeLevel - 1) * 150);
+  }
+
+  rollOreType() {
+    const bonus = (this.pickaxeLevel - 1) * 2; // 곡괭이 레벨당 희귀 확률 소폭 증가
+    const weights = {
+      iron: Math.max(10, ORE_TYPES.iron.weight - bonus * 1.5),
+      silver: ORE_TYPES.silver.weight + bonus,
+      mithril: ORE_TYPES.mithril.weight + bonus * 0.5,
+    };
+    const total = weights.iron + weights.silver + weights.mithril;
+    let r = Math.random() * total;
+    for (const key of ["iron", "silver", "mithril"]) {
+      if (r < weights[key]) return key;
+      r -= weights[key];
+    }
+    return "iron";
+  }
+
+  resolveMiningTick(cluster) {
+    this.pickaxeDurability = Math.max(0, this.pickaxeDurability - 1);
+    this.sp = Math.max(0, this.sp - SP_COST_PER_CYCLE);
+    cluster.uses -= 1;
+
+    const oreKey = this.rollOreType();
+    const ore = ORE_TYPES[oreKey];
+    const total = this.inventory.iron + this.inventory.silver + this.inventory.mithril;
+
+    if (total < this.bagCapacity) {
+      this.inventory[oreKey] += 1;
+      this.addLog(`${ore.name} 1개 획득`, ore.logColor);
+    } else {
+      this.addLog("가방이 가득 찼습니다! 상점에서 판매하고 오세요.", "#ff9a76");
+    }
+
+    this.gainExp(4);
+    this.spawnSparkle(cluster.sprite.x, cluster.sprite.y - 8, ore.color);
+    this.spawnRockChips(cluster.sprite.x, cluster.sprite.y);
+    this.cameras.main.shake(100, 0.0015);
+    this.updateUI();
+    this.saveGame();
+
+    if (cluster.uses <= 0) {
+      this.depleteCluster(cluster);
+      this.cancelMining();
+    }
+  }
+
+  depleteCluster(cluster) {
+    cluster.depleted = true;
+    cluster.sprite.setAlpha(0.3);
+    cluster.sprite.disableInteractive();
+    this.time.delayedCall(CLUSTER_RESPAWN_MS, () => this.respawnCluster(cluster));
+  }
+
+  respawnCluster(cluster) {
+    cluster.depleted = false;
+    cluster.uses = cluster.maxUses;
+    cluster.sprite.setAlpha(1).setInteractive({ useHandCursor: true });
+  }
+
+  gainExp(amount) {
+    this.expPercent += amount;
+    while (this.expPercent >= 100) {
+      this.expPercent -= 100;
+      this.level += 1;
+      this.maxSP += 5;
+      this.maxHP += 10;
+      this.hp = this.maxHP;
+      this.sp = this.maxSP;
+      this.addLog(`레벨업! Lv.${this.level} 달성!`, "#ffe066");
+    }
+  }
+
+  spawnSparkle(x, y, color) {
+    const emitter = this.add.particles(x, y, "particle", {
+      speed: { min: 30, max: 100 },
+      angle: { min: 200, max: 340 },
+      scale: { start: 1.4, end: 0 },
+      lifespan: 350,
+      gravityY: 300,
+      quantity: 8,
+      tint: color,
+    }).setDepth(1001);
+    emitter.explode(8);
+    this.time.delayedCall(400, () => emitter.destroy());
+  }
+
+  /** 타격 순간 사방으로 튀는 작은 바위 파편 (채굴 손맛 강화) */
+  spawnRockChips(x, y) {
+    const count = Phaser.Math.Between(3, 5);
+    const emitter = this.add.particles(x, y, "particle", {
+      speed: { min: 60, max: 160 },
+      angle: { min: 0, max: 360 },
+      scale: { start: 1.2, end: 0 },
+      lifespan: 300,
+      gravityY: 500,
+      quantity: count,
+      tint: 0x6b6b6b,
+    }).setDepth(1001);
+    emitter.explode(count);
+    this.time.delayedCall(350, () => emitter.destroy());
+  }
+
+  /** 랜턴 불빛이 닿는 광맥에서 가끔씩 반짝이는 앰비언트 스파클 */
+  ambientSparkle() {
+    this.oreClusters.forEach((cluster) => {
+      if (cluster.depleted) return;
+      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, cluster.sprite.x, cluster.sprite.y);
+      if (dist > 190) return; // 조명이 닿는 범위 밖이면 반짝이지 않는다
+      if (Math.random() > 0.35) return;
+      const ox = cluster.sprite.x + Phaser.Math.Between(-10, 10);
+      const oy = cluster.sprite.y + Phaser.Math.Between(-10, 10);
+      const emitter = this.add.particles(ox, oy, "particle", {
+        speed: { min: 5, max: 20 },
+        scale: { start: 1, end: 0 },
+        lifespan: 500,
+        quantity: 1,
+        tint: 0xffffff,
+      }).setDepth(cluster.sprite.depth + 1);
+      emitter.explode(1);
+      this.time.delayedCall(600, () => emitter.destroy());
+    });
+  }
+
+  /* =========================================================================
+     상점
+     ========================================================================= */
+
+  openShop() {
+    this.shopOpen = true;
+    this.cancelMining();
+    this.tweens.killTweensOf(this.player);
+    document.getElementById("shop-modal").style.display = "flex";
+    document.getElementById("shop-msg").textContent = "";
+    this.refreshShopUI();
+  }
+
+  closeShop() {
+    this.shopOpen = false;
+    document.getElementById("shop-modal").style.display = "none";
+    this.saveGame();
+  }
+
+  refreshShopUI() {
+    const total = this.inventory.iron + this.inventory.silver + this.inventory.mithril;
+    document.getElementById("shop-gold").textContent = `${this.gold}G`;
+    document.getElementById("shop-bag").textContent = `${total}/${this.bagCapacity}`;
+    document.getElementById("shop-pickaxe").textContent =
+      `Lv.${this.pickaxeLevel} (${this.pickaxeDurability}/${this.pickaxeMaxDurability})`;
+
+    const sellValue = this.inventory.iron * ORE_TYPES.iron.sell
+      + this.inventory.silver * ORE_TYPES.silver.sell
+      + this.inventory.mithril * ORE_TYPES.mithril.sell;
+    document.getElementById("cost-sell").textContent = total > 0 ? `+${sellValue}G` : "-";
+    document.getElementById("btn-sell").disabled = total <= 0;
+
+    const missing = this.pickaxeMaxDurability - this.pickaxeDurability;
+    const repairCost = missing * 2;
+    document.getElementById("cost-repair").textContent = missing > 0 ? `${repairCost}G` : "완료";
+    document.getElementById("btn-repair").disabled = missing <= 0 || this.gold < repairCost;
+
+    const nextTier = this.upgradeTiers.find((t) => t.level === this.pickaxeLevel + 1);
+    const upgradeBtn = document.getElementById("btn-upgrade");
+    if (nextTier) {
+      document.getElementById("cost-upgrade").textContent = `${nextTier.cost}G`;
+      upgradeBtn.disabled = this.gold < nextTier.cost;
+    } else {
+      document.getElementById("cost-upgrade").textContent = "MAX";
+      upgradeBtn.disabled = true;
+    }
+
+    const nextBagCap = this.bagTiers[this.bagLevel + 1];
+    const expandBtn = document.getElementById("btn-expand");
+    if (nextBagCap) {
+      const cost = this.bagCosts[this.bagLevel + 1];
+      document.getElementById("cost-expand").textContent = `${cost}G`;
+      expandBtn.disabled = this.gold < cost;
+    } else {
+      document.getElementById("cost-expand").textContent = "MAX";
+      expandBtn.disabled = true;
+    }
+  }
+
+  sellAll() {
+    const value = this.inventory.iron * ORE_TYPES.iron.sell
+      + this.inventory.silver * ORE_TYPES.silver.sell
+      + this.inventory.mithril * ORE_TYPES.mithril.sell;
+    if (value <= 0) return;
+    this.gold += value;
+    this.inventory.iron = 0;
+    this.inventory.silver = 0;
+    this.inventory.mithril = 0;
+    document.getElementById("shop-msg").textContent = `${value}G 를 받았습니다.`;
+    this.updateUI();
+    this.saveGame();
+  }
+
+  repairPickaxe() {
+    const missing = this.pickaxeMaxDurability - this.pickaxeDurability;
+    const cost = missing * 2;
+    if (missing <= 0 || this.gold < cost) return;
+    this.gold -= cost;
+    this.pickaxeDurability = this.pickaxeMaxDurability;
+    document.getElementById("shop-msg").textContent = "곡괭이를 수리했습니다!";
+    this.updateUI();
+    this.saveGame();
+  }
+
+  upgradePickaxe() {
+    const nextTier = this.upgradeTiers.find((t) => t.level === this.pickaxeLevel + 1);
+    if (!nextTier || this.gold < nextTier.cost) return;
+    this.gold -= nextTier.cost;
+    this.pickaxeLevel = nextTier.level;
+    document.getElementById("shop-msg").textContent = `곡괭이가 Lv.${this.pickaxeLevel}로 강화되었습니다!`;
+    this.updateUI();
+    this.saveGame();
+  }
+
+  expandBag() {
+    const nextCap = this.bagTiers[this.bagLevel + 1];
+    const cost = this.bagCosts[this.bagLevel + 1];
+    if (!nextCap || this.gold < cost) return;
+    this.gold -= cost;
+    this.bagLevel += 1;
+    this.bagCapacity = nextCap;
+    document.getElementById("shop-msg").textContent = `가방이 ${this.bagCapacity}칸으로 확장되었습니다!`;
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /* =========================================================================
+     채팅 로그 / 가방 팝업 / UI 갱신
+     ========================================================================= */
+
+  addLog(text, color = "#ffffff", tab = "general") {
+    this.chatMessages.push({ text, color, tab });
+    if (this.chatMessages.length > 200) this.chatMessages.shift();
+    this.renderChatLog();
+  }
+
+  renderChatLog() {
+    const box = document.getElementById("chat-log");
+    if (!box) return;
+    const filtered = this.chatMessages.filter((m) => m.tab === this.activeTab);
+    box.innerHTML = filtered.map((m) => `<div style="color:${m.color}">${m.text}</div>`).join("");
+    box.scrollTop = box.scrollHeight;
+  }
+
+  openInventory() {
+    const total = this.inventory.iron + this.inventory.silver + this.inventory.mithril;
+    document.getElementById("inventory-body").innerHTML = `
+      <div class="inv-row"><span>골드</span><span>${this.gold}G</span></div>
+      <div class="inv-row"><span>가방</span><span>${total}/${this.bagCapacity}</span></div>
+      <hr>
+      <div class="inv-row"><span>🟫 철 광석</span><span>${this.inventory.iron}</span></div>
+      <div class="inv-row"><span>⚪ 은 광석</span><span>${this.inventory.silver}</span></div>
+      <div class="inv-row"><span>🟣 미스릴</span><span>${this.inventory.mithril}</span></div>
+    `;
+    document.getElementById("inventory-modal").style.display = "block";
+  }
+
+  updateUI() {
+    // 상태창
+    document.getElementById("stat-level").textContent = this.level;
+    document.getElementById("stat-exp").textContent = Math.floor(this.expPercent * 10) / 10;
+    document.getElementById("hp-text").textContent = `${this.hp}/${this.maxHP}`;
+    document.getElementById("sp-text").textContent = `${Math.floor(this.sp)}/${this.maxSP}`;
+    document.getElementById("hp-bar").style.width = `${(this.hp / this.maxHP) * 100}%`;
+    document.getElementById("sp-bar").style.width = `${(this.sp / this.maxSP) * 100}%`;
+
+    // 퀵슬롯 곡괭이 내구도
+    document.getElementById("pickaxe-durability").textContent =
+      `${this.pickaxeDurability}/${this.pickaxeMaxDurability}`;
+
+    if (this.shopOpen) this.refreshShopUI();
+    if (document.getElementById("inventory-modal").style.display === "block") this.openInventory();
+  }
+
+  drawMinimap() {
+    const canvas = document.getElementById("minimap-canvas");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width, h = canvas.height;
+    ctx.fillStyle = "#0c0a08";
+    ctx.fillRect(0, 0, w, h);
+    const sx = w / ROOM_W, sy = h / ROOM_H;
+
+    this.oreClusters.forEach((c) => {
+      if (c.depleted) return;
+      ctx.fillStyle = "#8a5fd8";
+      ctx.beginPath();
+      ctx.arc(c.sprite.x * sx, c.sprite.y * sy, 2, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    ctx.fillStyle = "#ffd166";
+    ctx.beginPath();
+    ctx.arc(this.shopSprite.x * sx, this.shopSprite.y * sy, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#5fd068";
+    ctx.beginPath();
+    ctx.arc(this.player.x * sx, this.player.y * sy, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    document.getElementById("coord-text").textContent =
+      `(${Math.round(this.player.x)}, ${Math.round(this.player.y)})`;
+  }
+
+  /* =========================================================================
+     자동 저장 / 불러오기
+     ========================================================================= */
+
+  loadSaveData() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      console.warn("세이브 데이터를 불러오지 못했습니다.", e);
+      return null;
+    }
+  }
+
+  saveGame() {
+    const data = {
+      version: 2,
+      gold: this.gold,
+      bagLevel: this.bagLevel,
+      pickaxeLevel: this.pickaxeLevel,
+      pickaxeDurability: this.pickaxeDurability,
+      inventory: { ...this.inventory },
+      level: this.level,
+      expPercent: this.expPercent,
+      maxHP: this.maxHP, hp: this.hp,
+      maxSP: this.maxSP, sp: this.sp,
+      playerX: this.player.x,
+      playerY: this.player.y,
+    };
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    } catch (e) {
+      console.warn("게임 저장에 실패했습니다.", e);
+    }
+  }
+
+  /* ---- 매 프레임 실행 ---- */
+  update(time, delta) {
+    // 기력(SP) 자연 회복 - 채굴 중이 아닐 때만
+    if (!this.miningTarget && this.sp < this.maxSP) {
+      this.sp = Math.min(this.maxSP, this.sp + (SP_REGEN_PER_SEC * delta) / 1000);
+      if (Math.floor(this.sp) !== this._lastSpDisplay) {
+        this._lastSpDisplay = Math.floor(this.sp);
+        this.updateUI();
+      }
+    }
+
+    if (this.miningTarget) {
+      const cluster = this.miningTarget;
+
+      if (this.pickaxeDurability <= 0) {
+        this.addLog("곡괭이가 망가졌습니다! 거점 상점에서 수리하세요.", "#ff9a76");
+        this.cancelMining();
+      } else if (this.sp < SP_COST_PER_CYCLE) {
+        this.addLog("기력이 부족합니다. 잠시 휴식하세요.", "#ff9a76");
+        this.cancelMining();
+      } else {
+        this.mineProgress += delta;
+        const ratio = Phaser.Math.Clamp(this.mineProgress / this.currentCycleMs(), 0, 1);
+        this.gaugeBg.setPosition(this.player.x - 20, this.player.y - 42);
+        this.gaugeFill.setPosition(this.player.x - 20, this.player.y - 42);
+        this.gaugeFill.setSize(40 * ratio, 6);
+
+        if (this.mineProgress >= this.currentCycleMs()) {
+          this.mineProgress = 0;
+          this.resolveMiningTick(cluster);
+        }
+      }
+    }
+
+    // 조명 + 안개(Fog of War) 갱신 - 플레이어 랜턴을 따라다니는 원형 시야만 밝힌다
+    this.playerLight.setPosition(this.player.x, this.player.y);
+    this.fog.clear();
+    this.fog.fill(0x05030a, 0.86);
+    this.lampSpots.forEach(([lx, ly]) => {
+      this.lightStampLamp.setPosition(lx, ly).setScale(2.0);
+      this.fog.erase(this.lightStampLamp);
+    });
+    this.lightStampPlayer.setPosition(this.player.x, this.player.y).setScale(3.6);
+    this.fog.erase(this.lightStampPlayer);
+
+    this.drawMinimap();
+  }
+}
+
+/* -------------------------------------------------------------------------
+   4. Phaser 게임 설정 및 실행
+   ------------------------------------------------------------------------- */
+const config = {
+  type: Phaser.AUTO,
+  parent: "game-container",
+  width: ROOM_W,
+  height: ROOM_H,
+  backgroundColor: "#100c08",
+  pixelArt: true,
+  scene: [MineScene],
+};
+
+new Phaser.Game(config);
+
+/* -------------------------------------------------------------------------
+   5. DOM UI 바인딩 (상태창 닫기, 가방, 상점 버튼, 채팅 탭)
+   ------------------------------------------------------------------------- */
+document.getElementById("status-close").addEventListener("click", () => {
+  document.getElementById("status-window").style.display = "none";
+  document.getElementById("status-reopen").style.display = "block";
+});
+document.getElementById("status-reopen").addEventListener("click", () => {
+  document.getElementById("status-window").style.display = "block";
+  document.getElementById("status-reopen").style.display = "none";
+});
+
+document.getElementById("btn-inventory").addEventListener("click", () => {
+  const modal = document.getElementById("inventory-modal");
+  if (modal.style.display === "block") { modal.style.display = "none"; }
+  else { window.gameScene?.openInventory(); }
+});
+document.getElementById("inv-close").addEventListener("click", () => {
+  document.getElementById("inventory-modal").style.display = "none";
+});
+document.getElementById("btn-equip").addEventListener("click", () => {
+  window.gameScene?.addLog("장비창은 아직 준비 중입니다.", "#aaaaaa");
+});
+document.getElementById("btn-skill").addEventListener("click", () => {
+  window.gameScene?.addLog("스킬북은 아직 준비 중입니다.", "#aaaaaa");
+});
+
+document.querySelectorAll(".chat-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".chat-tab").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    if (window.gameScene) {
+      window.gameScene.activeTab = btn.dataset.tab;
+      window.gameScene.renderChatLog();
+    }
+  });
+});
+
+document.getElementById("btn-sell").addEventListener("click", () => window.gameScene?.sellAll());
+document.getElementById("btn-repair").addEventListener("click", () => window.gameScene?.repairPickaxe());
+document.getElementById("btn-upgrade").addEventListener("click", () => window.gameScene?.upgradePickaxe());
+document.getElementById("btn-expand").addEventListener("click", () => window.gameScene?.expandBag());
+document.getElementById("btn-close-shop").addEventListener("click", () => window.gameScene?.closeShop());
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && window.gameScene?.shopOpen) {
+    window.gameScene.closeShop();
+  }
+});
+</script>
+</body>
+</html>
