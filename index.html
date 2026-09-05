@@ -1057,7 +1057,7 @@ const COMBAT_MONSTER_TYPES = {
   },
   magma_mole: {
     name: "마그마두더지", frame: "cm_mole", crop: 1, role: "melee",
-    display: 70, originY: 0.86, hp: 18, armor: 0, speed: 44, melee: 2, attackMs: 900,
+    display: 70, originY: 0.86, hp: 18, armor: 0, speed: 58, melee: 2, attackMs: 520,
     goldMin: 6, goldMax: 12, exp: 18, hasShield: false,
   },
   crystal_spider: {
@@ -1076,17 +1076,17 @@ const TOWER_CROPS = [
 ];
 const TOWER_TYPES = {
   spike: {
-    name: "스파이크 트랩", frame: "tw_spike", crop: 0, display: 56, originY: 0.78,
+    name: "스파이크 트랩", frame: "tw_spike", crop: 0, display: 70, originY: 0.78,
     cost: { iron: 15, gold: 0, mithril: 0 },
-    range: 42, tickMs: 350, damage: 3, slowMs: 600, slowMult: 0.55,
+    range: 42, tickMs: 350, damage: 3, slowMs: 800, slowMult: 0.55, fireDotMs: 1400,
   },
   ballista: {
-    name: "발리스타", frame: "tw_ballista", crop: 1, display: 72, originY: 0.82,
+    name: "발리스타", frame: "tw_ballista", crop: 1, display: 86, originY: 0.82,
     cost: { iron: 20, gold: 10, mithril: 0 },
     range: 210, tickMs: 900, damage: 10, pierce: true,
   },
   lantern: {
-    name: "랜턴 타워", frame: "tw_lantern", crop: 2, display: 80, originY: 0.88,
+    name: "랜턴 타워", frame: "tw_lantern", crop: 2, display: 96, originY: 0.88,
     range: 110, tickMs: 500, damage: 2, slowMs: 800, slowMult: 0.6, fireDotMs: 1600,
     cost: { iron: 0, gold: 20, mithril: 10 },
   },
@@ -1703,6 +1703,7 @@ class MineScene extends Phaser.Scene {
     this.legendTraitOpen = false;
     this.towerBuildOpen = false;
     this.acidZones = [];
+    this.defenseTimers = [];
 
     this.pickaxeTier = 0;        // 장비 제작소에서 올린 곡괭이 등급 인덱스 (PICKAXE_TIERS, 파워강화 단계와 별개로 누적)
     this.autoReturnSell = false; // 가방이 가득 차면 자동으로 임시 은신처로 귀환해 일괄 판매할지 여부
@@ -1942,9 +1943,10 @@ class MineScene extends Phaser.Scene {
         this.castAcidAt(pointer.worldX, pointer.worldY);
         return;
       }
-      const hits = this.input.hitTestPointer(pointer);
-      if (hits.length > 0) return; // 광맥/상점 등 인터랙티브 오브젝트는 자체 핸들러가 처리
       this.dragPinging = true;
+      this.pingEnemiesAlong(pointer.worldX, pointer.worldY);
+      const hits = this.input.hitTestPointer(pointer);
+      if (hits.length > 0) return; // 광맥/상점/몬스터 등은 자체 핸들러가 처리
       this.moveTo(pointer.worldX, pointer.worldY, null);
     });
     this.input.on("pointermove", (pointer) => {
@@ -4718,7 +4720,7 @@ class MineScene extends Phaser.Scene {
     this.liveCombatTargets().forEach((unit) => {
       const p = this.unitPos(unit);
       if (!p) return;
-      if (Phaser.Math.Distance.Between(x, y, p.x, p.y) > 36) return;
+      if (Phaser.Math.Distance.Between(x, y, p.x, p.y) > 56) return;
       if (this.rallyQueue.includes(unit) || unit === this.rallyTarget) return;
       unit.pinged = true;
       this.rallyQueue.push(unit);
@@ -4943,6 +4945,15 @@ class MineScene extends Phaser.Scene {
     this.tickProjectiles(delta);
 
     const now = Date.now();
+    this.acidZones.forEach((z) => {
+      if (now >= z.until) return;
+      this.liveCombatTargets().forEach((unit) => {
+        const p = this.unitPos(unit);
+        if (p && Phaser.Math.Distance.Between(z.x, z.y, p.x, p.y) <= SKILL_ACID_RADIUS) {
+          unit.rootUntil = Math.max(unit.rootUntil ?? 0, z.until);
+        }
+      });
+    });
     this.combatUnits.forEach((unit) => {
       if (this.unitIsDead(unit)) return;
       if (unit.fireDotUntil && now < unit.fireDotUntil) {
@@ -4987,6 +4998,7 @@ class MineScene extends Phaser.Scene {
     this.defenseMaxHp = LADDER_DEFENSE_HP;
     this.defenseEndsAt = Date.now() + LADDER_REPAIR_MS;
     this.defenseWave = 0;
+    this.clearDefenseTimers();
     this.buildTowerSlotsAround(2, 4);
     this.scheduleLadderWaves();
     this.showDefenseHud("🪜 사다리 복구 수호전", "양옆 통로에서 몬스터가 몰려옵니다!");
@@ -5004,12 +5016,12 @@ class MineScene extends Phaser.Scene {
       [41000, ["magma_mole", "turtle"]],
     ];
     plan.forEach(([at, ids], i) => {
-      this.time.delayedCall(at, () => {
+      this.defenseTimers.push(this.time.delayedCall(at, () => {
         if (this.defenseMode !== "ladder") return;
         this.defenseWave = i + 1;
         ids.forEach((id, n) => this.spawnWaveMonster(id, n % 2 === 0 ? "left" : "right"));
         this.updateDefenseHud();
-      });
+      }));
     });
   }
 
@@ -5038,6 +5050,12 @@ class MineScene extends Phaser.Scene {
     if (this.isDefenseActive() || this.hiddenLairCleared) return;
     this.closeShop();
     this.cancelMining();
+    if (this.hiddenPortal) {
+      this.hiddenPortal.sprite.destroy();
+      this.hiddenPortal.label?.destroy();
+      this.hiddenPortal.glow?.destroy();
+      this.hiddenPortal = null;
+    }
     if (this.altarObj) {
       this.altarObj.sprite.destroy();
       this.altarObj.label?.destroy();
@@ -5064,6 +5082,7 @@ class MineScene extends Phaser.Scene {
     this.defenseMaxHp = ALTAR_DEFENSE_HP;
     this.defenseEndsAt = 0;
     this.defenseWave = 0;
+    this.clearDefenseTimers();
     this.buildTowerSlotsAround(BOSS_COL, BOSS_ROW);
     this.scheduleAltarWaves();
     this.showDefenseHud("🔮 드래곤 레어 봉인전", "제단을 3웨이브 동안 수호하세요!");
@@ -5079,13 +5098,13 @@ class MineScene extends Phaser.Scene {
       [28000, ["turtle", "turtle", "magma_mole", "magma_mole", "crystal_spider", "crystal_spider"]],
     ];
     waves.forEach(([at, ids], i) => {
-      this.time.delayedCall(at, () => {
+      this.defenseTimers.push(this.time.delayedCall(at, () => {
         if (this.defenseMode !== "altar") return;
         this.defenseWave = i + 1;
         ids.forEach((id, n) => this.spawnWaveMonster(id, n % 2 === 0 ? "left" : "right"));
         this.updateDefenseHud();
         this.addLog(`🌊 봉인전 웨이브 ${i + 1}/${ALTAR_WAVE_COUNT}!`, "#ff9a76", "battle");
-      });
+      }));
     });
   }
 
@@ -5126,17 +5145,21 @@ class MineScene extends Phaser.Scene {
       const rock = this.rockBlocks.find((rk) => rk.col === c && rk.row === r && !rk.broken);
       if (rock) { rock.broken = true; rock.sprite.destroy(); this.brokenCells.add(`${c},${r}`); }
       const { x, y } = this.gridToScreen(c, r);
-      const marker = this.add.rectangle(x, y - 8, 48, 26, 0x5a4018, 0.85)
+      const marker = this.add.rectangle(x, y - 8, 52, 28, 0x5a4018, 0.9)
         .setStrokeStyle(3, 0xffe066).setDepth(y + 40)
         .setInteractive({ useHandCursor: true });
-      const slot = { col: c, row: r, x, y, marker, occupied: false };
+      const label = this.add.text(x, y - 8, "건설", {
+        fontSize: "11px", fontFamily: "Malgun Gothic, sans-serif", color: "#ffe066",
+        stroke: "#2e2013", strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(y + 41);
+      const slot = { col: c, row: r, x, y, marker, label, occupied: false };
       marker.on("pointerdown", () => this.openTowerBuild(slot));
       this.towerSlots.push(slot);
     });
   }
 
   clearTowerSlots() {
-    this.towerSlots.forEach((s) => s.marker?.destroy());
+    this.towerSlots.forEach((s) => { s.marker?.destroy(); s.label?.destroy(); });
     this.towerSlots = [];
     this.towers.forEach((tw) => tw.sprite.destroy());
     this.towers = [];
@@ -5183,9 +5206,10 @@ class MineScene extends Phaser.Scene {
     const sprite = this.add.image(slot.x, slot.y, "combat_towers", def.frame)
       .setOrigin(0.5, def.originY)
       .setDisplaySize(def.display, def.display * (crop.h / crop.w))
-      .setDepth(slot.y + 6);
+      .setDepth(slot.y + 80);
     slot.occupied = true;
     slot.marker.setVisible(false);
+    slot.label?.setVisible(false);
     this.towers.push({ typeId, def, sprite, slot, acc: 0 });
     this.addLog(`🗼 ${def.name}을(를) 건설했습니다!`, "#ffe066", "battle");
     sfx.playCoinSound();
@@ -5200,22 +5224,13 @@ class MineScene extends Phaser.Scene {
     if (tw.acc < tw.def.tickMs) return;
     tw.acc = 0;
     const enemies = this.combatUnits.filter((u) => !this.unitIsDead(u));
-    if (tw.typeId === "spike") {
+    if (tw.typeId === "spike" || tw.typeId === "lantern") {
       enemies.forEach((u) => {
         const p = this.unitPos(u);
         if (Phaser.Math.Distance.Between(tw.sprite.x, tw.sprite.y, p.x, p.y) <= range) {
           u.slowUntil = Date.now() + tw.def.slowMs;
-          this.dealCombatDamage(u, dmg);
-        }
-      });
-      return;
-    }
-    if (tw.typeId === "lantern") {
-      enemies.forEach((u) => {
-        const p = this.unitPos(u);
-        if (Phaser.Math.Distance.Between(tw.sprite.x, tw.sprite.y, p.x, p.y) <= range) {
-          u.slowUntil = Date.now() + tw.def.slowMs;
-          u.fireDotUntil = Date.now() + tw.def.fireDotMs;
+          u.slowMult = tw.def.slowMult ?? 0.55;
+          if (tw.def.fireDotMs) u.fireDotUntil = Date.now() + tw.def.fireDotMs;
           this.dealCombatDamage(u, dmg);
         }
       });
@@ -5259,7 +5274,7 @@ class MineScene extends Phaser.Scene {
     this.combatUnits.forEach((unit) => {
       if (this.unitIsDead(unit)) return;
       const rooted = now < (unit.rootUntil ?? 0);
-      const slow = now < (unit.slowUntil ?? 0) ? 0.55 : 1;
+      const slow = now < (unit.slowUntil ?? 0) ? (unit.slowMult ?? 0.55) : 1;
       const type = COMBAT_MONSTER_TYPES[unit.typeId];
       let destX = obj.x, destY = obj.y;
       if (type.role === "ranged") {
@@ -5272,9 +5287,9 @@ class MineScene extends Phaser.Scene {
             const shard = this.add.circle(unit.sprite.x, unit.sprite.y - 10, 4, 0x9b6bff).setDepth(1100);
             this.projectiles.push({ sprite: shard, tx: obj.x, ty: obj.y, dmg: 0, pierce: false, hit: new Set(), speed: 260, hitObjective: true });
           }
-        } else if (type.role === "tank") {
-          destY = obj.y - 8;
         }
+      } else if (type.role === "tank") {
+        destY = obj.y - 12; // 도발 전방: 목표 바로 앞에서 길을 막는다
       }
       if (!rooted) {
         const dist = Phaser.Math.Distance.Between(unit.sprite.x, unit.sprite.y, destX, destY);
@@ -5378,6 +5393,7 @@ class MineScene extends Phaser.Scene {
   }
 
   endDefense(success, silent) {
+    this.clearDefenseTimers();
     this.combatUnits.forEach((u) => {
       u.sprite?.destroy(); u.label?.destroy(); u.hpBarBg?.destroy(); u.hpBarFill?.destroy();
     });
@@ -5389,6 +5405,11 @@ class MineScene extends Phaser.Scene {
     document.getElementById("defense-hud").style.display = "none";
     this.closeTowerBuild();
     if (!silent && success) this.cameras.main.flash(200, 255, 230, 120, false);
+  }
+
+  clearDefenseTimers() {
+    (this.defenseTimers ?? []).forEach((ev) => ev?.remove?.(false));
+    this.defenseTimers = [];
   }
 
   openLegendTraitModal() {
