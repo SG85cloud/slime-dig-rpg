@@ -83,14 +83,29 @@
   }
   #burst-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #5ad0ff, #ffe066); transition: width 0.15s; }
   .skill-btn {
-    width: 52px; height: 36px;
-    background: rgba(20,15,10,0.88); border: 2px solid #7a5a34; border-radius: 6px;
-    color: #eee; font-size: 10px; cursor: pointer; line-height: 1.15; padding: 2px;
+    width: 44px; height: 44px;
+    background-color: rgba(20,15,10,0.88); background-repeat: no-repeat;
+    border: 2px solid #7a5a34; border-radius: 8px;
+    color: #eee; font-size: 10px; cursor: pointer; line-height: 1.15; padding: 0;
+    position: relative;
   }
-  .skill-btn:hover:not(:disabled) { border-color: #ffd166; color: #ffd166; }
-  .skill-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .skill-btn.ready { border-color: #8fdc8f; box-shadow: 0 0 8px rgba(143,220,143,0.55); }
-  .skill-hotkey { display: block; font-size: 9px; color: #9ad1ff; }
+  /* skills.png(677x369, 3분할)에서 실제 그림 영역만 잘라 각 버튼의 배경 아이콘으로 붙인다. */
+  .skill-btn[data-skill="roll"]   { background-image: url('assets/skills.png'); background-size: 150.4px 82px;  background-position: -5.1px -19.1px; }
+  .skill-btn[data-skill="frenzy"] { background-image: url('assets/skills.png'); background-size: 149.7px 81.6px; background-position: -52.8px -19.2px; }
+  .skill-btn[data-skill="acid"]   { background-image: url('assets/skills.png'); background-size: 149.7px 81.6px; background-position: -100.8px -19.2px; }
+  .skill-btn:hover:not(:disabled) { border-color: #ffd166; }
+  /* 게이지가 100% 미만이면(=사용 불가) 아이콘을 흑백 + 어둡게 마스크 처리한다. */
+  .skill-btn:disabled { filter: grayscale(0.9) brightness(0.55); cursor: not-allowed; }
+  /* 게이지 완충 시 밝은 테두리가 은은하게 펄스한다. */
+  .skill-btn.ready { border-color: #ffe066; animation: skill-ready-pulse 1.1s ease-in-out infinite; }
+  @keyframes skill-ready-pulse {
+    0%, 100% { box-shadow: 0 0 4px 1px rgba(255,224,102,0.5); }
+    50%      { box-shadow: 0 0 12px 4px rgba(255,224,102,0.95); }
+  }
+  .skill-hotkey {
+    position: absolute; top: 1px; left: 3px;
+    font-size: 10px; font-weight: bold; color: #9ad1ff; text-shadow: 1px 1px 2px #000;
+  }
 
   /* ---- 타워 건설 선택 오버레이 ---- */
   #tower-build-modal {
@@ -757,13 +772,13 @@
   <div id="skill-bar">
     <div id="burst-gauge" title="버스트 게이지 (타격으로 충전)"><div id="burst-fill"></div></div>
     <button class="skill-btn" id="skill-btn-roll" data-skill="roll" title="슬라임 롤링 (전방 돌진 넉백 · 보호막 파쇄)">
-      <span class="skill-hotkey">Q</span>롤링
+      <span class="skill-hotkey">Q</span>
     </button>
     <button class="skill-btn" id="skill-btn-frenzy" data-skill="frenzy" title="광부의 맹타 (6초간 아군 공속 3배)">
-      <span class="skill-hotkey">W</span>맹타
+      <span class="skill-hotkey">W</span>
     </button>
     <button class="skill-btn" id="skill-btn-acid" data-skill="acid" title="끈적한 포격 (지정 범위 속박 4초)">
-      <span class="skill-hotkey">E</span>포격
+      <span class="skill-hotkey">E</span>
     </button>
   </div>
 
@@ -1098,6 +1113,24 @@ const ALTAR_CROP = { x: 29, y: 108, w: 965, h: 803 };
 const UI_TARGET_DISPLAY = 36;
 const ALTAR_DISPLAY = 128;
 
+/* -------------------------------------------------------------------------
+   1a-2c. 은신처 회복 온천(spring.png) + 버스트 스킬 아이콘(skills.png) + 타워 건설 슬롯(tower_slot.png)
+   ------------------------------------------------------------------------- */
+const SPRING_CROP = { x: 62, y: 6, w: 553, h: 358 };
+const SPRING_DISPLAY = 92; const SPRING_ORIGIN_Y = 0.68;
+const SPRING_COL = 2; const SPRING_ROW = 0; // 포탈(0,0) 바로 옆, 시작 빈터(SAFE_DEPTH) 안쪽 고정 좌표
+const SPRING_HEAL_PCT_PER_SEC = 0.10; // 온천 안에 있으면 1초당 최대 HP의 10%씩 회복
+// SPRING_TRIGGER_RADIUS("반경 1.5타일")는 TILE_W 선언 이후(1b. 그리드 좌표계)에서 정의한다.
+
+// skills.png(677x369, 3분할) 아이콘 실측 크롭 - 아래 CSS(.skill-btn[data-skill=...])의 배경 좌표는
+// 이 값들(x,y,w,h)을 목표 버튼 크기(44px)에 맞춰 스케일 변환해 계산한 값이다.
+//   0: { x:23,  y:86, w:198, h:195 } Q 슬라임 롤링
+//   1: { x:239, y:87, w:199, h:194 } W 광부의 맹타
+//   2: { x:456, y:87, w:199, h:194 } E 끈적한 포격
+
+const TOWER_SLOT_CROP = { x: 62, y: 11, w: 553, h: 352 };
+const TOWER_SLOT_DISPLAY = 80; const TOWER_SLOT_ORIGIN_Y = 0.55;
+
 const LADDER_DEFENSE_FLOORS = [25, 20, 15, 10, 5];
 const LADDER_DEFENSE_HP = 220;
 const LADDER_REPAIR_MS = 45000;
@@ -1341,6 +1374,7 @@ const GRID_COLS = 6;
 const GRID_ROWS = 9;
 const TILE_W = 96;          // 바닥 다이아몬드 한 칸의 화면 폭
 const TILE_H = 48;          // 바닥 다이아몬드 한 칸의 화면 높이 (2:1 비율)
+const SPRING_TRIGGER_RADIUS = 1.5 * (TILE_W / 2); // 은신처 회복 온천 "반경 1.5타일"을 화면 거리(px)로 환산
 const GRID_ORIGIN_X = 472;  // 그리드 (0,0)칸 = 포탈이 놓이는 화면 좌표
 const GRID_ORIGIN_Y = 180;
 const SAFE_DEPTH = 2;       // col+row가 이 값 이하인 칸은 처음부터 뚫려있는 시작 빈터
@@ -1761,6 +1795,9 @@ class MineScene extends Phaser.Scene {
     this.load.image("combat_towers", "assets/towers.png");
     this.load.image("ui_target", "assets/ui_target.png");
     this.load.image("dragon_altar", "assets/dragon_altar.png");
+    this.load.image("spring_pool", "assets/spring.png");
+    this.load.image("tower_slot", "assets/tower_slot.png");
+    // skills.png는 Phaser 캔버스가 아니라 하단 스킬 버튼의 CSS 배경 이미지로만 쓰이므로 여기서 불러올 필요가 없다.
   }
 
   create() {
@@ -1793,6 +1830,8 @@ class MineScene extends Phaser.Scene {
     });
     this.textures.get("ui_target").add("ui_target_frame", 0, UI_TARGET_CROP.x, UI_TARGET_CROP.y, UI_TARGET_CROP.w, UI_TARGET_CROP.h);
     this.textures.get("dragon_altar").add("altar_frame", 0, ALTAR_CROP.x, ALTAR_CROP.y, ALTAR_CROP.w, ALTAR_CROP.h);
+    this.textures.get("spring_pool").add("spring_frame", 0, SPRING_CROP.x, SPRING_CROP.y, SPRING_CROP.w, SPRING_CROP.h);
+    this.textures.get("tower_slot").add("tower_slot_frame", 0, TOWER_SLOT_CROP.x, TOWER_SLOT_CROP.y, TOWER_SLOT_CROP.w, TOWER_SLOT_CROP.h);
 
     /* ---- 3-1c. 소모품 퀵슬롯(체력/황금/가속 물약) 아이콘 + 대장간/게시판 DOM 아이콘을 한 번만 채워 넣는다 ---- */
     document.getElementById("potion-icon-heal").innerHTML = iconHtml("potion_heal", 30);
@@ -1900,6 +1939,18 @@ class MineScene extends Phaser.Scene {
       this.tweens.add({ targets: lamp, alpha: 0.65, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
       this.lampSpots.push([x, y - 40]);
     });
+
+    /* ---- 3-4b. 은신처 회복 온천 - 포탈 바로 옆 시작 빈터에 고정 배치되는 힐링 타일 ---- */
+    {
+      const { x, y } = this.gridToScreen(SPRING_COL, SPRING_ROW);
+      const springSprite = this.add.image(x, y, "spring_pool", "spring_frame")
+        .setOrigin(0.5, SPRING_ORIGIN_Y)
+        .setDisplaySize(SPRING_DISPLAY, SPRING_DISPLAY * (SPRING_CROP.h / SPRING_CROP.w))
+        .setDepth(y);
+      this.tweens.add({ targets: springSprite, scaleX: springSprite.scaleX * 1.02, scaleY: springSprite.scaleY * 1.02, duration: 1400, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+      this.springProp = { sprite: springSprite, x, y };
+      this._lastSpringFxAt = { player: 0 };
+    }
 
     /* ---- 3-5. 슬라임 플레이어: 포탈 바로 앞 빈터에서 스폰 ---- */
     const spawnCell = this.gridToScreen(1, 1);
@@ -2351,6 +2402,58 @@ class MineScene extends Phaser.Scene {
     if (near(this.player.x, this.player.y) || this.workers.some((w) => near(w.sprite.x, w.sprite.y))) {
       this.triggerSectorEventProp();
     }
+  }
+
+  /**
+   * 은신처 회복 온천(spring.png) - 반경 1.5타일 안에 머무는 동안 플레이어 슬라임의 HP를
+   * 1초당 최대 HP의 10%씩 지속 회복시키고, 안에 있는 슬라임(플레이어/일꾼) 머리 위에
+   * 옅은 민트색 회복 파티클을 주기적으로 띄운다. delta(ms)를 받아 프레임 배분 없이 정확히 적분한다.
+   */
+  checkSpringHealing(delta) {
+    const spring = this.springProp;
+    if (!spring) return;
+    const near = (ox, oy) => Phaser.Math.Distance.Between(ox, oy, spring.x, spring.y) <= SPRING_TRIGGER_RADIUS;
+    const now = Date.now();
+
+    const playerNear = near(this.player.x, this.player.y);
+    if (playerNear && this.hp < this.maxHP) {
+      this.hp = Math.min(this.maxHP, this.hp + (this.maxHP * SPRING_HEAL_PCT_PER_SEC * delta) / 1000);
+      this.updateUI();
+    }
+    if (playerNear && now - this._lastSpringFxAt.player > 500) {
+      this._lastSpringFxAt.player = now;
+      this.spawnSpringHealEffect(this.player.x, this.player.y - SLIME_DISPLAY * SLIME_ORIGIN_Y * 0.6);
+    }
+
+    this.workers.forEach((w) => {
+      if (!near(w.sprite.x, w.sprite.y)) return;
+      const last = w._lastSpringFxAt ?? 0;
+      if (now - last > 500) {
+        w._lastSpringFxAt = now;
+        this.spawnSpringHealEffect(w.sprite.x, w.sprite.y - SLIME_DISPLAY * WORKER_SCALE * SLIME_ORIGIN_Y * 0.7);
+      }
+    });
+  }
+
+  /** 온천 힐링 이펙트 - 옅은 민트색 하트가 퐁퐁 튀어오른다 (spawnHealEffect의 민트색 버전). */
+  spawnSpringHealEffect(x, y) {
+    const glyphs = ["♥", "✚", "♥"];
+    glyphs.forEach((glyph, i) => {
+      const gx = x + Phaser.Math.Between(-14, 14);
+      const text = this.add.text(gx, y, glyph, { fontSize: "14px", color: "#b2fff0" })
+        .setOrigin(0.5, 0.5).setDepth(2001).setAlpha(0);
+      this.tweens.add({
+        targets: text,
+        y: y - Phaser.Math.Between(30, 44),
+        alpha: 0.9,
+        duration: 260,
+        delay: i * 70,
+        ease: "Sine.easeOut",
+        onComplete: () => {
+          this.tweens.add({ targets: text, alpha: 0, y: text.y - 12, duration: 340, onComplete: () => text.destroy() });
+        },
+      });
+    });
   }
 
   /** 온천 오브젝트 발동 시 모락모락 피어오르는 김 이펙트. */
@@ -5145,8 +5248,12 @@ class MineScene extends Phaser.Scene {
       const rock = this.rockBlocks.find((rk) => rk.col === c && rk.row === r && !rk.broken);
       if (rock) { rock.broken = true; rock.sprite.destroy(); this.brokenCells.add(`${c},${r}`); }
       const { x, y } = this.gridToScreen(c, r);
-      const marker = this.add.rectangle(x, y - 8, 52, 28, 0x5a4018, 0.9)
-        .setStrokeStyle(3, 0xffe066).setDepth(y + 40)
+      // 빈 건설 자리는 tower_slot.png 발판으로 표시한다. 타워가 세워진 뒤에도 그 위에 남아
+      // "기초 석재 발판" 역할을 하도록, 건설 완료 시 이 발판 자체는 지우지 않고 "건설" 라벨만 숨긴다.
+      const marker = this.add.image(x, y, "tower_slot", "tower_slot_frame")
+        .setOrigin(0.5, TOWER_SLOT_ORIGIN_Y)
+        .setDisplaySize(TOWER_SLOT_DISPLAY, TOWER_SLOT_DISPLAY * (TOWER_SLOT_CROP.h / TOWER_SLOT_CROP.w))
+        .setDepth(y + 40)
         .setInteractive({ useHandCursor: true });
       const label = this.add.text(x, y - 8, "건설", {
         fontSize: "11px", fontFamily: "Malgun Gothic, sans-serif", color: "#ffe066",
@@ -5208,7 +5315,7 @@ class MineScene extends Phaser.Scene {
       .setDisplaySize(def.display, def.display * (crop.h / crop.w))
       .setDepth(slot.y + 80);
     slot.occupied = true;
-    slot.marker.setVisible(false);
+    // 발판(tower_slot.png)은 타워의 기초 석재처럼 그대로 남겨두고, "건설" 안내 라벨만 숨긴다.
     slot.label?.setVisible(false);
     this.towers.push({ typeId, def, sprite, slot, acc: 0 });
     this.addLog(`🗼 ${def.name}을(를) 건설했습니다!`, "#ffe066", "battle");
@@ -5486,6 +5593,7 @@ class MineScene extends Phaser.Scene {
 
     this.collectGroundItems();
     this.checkSectorEventProp();
+    this.checkSpringHealing(delta);
     this.updateCombat(delta);
     this.updateSkillUI();
 
