@@ -150,6 +150,19 @@
     color: #eee; font-size: 15px; cursor: pointer; z-index: 15;
   }
   #btn-mute:hover { border-color: #ffd166; }
+
+  /* ---- 우측 상단 개발자(DEV) 디버그 패널 토글 + 패널 ---- */
+  #btn-dev {
+    position: absolute; top: 12px; right: 244px;
+    width: 44px; height: 44px;
+    background: rgba(20,15,10,0.82); border: 2px solid #7a5a34; border-radius: 6px;
+    color: #ff9a76; font-size: 11px; font-weight: bold; cursor: pointer; z-index: 15;
+  }
+  #btn-dev:hover { border-color: #ff9a76; }
+  #dev-panel { top: 60px; right: 244px; width: 250px; display: none; }
+  #dev-panel .shop-btn { font-size: 12px; padding: 6px 8px; }
+  .dev-jump-row { display: flex; gap: 4px; margin: 6px 0; }
+  .dev-jump-btn { flex: 1; text-align: center; padding: 6px 2px !important; font-size: 11px !important; }
   #minimap-window .rpg-window-header span { font-size: 12px; }
   #minimap-canvas { display: block; background: #0c0a08; border: 1px solid #555; border-radius: 3px; }
   .coord-text { margin-top: 4px; color: #9ad1ff; font-size: 11px; text-align: center; }
@@ -531,6 +544,24 @@
   <!-- 우측 상단: 음소거 토글 -->
   <button id="btn-mute" title="음소거">🔊</button>
 
+  <!-- 우측 상단: 개발자(DEV) 디버그 패널 토글 (F1) -->
+  <button id="btn-dev" title="개발자 디버그 패널 (F1)">DEV</button>
+  <div id="dev-panel" class="rpg-window">
+    <div class="rpg-window-header"><span>🛠️ DEV 디버그 패널</span><button id="dev-panel-close" class="win-close">×</button></div>
+    <div class="rpg-window-body">
+      <button id="dev-btn-resources" class="shop-btn">💰 자원 치트 (골드+100,000 · 철/미스릴+500)</button>
+      <div class="shop-note" style="margin:8px 2px 2px;">🪜 층 점프</div>
+      <div class="dev-jump-row">
+        <button class="shop-btn dev-jump-btn" data-devfloor="30">B30F</button>
+        <button class="shop-btn dev-jump-btn" data-devfloor="20">B20F</button>
+        <button class="shop-btn dev-jump-btn" data-devfloor="10">B10F</button>
+        <button class="shop-btn dev-jump-btn" data-devfloor="0">1F</button>
+      </div>
+      <button id="dev-btn-clearfloor" class="shop-btn">⚡ 구역/보스 원킬</button>
+      <button id="dev-btn-resetsave" class="shop-btn reset-btn">⚠️ 게임 완전 초기화</button>
+    </div>
+  </div>
+
   <!-- 상단 중앙: 보스(수문장) HP 바 (평소에는 숨김) -->
   <div id="boss-bar" class="rpg-window" style="display:none;">
     <div class="rpg-window-header"><span id="boss-bar-title">B1F 수문장: 고대 바위 골렘</span></div>
@@ -891,10 +922,11 @@ const RELIC_TYPES = {
   compass:  { name: "황금 나침반", emoji: "🧭", desc: "층 이동 시 골드 보너스 +25%" },
 };
 
-// 방치형 오프라인 보상 (일꾼 수에 비례, 최대 8시간분까지만 누적)
-const OFFLINE_CAP_MS = 8 * 60 * 60 * 1000;
+// 방치형 오프라인 보상 (초당 기대 채굴량(GPS) 기반, 최대 4시간분까지만 누적)
+const OFFLINE_CAP_MS = 4 * 60 * 60 * 1000;
 const OFFLINE_MIN_MS = 60 * 1000; // 이 이상 자리를 비웠을 때만 보상 모달을 띄운다
-const OFFLINE_GOLD_PER_WORKER_PER_MIN = 2;
+const OFFLINE_GPS_EFFICIENCY = 0.5; // 방치 중에는 활성 플레이(수동 채굴 포함) 대비 대략 절반 효율로 추정한다
+const OFFLINE_GOLD_PER_WORKER_PER_MIN = 2; // GPS 기록이 아직 없을 때(최초 세이브 등) 쓰는 대체 추정치
 const OFFLINE_IRON_PER_WORKER_PER_MIN = 0.3;
 
 // 진화 형태별 효과 (Lv.5 단 한 번, 3종 중 1종을 영구 선택한다)
@@ -947,22 +979,31 @@ function floorThemeOf(floorNumber, infiniteMode) {
     if (floorNumber >= 11) return { key: "lava", label: "용암 균열 암반", tint: 0xff7043, hpMult: 1.2, oreMult: 1.3 };
     return { key: "normal", label: null, tint: null, hpMult: 1, oreMult: 1 };
   }
+  // B30F -> 1F 탈출 구간: 새 3밴드 난이도(ESCAPE_BAND_*)와 시각 테마를 맞춘다.
   if (floorNumber <= DRAGON_LAIR_FLOOR) return { key: "lair", label: "잠든 고룡의 레어", tint: 0xff5a3c, hpMult: 1.6, oreMult: 2.0 };
-  if (floorNumber <= 10) return { key: "normal", label: null, tint: null, hpMult: 1, oreMult: 1 };
-  if (floorNumber <= 20) return { key: "lava", label: "용암 균열 암반", tint: 0xff7043, hpMult: 1.2, oreMult: 1.3 };
-  return { key: "scale", label: "드래곤 비늘 암석층", tint: 0x8a4fd8, hpMult: 1.4, oreMult: 1.6 };
+  if (floorNumber <= LAVA_ROCK_MIN_FLOOR) return { key: "lava", label: "심층 용암 지대", tint: 0xff7043, hpMult: 1, oreMult: 1.3 }; // B14~B2: 심층 용암/수문장 밴드
+  if (floorNumber < ESCAPE_BAND_EARLY_MIN_FLOOR) return { key: "midtier", label: "중층 갱도", tint: 0xd8c8a8, hpMult: 1, oreMult: 1.15 }; // B24~B15: 중층
+  return { key: "early", label: null, tint: null, hpMult: 1, oreMult: 1 }; // B30~B25: 탈출 초반(쾌속)
 }
 
 /* -------------------------------------------------------------------------
-   1e. 성장 밸런스 곡선 (floorsClimbed = STARTING_FLOOR - floorNumber, 0부터 시작해 지상에 가까워질수록 커진다)
-   - B30~B21 (climbed 0~9)  : 초반 쾌속 구간 - 시각적으로는 어두운 심연이지만 암반 내구도는 낮게 고정해 빠르게 뚫린다.
-   - B20~B11 (climbed 10~19): 성장 구간 - 용암 균열 암반 + 층마다 등장하는 수문장 골렘이 탈출로를 막는다.
-   - B10~B2  (climbed 20~28): 하드 파밍 구간 - 점차 밝아지는 일반 갱도, 특성 리롤/유물 세팅이 요구된다.
-   - B1                     : 잠든 고룡의 레어 - 최종 결전 및 지상 탈출.
+   1e. 성장 밸런스 곡선 - B30F -> 1F 탈출 구간은 floorNumber 기준 3개 밴드로 난이도를 나눈다
+   (엔딩 이후 "심연 재침투" 무한 모드는 기존처럼 floorsClimbed 선형 스케일을 그대로 쓴다).
+   - B30~B25 (탈출 초반)    : 바위 HP를 낮게 고정 - 기본 곡괭이로 2~4타면 부서지는 쾌속 구간.
+   - B24~B15 (중층 갱도)    : 초반 대비 바위 내구도 3배 - 일꾼 2~3마리 고용 + 1단계 무쇠 곡괭이 제작 권장.
+   - B14~B2  (심층 용암/수문장): 용암 암반(LAVA_ROCK_MIN_FLOOR) 위주 배치 - 미스릴 곡괭이·물약 버프가 필요한 파밍 구간.
+   - B1                     : 잠든 고룡의 레어 - 최종 결전 및 지상 탈출 (심층 밴드에 포함).
    ------------------------------------------------------------------------- */
-const EARLY_GAME_HP_CAP_FLOORS_CLIMBED = 10; // 이만큼 오르기 전까지는 암반 내구도를 강제로 낮게 고정한다 (B30~B21)
-const EARLY_GAME_HP_CAP = 2;         // 기본 곡괭이로 1~2타면 부서지는 수준
-const EARLY_GOLD_BONUS_FLOORS_CLIMBED = 10; // 이만큼 오르기 전까지는 타격마다 소량의 보너스 골드가 함께 나온다
+const ESCAPE_BAND_EARLY_MIN_FLOOR = 25; // 이 층수 이상이면 "탈출 초반" 밴드 (B30~B25)
+const ESCAPE_BAND_MID_MIN_FLOOR = 15;   // 이 층수 이상(초반 제외)이면 "중층 갱도" 밴드 (B24~B15), 미만이면 "심층" 밴드 (B14~B1)
+const ESCAPE_BAND_EARLY_HP_CAP = 4;     // 탈출 초반: 기본 곡괭이 2~4타로 확정 클리어되도록 상한을 둔다
+const ESCAPE_BAND_MID_HP_MULT = 3;      // 중층 갱도: 초반 대비 바위 내구도 3배
+const ESCAPE_BAND_DEEP_HP_MULT = 9;     // 심층 용암/수문장: 중층의 3배(=초반의 9배)
+
+// 엔딩 이후 무한 심연 재침투 모드 전용 - floorsClimbed(=floorNumber-1)가 늘어날수록 계속 단단해진다.
+const EARLY_GAME_HP_CAP_FLOORS_CLIMBED = 10;
+const EARLY_GAME_HP_CAP = 2;
+const EARLY_GOLD_BONUS_FLOORS_CLIMBED = 10; // 이만큼 오르기 전까지는 타격마다 소량의 보너스 골드가 함께 나온다 (일반/무한 모드 공통)
 const EARLY_GOLD_BONUS_PER_HIT = 2;
 
 /* -------------------------------------------------------------------------
@@ -989,9 +1030,9 @@ const ORE_TYPES = {
 };
 
 /* -------------------------------------------------------------------------
-   1a-3. 심층 용암 암반 (B11F 이상) - 내구도가 높고 화염 원석이 섞여 나온다.
+   1a-3. 심층 용암 암반 (B14F 이하, "심층 용암/수문장" 밴드) - 내구도가 높고 화염 원석이 섞여 나온다.
    ------------------------------------------------------------------------- */
-const LAVA_ROCK_MIN_FLOOR = 11;   // 이 층부터 암반이 rock_lava.png로 교체된다
+const LAVA_ROCK_MIN_FLOOR = 14;   // 이 층부터(이하) 암반이 rock_lava.png로 교체된다
 const LAVA_ROCK_HP_MULT = 1.75;   // 일반 암반 대비 내구도 배수 (1.5~2배 사이)
 const LAVA_FLAME_ORE_WEIGHT = 10; // 화염 원석 드랍 가중치 (곡괭이 레벨/희귀 보너스에 비례해 증가)
 
@@ -1152,10 +1193,14 @@ function iconHtml(iconKey, displayWidth, extraClass) {
    AudioContext는 브라우저 자동재생 정책 때문에 첫 사용자 입력 이후에만 소리가 나므로,
    실제 재생 시점(클릭으로 이어지는 게임 동작)에 지연 생성한다.
    ------------------------------------------------------------------------- */
+const SFX_PICK_THROTTLE_MS = 80; // 일꾼이 늘어나 타격음이 동시에 겹칠 때, 이 간격 내 연속 타격음은 1회만 재생한다.
+
 class SfxEngine {
   constructor() {
     this.ctx = null;
     this.muted = localStorage.getItem("slime_dig_rpg_muted") === "1";
+    this._lastPickTime = 0;
+    this._noiseBuffer = null;
   }
 
   ensureCtx() {
@@ -1192,9 +1237,53 @@ class SfxEngine {
     } catch (e) { /* 오디오를 지원하지 않는 환경이면 조용히 무시한다 */ }
   }
 
-  /** 곡괭이질: 둔탁하고 짧은 '땅-' 타격음 (하강 피치 블립). */
-  playPickSound() {
-    this.tone({ freq: 260, endFreq: 120, duration: 0.08, type: "square", gain: 0.14 });
+  /** 짧은 백색소음 버퍼를 한 번만 만들어 재사용한다 (용암 파열음의 '치익-' 질감용). */
+  getNoiseBuffer(ctx) {
+    if (!this._noiseBuffer || this._noiseBuffer.sampleRate !== ctx.sampleRate) {
+      const buffer = ctx.createBuffer(1, ctx.sampleRate * 0.3, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+      this._noiseBuffer = buffer;
+    }
+    return this._noiseBuffer;
+  }
+
+  /** 하이패스 필터를 씌운 백색소음을 짧게 터뜨린다 (고음 파열/파찰음 전용 보조 레이어). */
+  playNoiseBurst(duration = 0.08, gain = 0.1, cutoffHz = 2500) {
+    if (this.muted) return;
+    try {
+      const ctx = this.ensureCtx();
+      const src = ctx.createBufferSource();
+      src.buffer = this.getNoiseBuffer(ctx);
+      const filter = ctx.createBiquadFilter();
+      filter.type = "highpass";
+      filter.frequency.value = cutoffHz;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(gain, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+      src.connect(filter).connect(g).connect(ctx.destination);
+      src.start();
+      src.stop(ctx.currentTime + duration + 0.02);
+    } catch (e) { /* 오디오를 지원하지 않는 환경이면 조용히 무시한다 */ }
+  }
+
+  /**
+   * 곡괭이질 타격음 - 대상에 따라 톤을 구분한다 (isLavaRock=true면 용암 암반 전용 파열음).
+   * 일꾼이 여러 마리 동시에 타격할 때 소리가 겹쳐 찢어지는 것을 막기 위해
+   * SFX_PICK_THROTTLE_MS(80ms) 내의 연속 호출은 1회로 합친다.
+   */
+  playPickSound(isLavaRock) {
+    const now = Date.now();
+    if (now - this._lastPickTime < SFX_PICK_THROTTLE_MS) return;
+    this._lastPickTime = now;
+    if (isLavaRock) {
+      // 용암 바위: 치익- 하는 고음 파열음 (350Hz 톤 + 하이패스 노이즈 믹스)
+      this.tone({ freq: 350, endFreq: 220, duration: 0.09, type: "sawtooth", gain: 0.12 });
+      this.playNoiseBurst(0.07, 0.09, 2500);
+    } else {
+      // 일반 바위: 묵직한 중저음 둔탁음
+      this.tone({ freq: 120, endFreq: 80, duration: 0.09, type: "sawtooth", gain: 0.15 });
+    }
   }
 
   /** 바위 파괴: 낮은 저음 두 겹이 함께 무너지는 '콰르릉' 느낌. */
@@ -1203,10 +1292,10 @@ class SfxEngine {
     this.tone({ freq: 70, endFreq: 28, duration: 0.3, type: "square", startTime: 0.02, gain: 0.14 });
   }
 
-  /** 아이템/골드 획득: 맑고 높은 2음 '피링-'. */
+  /** 아이템/골드 획득: 밝고 경쾌한 2화음 비프 (523Hz -> 659Hz). */
   playCoinSound() {
-    this.tone({ freq: 988, duration: 0.07, type: "square", gain: 0.12 });
-    this.tone({ freq: 1568, duration: 0.13, type: "square", startTime: 0.06, gain: 0.12 });
+    this.tone({ freq: 523.25, duration: 0.08, type: "square", gain: 0.13 });
+    this.tone({ freq: 659.25, duration: 0.14, type: "square", startTime: 0.07, gain: 0.13 });
   }
 
   /** 레벨업/보물 발견: 3화음이 계단식으로 올라가는 경쾌한 팡파레. */
@@ -1507,6 +1596,30 @@ class MineScene extends Phaser.Scene {
     this.updatePotionUI();
     this.beforeUnloadHandler = () => this.saveGame();
     window.addEventListener("beforeunload", this.beforeUnloadHandler);
+
+    /* ---- 3-10b. 백그라운드 탭 방치 대응 ----
+       탭을 내리거나 화면이 꺼지면 requestAnimationFrame이 멈춰 Phaser의 내부 타이머(this.time.addEvent)도
+       함께 멈추므로, 5초 주기 자동 저장만으로는 "얼마나 자리를 비웠는지"를 알 수 없다. document.visibilitychange로
+       숨겨진 시각을 별도로 기록해두고, 복귀 시 실제 경과 시간을 계산해 오프라인 보상을 즉시 지급한다. */
+    this.lastActiveTime = Date.now();
+    this.visibilityChangeHandler = () => {
+      if (document.hidden) {
+        this.lastActiveTime = Date.now();
+        this.saveGame(); // 백그라운드 전환 시점 상태를 확실히 남겨둔다
+        return;
+      }
+      const elapsedMs = Math.min(Date.now() - this.lastActiveTime, OFFLINE_CAP_MS);
+      this.lastActiveTime = Date.now();
+      if (elapsedMs < OFFLINE_MIN_MS) return;
+      const reward = this.grantOfflineReward(elapsedMs, this.workers.length, this.gpsValue ?? 0);
+      if (reward) {
+        this.updateUI();
+        this.saveGame();
+        this.showOfflineRewardModal(reward);
+      }
+    };
+    document.addEventListener("visibilitychange", this.visibilityChangeHandler);
+
     this.schedulePlayerAutoTick();
 
     if (offlineReward) this.showOfflineRewardModal(offlineReward);
@@ -1577,9 +1690,20 @@ class MineScene extends Phaser.Scene {
 
         const depthM = depthMetersOf(col, row);
         const baseTier = depthTierOf(depthM);
-        const isLavaRock = this.floorNumber >= LAVA_ROCK_MIN_FLOOR;
-        let hp = Math.round((baseTier.hp + floorBonus * FLOOR_HP_BONUS_PER_FLOOR) * theme.hpMult * (isLavaRock ? LAVA_ROCK_HP_MULT : 1));
-        if (this.floorsClimbed < EARLY_GAME_HP_CAP_FLOORS_CLIMBED) hp = Math.min(hp, EARLY_GAME_HP_CAP); // 초반 쾌속 세팅: 1~2타 확정 클리어
+        const isLavaRock = theme.key === "lava"; // 시각 테마와 동일한 기준(floorThemeOf)으로 판정해 스프라이트/난이도 불일치를 막는다
+        let hp;
+        if (this.infiniteMode) {
+          // 엔딩 이후 무한 심연 재침투 모드: 기존처럼 층이 깊어질수록 선형으로 계속 단단해진다.
+          hp = Math.round((baseTier.hp + floorBonus * FLOOR_HP_BONUS_PER_FLOOR) * theme.hpMult * (isLavaRock ? LAVA_ROCK_HP_MULT : 1));
+          if (this.floorsClimbed < EARLY_GAME_HP_CAP_FLOORS_CLIMBED) hp = Math.min(hp, EARLY_GAME_HP_CAP); // 초반 쾌속 세팅: 1~2타 확정 클리어
+        } else {
+          // B30F -> 1F 탈출 구간: 3단계 밴드로 난이도를 나눈다 (초반 쾌속 → 중층 → 심층 용암/수문장).
+          const bandMult = this.floorNumber >= ESCAPE_BAND_EARLY_MIN_FLOOR ? 1
+            : this.floorNumber >= ESCAPE_BAND_MID_MIN_FLOOR ? ESCAPE_BAND_MID_HP_MULT
+            : ESCAPE_BAND_DEEP_HP_MULT;
+          hp = Math.round(baseTier.hp * bandMult * (isLavaRock ? LAVA_ROCK_HP_MULT : 1));
+          if (bandMult === 1) hp = Math.min(hp, ESCAPE_BAND_EARLY_HP_CAP); // 탈출 초반: 기본 곡괭이 2~4타 확정 클리어
+        }
         const tier = {
           ...baseTier,
           hp,
@@ -1590,7 +1714,7 @@ class MineScene extends Phaser.Scene {
           .setOrigin(0.5, ROCK_ORIGIN_Y)
           .setDisplaySize(ROCK_DISPLAY, ROCK_DISPLAY)
           .setDepth(y)
-          .setTint(theme.tint ?? baseTier.tint) // 11층 이상은 테마 색이 깊이별 색보다 우선한다 (한눈에 구역이 구분되도록)
+          .setTint(theme.tint ?? baseTier.tint) // 테마 색이 있으면(중층/용암 등) 깊이별 색보다 우선한다 (한눈에 구역이 구분되도록)
           .setInteractive({ useHandCursor: true, pixelPerfect: true }); // 이웃 타일과 사각 히트박스가 겹치지 않도록 픽셀 단위 판정
         const rock = { kind: "rock", sprite, col, row, depthM, tier, isLavaRock, uses: tier.hp, maxUses: tier.hp, broken: false };
         sprite.on("pointerdown", () => this.onOreClicked(rock));
@@ -2392,7 +2516,7 @@ class MineScene extends Phaser.Scene {
   resolveMiningTick(cluster) {
     this.pickaxeDurability = Math.max(0, this.pickaxeDurability - 1);
     this.sp = Math.max(0, this.sp - SP_COST_PER_CYCLE);
-    sfx.playPickSound();
+    sfx.playPickSound(cluster.isLavaRock);
 
     if (cluster.kind === "monster") { this.resolveMonsterHit(cluster); return; }
     if (cluster.kind === "boss") { this.resolveBossHit(cluster); return; }
@@ -2788,7 +2912,7 @@ class MineScene extends Phaser.Scene {
     }
 
     this.applyMiningDamage(target, 1);
-    sfx.playPickSound();
+    sfx.playPickSound(target.isLavaRock);
     this.spawnRockChips(target.sprite.x, target.sprite.y);
     const oreKey = target.guaranteedOreKey ?? this.rollOreType(target.tier, target.isLavaRock);
     this.grantMiningRewards(worker, target, oreKey);
@@ -3711,48 +3835,114 @@ class MineScene extends Phaser.Scene {
     location.reload();
   }
 
+  /* =========================================================================
+     개발자(DEV) 디버그 패널 - 배포 전 내부 밸런스 검증용. F1 또는 우측 상단 [DEV] 버튼으로 연다.
+     ========================================================================= */
+
+  toggleDevPanel() {
+    const panel = document.getElementById("dev-panel");
+    panel.style.display = panel.style.display === "block" ? "none" : "block";
+  }
+
+  /** 자원 치트: 골드 +100,000, 철광석/미스릴 +500씩 즉시 지급한다. */
+  devCheatResources() {
+    this.gainGold(100000);
+    this.inventory.iron += 500;
+    this.inventory.mithril += 500;
+    this.addLog("🛠️ [디버그] 자원 치트: 골드 +100,000 / 철광석·미스릴 +500", "#ff9a76");
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 층 점프: 진행 조건(보스/고룡 처치 등) 검사 없이 즉시 지정한 층으로 맵/오브젝트를 강제 재구성한다. */
+  devJumpToFloor(floorNumber) {
+    this.floorNumber = floorNumber;
+    this.minFloorReached = Math.min(this.minFloorReached, floorNumber);
+    this.dragonNoise = 0;
+    this.dragonAwake = false;
+    this.sectorsThisFloor = Phaser.Math.Between(SECTOR_COUNT_RANGE[0], SECTOR_COUNT_RANGE[1]);
+    this.cancelMining();
+    this.groundItems.forEach((item) => { this.tweens.killTweensOf(item.sprite); item.sprite.destroy(); });
+    this.groundItems = [];
+
+    this.buildMine(new Set());
+
+    const spawnCell = this.gridToScreen(1, 1);
+    this.tweens.killTweensOf(this.player);
+    this.player.setPosition(spawnCell.x, spawnCell.y).setDepth(spawnCell.y);
+    this.workers.forEach((w) => {
+      this.tweens.killTweensOf(w.sprite);
+      const labelOffsetY = SLIME_DISPLAY * WORKER_SCALE * SLIME_ORIGIN_Y + 4;
+      w.sprite.setPosition(spawnCell.x, spawnCell.y).setDepth(spawnCell.y);
+      w.traitLabel.setPosition(spawnCell.x, spawnCell.y - labelOffsetY).setDepth(spawnCell.y + 1);
+      w.col = 1; w.row = 1;
+      w.state = "idle";
+      w.mineTarget = null;
+    });
+
+    const label = floorNumber === SURFACE_FLOOR ? "1F(지표면)" : `B${floorNumber}F`;
+    this.addLog(`🛠️ [디버그] ${label}(으)로 강제 이동했습니다.`, "#ff9a76");
+    this.closeShop();
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 구역/보스 원킬: 현재 맵의 모든 암반과 보스를 강제로 파괴해 구역/층 클리어(사다리·보상 스폰 포함)를 즉시 재현한다. */
+  devClearFloor() {
+    // 아직 보스 구역까지 진행하지 않아 보스가 없다면, 사다리 연출이 사이클을 다 도는 걸 기다리지 않도록 먼저 소환해둔다.
+    if (!this.boss) this.spawnBossGolem();
+    this.rockBlocks.filter((r) => !r.broken).forEach((r) => this.breakRock(r));
+    if (this.boss && !this.boss.broken) this.defeatBoss(this.boss);
+    this.addLog("🛠️ [디버그] 구역 원킬: 모든 암반을 강제로 파괴했습니다.", "#ff9a76");
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 5초 주기 자동 저장 + 탭 숨김/종료 시점 저장을 겸한다. data 조립 단계까지 통째로 try-catch로 감싸
+   *  (예: 세이브 도중 브라우저 확장 프로그램이 localStorage를 가로채는 등) 예외로 게임이 멈추지 않게 한다. */
   saveGame() {
-    const now = Date.now();
-    this.totalPlaytimeMs += now - this._lastPlaytimeTick;
-    this._lastPlaytimeTick = now;
-    const data = {
-      version: 11,
-      gold: this.gold,
-      bagLevel: this.bagLevel,
-      pickaxeLevel: this.pickaxeLevel,
-      pickaxeDurability: this.pickaxeDurability,
-      inventory: { ...this.inventory },
-      level: this.level,
-      expPercent: this.expPercent,
-      maxHP: this.maxHP, hp: this.hp,
-      maxSP: this.maxSP, sp: this.sp,
-      playerX: this.player.x,
-      playerY: this.player.y,
-      brokenCells: Array.from(this.brokenCells ?? []),
-      evolutionCounts: { ...this.evolutionCounts },
-      evolutionPicks: { ...this.evolutionPicks },
-      workerTraits: this.workers.map((w) => w.trait),
-      floorNumber: this.floorNumber,
-      relics: { owned: [...this.relics.owned], equipped: [...this.relics.equipped] },
-      chestOpened: this.chest?.opened ?? false,
-      lastSeenAt: Date.now(),
-      playerTrait: this.playerTrait,
-      minFloorReached: this.minFloorReached,
-      dragonLairCleared: this.dragonLairCleared,
-      dragonNoise: this.dragonNoise,
-      dragonAwake: this.dragonAwake,
-      sectorsThisFloor: this.sectorsThisFloor,
-      bossPowerBonus: this.bossPowerBonus,
-      pickaxeTier: this.pickaxeTier,
-      autoReturnSell: this.autoReturnSell,
-      infiniteMode: this.infiniteMode,
-      powerTrophyBonus: this.powerTrophyBonus,
-      questProgress: { ...this.questProgress },
-      totalRocksMined: this.totalRocksMined,
-      totalBossesDefeated: this.totalBossesDefeated,
-      totalPlaytimeMs: this.totalPlaytimeMs,
-    };
     try {
+      const now = Date.now();
+      this.totalPlaytimeMs += now - this._lastPlaytimeTick;
+      this._lastPlaytimeTick = now;
+      const data = {
+        version: 11,
+        gold: this.gold,
+        bagLevel: this.bagLevel,
+        pickaxeLevel: this.pickaxeLevel,
+        pickaxeDurability: this.pickaxeDurability,
+        inventory: { ...this.inventory },
+        level: this.level,
+        expPercent: this.expPercent,
+        maxHP: this.maxHP, hp: this.hp,
+        maxSP: this.maxSP, sp: this.sp,
+        playerX: this.player.x,
+        playerY: this.player.y,
+        brokenCells: Array.from(this.brokenCells ?? []),
+        evolutionCounts: { ...this.evolutionCounts },
+        evolutionPicks: { ...this.evolutionPicks },
+        workerTraits: this.workers.map((w) => w.trait),
+        floorNumber: this.floorNumber,
+        relics: { owned: [...this.relics.owned], equipped: [...this.relics.equipped] },
+        chestOpened: this.chest?.opened ?? false,
+        lastSeenAt: Date.now(),
+        lastGpsValue: this.gpsValue ?? 0, // 오프라인 보상 계산 기준(GPS) - 다음 접속 시 이 값을 기준으로 방치 보상을 추정한다
+        playerTrait: this.playerTrait,
+        minFloorReached: this.minFloorReached,
+        dragonLairCleared: this.dragonLairCleared,
+        dragonNoise: this.dragonNoise,
+        dragonAwake: this.dragonAwake,
+        sectorsThisFloor: this.sectorsThisFloor,
+        bossPowerBonus: this.bossPowerBonus,
+        pickaxeTier: this.pickaxeTier,
+        autoReturnSell: this.autoReturnSell,
+        infiniteMode: this.infiniteMode,
+        powerTrophyBonus: this.powerTrophyBonus,
+        questProgress: { ...this.questProgress },
+        totalRocksMined: this.totalRocksMined,
+        totalBossesDefeated: this.totalBossesDefeated,
+        totalPlaytimeMs: this.totalPlaytimeMs,
+      };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn("게임 저장에 실패했습니다.", e);
@@ -3760,28 +3950,37 @@ class MineScene extends Phaser.Scene {
   }
 
   /* =========================================================================
-     방치형 오프라인 보상
+     방치형 오프라인 보상 (백그라운드 탭 방치 포함)
      ========================================================================= */
 
   /**
-   * 마지막 저장 시각과 지금 사이의 경과 시간(최대 2시간)만큼, 고용된 일꾼 수에 비례한
-   * 골드/철광석 보상을 즉시 인벤토리·골드에 반영하고, 모달에 띄울 요약값을 반환한다.
-   * 일꾼이 없거나 자리를 비운 시간이 1분 미만이면 null을 반환해 모달을 띄우지 않는다.
+   * 경과 시간(ms)·일꾼 수·기준 GPS(초당 골드)로 골드/철광석을 즉시 지급하고 모달용 요약을 반환한다.
+   * baseGps 기록이 있으면 그 값을 기준으로(방치 중에는 OFFLINE_GPS_EFFICIENCY만큼만 인정),
+   * 없으면(최초 세이브 등) 일꾼 수 기반 고정 추정치로 대체한다.
    */
-  computeOfflineReward(saved) {
-    const workerCount = Phaser.Math.Clamp(saved?.workerTraits?.length ?? 0, 0, WORKER_MAX);
-    if (!saved?.lastSeenAt || !workerCount) return null;
-    const elapsedMs = Math.min(Date.now() - saved.lastSeenAt, OFFLINE_CAP_MS);
-    if (elapsedMs < OFFLINE_MIN_MS) return null;
-
+  grantOfflineReward(elapsedMs, workerCount, baseGps) {
     const minutes = elapsedMs / 60000;
-    const gold = Math.round(minutes * workerCount * OFFLINE_GOLD_PER_WORKER_PER_MIN);
+    const gold = baseGps > 0
+      ? Math.round((elapsedMs / 1000) * baseGps * OFFLINE_GPS_EFFICIENCY)
+      : Math.round(minutes * workerCount * OFFLINE_GOLD_PER_WORKER_PER_MIN);
     const iron = Math.round(minutes * workerCount * OFFLINE_IRON_PER_WORKER_PER_MIN);
     if (gold <= 0 && iron <= 0) return null;
 
     this.gainGold(gold);
     this.inventory.iron += iron;
     return { gold, iron, minutes: Math.round(minutes) };
+  }
+
+  /**
+   * 페이지를 새로 열었을 때(냉부팅): 마지막 저장 시각과 지금 사이의 경과 시간(최대 4시간)만큼
+   * 보상을 지급한다. 일꾼이 없거나 자리를 비운 시간이 1분 미만이면 null을 반환해 모달을 띄우지 않는다.
+   */
+  computeOfflineReward(saved) {
+    const workerCount = Phaser.Math.Clamp(saved?.workerTraits?.length ?? 0, 0, WORKER_MAX);
+    if (!saved?.lastSeenAt || !workerCount) return null;
+    const elapsedMs = Math.min(Date.now() - saved.lastSeenAt, OFFLINE_CAP_MS);
+    if (elapsedMs < OFFLINE_MIN_MS) return null;
+    return this.grantOfflineReward(elapsedMs, workerCount, saved.lastGpsValue ?? 0);
   }
 
   /** 오프라인 보상 요약 모달을 띄운다. */
@@ -3935,9 +4134,20 @@ document.getElementById("shop-close-x").addEventListener("click", () => window.g
 const POTION_HOTKEYS = { "1": "heal", "2": "luck", "3": "haste" };
 document.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if (e.key === "F1") { e.preventDefault(); window.gameScene?.toggleDevPanel(); return; }
   const key = POTION_HOTKEYS[e.key];
   if (key) window.gameScene?.usePotion(key);
 });
+
+// 개발자(DEV) 디버그 패널 - F1 또는 [DEV] 버튼으로 토글, 배포 전 내부 밸런스 검증용.
+document.getElementById("btn-dev").addEventListener("click", () => window.gameScene?.toggleDevPanel());
+document.getElementById("dev-panel-close").addEventListener("click", () => { document.getElementById("dev-panel").style.display = "none"; });
+document.getElementById("dev-btn-resources").addEventListener("click", () => window.gameScene?.devCheatResources());
+document.querySelectorAll(".dev-jump-btn").forEach((btn) => {
+  btn.addEventListener("click", () => window.gameScene?.devJumpToFloor(Number(btn.dataset.devfloor)));
+});
+document.getElementById("dev-btn-clearfloor").addEventListener("click", () => window.gameScene?.devClearFloor());
+document.getElementById("dev-btn-resetsave").addEventListener("click", () => window.gameScene?.resetSaveData());
 
 document.querySelectorAll(".shop-tab").forEach((btn) => {
   btn.addEventListener("click", () => window.gameScene?.switchShopTab(btn.dataset.shoptab));
