@@ -2,26 +2,63 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>슬라임 지하 광산 굴착 RPG - 프로토타입</title>
 <style>
   html, body {
     margin: 0;
     padding: 0;
+    width: 100%; /* html이 flex라 align-items:center 때문에 body가 콘텐츠 폭(800px)으로 shrink-to-fit 되는 것을 방지 */
     background: #1a1a1a;
     display: flex;
     flex-direction: column;
     align-items: center;
     font-family: "Malgun Gothic", sans-serif;
     color: #eee;
+    touch-action: manipulation; /* 더블탭 확대/핀치 줌 방지 */
+    overflow-x: hidden;
+    box-sizing: border-box;
   }
   #title {
     margin: 16px 0 8px 0;
     font-size: 20px;
   }
+
+  /* ---- 상단 HUD: 층수/구역, GPS(초당 골드), 버프 타이머 ---- */
+  #stats-hud {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    font-family: "Courier New", monospace;
+    letter-spacing: 0.5px;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+  #stats-hud span {
+    background: rgba(20,15,10,0.78);
+    border: 1px solid #7a5a34;
+    border-radius: 4px;
+    padding: 4px 10px;
+    color: #ffe066;
+    text-shadow: 1px 1px 0 #2e2013;
+  }
+  #hud-gps { color: #9ad1ff !important; }
+  #hud-buff { color: #8fdc8f !important; }
+
+  /* ---- 반응형 뷰포트: #game-wrap(디자인 해상도 고정) 전체를 화면 폭에 맞춰 축소 ---- */
+  #game-viewport {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+  }
   #game-wrap {
     position: relative;
     box-shadow: 0 0 24px rgba(0,0,0,0.6);
     user-select: none;
+    transform-origin: top center;
+    flex: none;
   }
   #help {
     margin: 10px 0 20px 0;
@@ -60,7 +97,7 @@
     font-size: 14px;
     line-height: 1;
     cursor: pointer;
-    padding: 0 2px;
+    padding: 8px 10px; /* 터치 타겟 확보 */
   }
   .win-close:hover { color: #ff8080; }
   .rpg-window-body { padding: 8px 10px; }
@@ -108,7 +145,7 @@
   /* ---- 우측 상단 음소거 토글 ---- */
   #btn-mute {
     position: absolute; top: 12px; right: 192px;
-    width: 32px; height: 32px;
+    width: 44px; height: 44px;
     background: rgba(20,15,10,0.82); border: 2px solid #7a5a34; border-radius: 6px;
     color: #eee; font-size: 15px; cursor: pointer; z-index: 15;
   }
@@ -153,7 +190,7 @@
     z-index: 15;
   }
   .quick-slot {
-    width: 38px; height: 38px;
+    width: 44px; height: 44px;
     background: #2a2118;
     border: 1px solid #6b4a30;
     border-radius: 4px;
@@ -183,7 +220,7 @@
     z-index: 15;
   }
   .menu-icon {
-    width: 40px; height: 40px;
+    width: 44px; height: 44px;
     background: rgba(20,15,10,0.82);
     border: 2px solid #7a5a34;
     border-radius: 6px;
@@ -229,6 +266,7 @@
   }
   .shop-btn:hover:not(:disabled) { background: #5f4d3b; }
   .shop-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .shop-btn.filled-toggle { background: #3d6b3f; border-color: #6fbf73; color: #eaffea; }
   .shop-btn .cost { float: right; color: #ffd166; }
   #shop-msg { min-height: 18px; font-size: 12px; color: #ff9a76; text-align: center; margin-top: 4px; }
   #btn-close-shop { background: #6b2b2b; border-color: #a04b4b; text-align: center; }
@@ -353,6 +391,13 @@
 
 <div id="title">⛏️ 슬라임 지하 광산 굴착 RPG - 쿼터뷰 갱도 프로토타입</div>
 
+<div id="stats-hud">
+  <span id="hud-floor">B1F · 구역 1/6</span>
+  <span id="hud-gps">GPS 0G/s</span>
+  <span id="hud-buff" hidden></span>
+</div>
+
+<div id="game-viewport">
 <div id="game-wrap">
   <div id="game-container"></div>
 
@@ -414,7 +459,7 @@
 
   <!-- 하단 중앙: 퀵슬롯 바 -->
   <div id="quickslot-bar">
-    <div class="quick-slot filled" title="곡괭이">
+    <div class="quick-slot filled" id="quickslot-pickaxe" title="나무 곡괭이">
       ⛏️
       <div class="slot-durability" id="pickaxe-durability">50/50</div>
     </div>
@@ -454,6 +499,7 @@
         <button class="shop-tab active" data-shoptab="trade">💰 교환소</button>
         <button class="shop-tab" data-shoptab="spa">♨️ 온천</button>
         <button class="shop-tab" data-shoptab="smithy">🔨 대장간</button>
+        <button class="shop-tab" data-shoptab="equip">🗡️ 장비</button>
         <button class="shop-tab" data-shoptab="bag">🎒 가방상점</button>
         <button class="shop-tab" data-shoptab="workers">🛠️ 일꾼관리소</button>
         <button class="shop-tab" data-shoptab="elevator">🛗 엘리베이터</button>
@@ -481,8 +527,17 @@
         <div class="shop-note">파워 강화 시 타격 한 번에 암반을 더 크게 깎습니다.</div>
       </div>
 
+      <div class="shop-tab-panel" data-shoppanel="equip" style="display:none">
+        <div class="shop-note" style="margin:2px 2px 8px;">현재 장비: <b id="equip-current-name">나무 곡괭이</b></div>
+        <div id="equip-craft-list"></div>
+      </div>
+
       <div class="shop-tab-panel" data-shoppanel="bag" style="display:none">
         <button id="btn-expand" class="shop-btn">가방 확장 <span class="cost" id="cost-expand"></span></button>
+        <div class="shop-note" style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
+          <span>가방이 가득 차면 자동 귀환 판매</span>
+          <button id="btn-toggle-auto-return" class="shop-btn" style="width:auto; margin:0; padding:5px 12px;">OFF</button>
+        </div>
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="workers" style="display:none">
@@ -504,6 +559,8 @@
       <div id="shop-msg"></div>
       <hr>
       <button id="btn-close-shop" class="shop-btn">갱도로 복귀 (Esc)</button>
+      <button id="btn-export-save" class="shop-btn reset-btn">📤 세이브 내보내기 (코드 복사)</button>
+      <button id="btn-import-save" class="shop-btn reset-btn">📥 세이브 불러오기 (코드 붙여넣기)</button>
       <button id="btn-reset-save" class="shop-btn reset-btn">⚠️ 세이브 데이터 초기화</button>
     </div>
   </div>
@@ -567,6 +624,7 @@
       <button id="btn-offline-close" class="shop-btn" style="margin-top:12px;">확인</button>
     </div>
   </div>
+</div>
 </div>
 
 <div id="help">
@@ -653,8 +711,8 @@ const RELIC_TYPES = {
   compass:  { name: "황금 나침반", emoji: "🧭", desc: "층 이동 시 골드 보너스 +25%" },
 };
 
-// 방치형 오프라인 보상 (일꾼 수에 비례, 최대 2시간분까지만 누적)
-const OFFLINE_CAP_MS = 2 * 60 * 60 * 1000;
+// 방치형 오프라인 보상 (일꾼 수에 비례, 최대 8시간분까지만 누적)
+const OFFLINE_CAP_MS = 8 * 60 * 60 * 1000;
 const OFFLINE_MIN_MS = 60 * 1000; // 이 이상 자리를 비웠을 때만 보상 모달을 띄운다
 const OFFLINE_GOLD_PER_WORKER_PER_MIN = 2;
 const OFFLINE_IRON_PER_WORKER_PER_MIN = 0.3;
@@ -702,9 +760,13 @@ function floorThemeOf(floorNumber) {
 }
 
 /* -------------------------------------------------------------------------
-   1e. 초반 쾌속 세팅 - 1~3층은 압도적으로 빨리 뚫리고, 1~5층은 골드가 넉넉하다.
+   1e. 성장 밸런스 곡선
+   - B1~B5  : 초반 쾌속 구간 - 암반 내구도를 낮게 고정 + 타격 보너스 골드로 구역이 20~30초 내외로 뚫린다.
+   - B6~B15 : 성장 구간 - 일꾼 고용/곡괭이 강화가 사실상 필수가 되도록 별도 완화 없이 기본 난이도 곡선을 그대로 적용한다.
+   - B16~B29: 하드 파밍 구간 - 용암 암반(1.75배 내구도) + 특성 리롤/유물 세팅이 요구되는 고난이도 구간.
+   - B30    : 드래곤 레어 최종 결전.
    ------------------------------------------------------------------------- */
-const EARLY_GAME_HP_CAP_FLOOR = 3;   // 이 층까지는 암반 내구도를 강제로 낮게 고정한다
+const EARLY_GAME_HP_CAP_FLOOR = 5;   // 이 층까지는 암반 내구도를 강제로 낮게 고정한다 (B1~B5)
 const EARLY_GAME_HP_CAP = 2;         // 기본 곡괭이로 1~2타면 부서지는 수준
 const EARLY_GOLD_BONUS_FLOOR = 5;    // 이 층까지는 타격마다 소량의 보너스 골드가 함께 나온다
 const EARLY_GOLD_BONUS_PER_HIT = 2;
@@ -820,6 +882,16 @@ function makeGlowTexture(scene, key, radius, color) {
    ------------------------------------------------------------------------- */
 const CRITICAL_CHANCE = 0.10;
 const CRITICAL_MULTIPLIER = 2;
+
+/* -------------------------------------------------------------------------
+   2b-2. 장비 제작소 - 재료를 소모해 곡괭이 등급을 영구적으로 올린다 (파워강화 단계와 별개로 누적).
+   ------------------------------------------------------------------------- */
+const PICKAXE_TIERS = [
+  { id: "wood",   name: "나무 곡괭이",         tint: 0xc9a876, powerBonus: 0,  speedMult: 1,    critBonus: 0,    cost: null },
+  { id: "iron",   name: "무쇠 곡괭이",         tint: 0xc7ccd6, powerBonus: 3,  speedMult: 1,    critBonus: 0,    cost: { iron: 40, mithril: 0,  gold: 80 } },
+  { id: "mithril",name: "미스릴 곡괭이",       tint: 0x9b6bff, powerBonus: 8,  speedMult: 1.15, critBonus: 0,    cost: { iron: 60, mithril: 30, gold: 300 } },
+  { id: "dragon", name: "드래곤 슬레이어 곡괭이", tint: 0xff5a3c, powerBonus: 20, speedMult: 1,    critBonus: 0.2,  cost: { iron: 100, mithril: 80, gold: 1200 } },
+];
 
 /* -------------------------------------------------------------------------
    2c. Web Audio API 기반 8비트 효과음 - 외부 음원 파일 없이 오실레이터로 직접 합성한다.
@@ -943,6 +1015,11 @@ class MineScene extends Phaser.Scene {
     this.oreValueBuffUntil = 0; // 이 시각까지 판매가 2배 (황금 상자 이벤트)
     this.playerAutoTimer = null;
 
+    this.pickaxeTier = 0;        // 장비 제작소에서 올린 곡괭이 등급 인덱스 (PICKAXE_TIERS, 파워강화 단계와 별개로 누적)
+    this.autoReturnSell = false; // 가방이 가득 차면 자동으로 쉼터로 귀환해 일괄 판매할지 여부
+    this.autoReturning = false;  // 자동 귀환 판매가 이미 진행 중인지 (중복 트리거 방지)
+    this.gpsHistory = [];        // GPS(초당 골드) 계산용 - 최근 5초간의 {time, gold} 스냅샷
+
     // 곡괭이 강화 단계표 (레벨, 비용)
     this.upgradeTiers = [
       { level: 1, cost: 0 },
@@ -1018,6 +1095,8 @@ class MineScene extends Phaser.Scene {
       this.maxFloorReached = saved.maxFloorReached ?? this.floorNumber;
       this.dragonLairCleared = saved.dragonLairCleared ?? false;
       this.bossPowerBonus = saved.bossPowerBonus ?? this.bossPowerBonus;
+      this.pickaxeTier = saved.pickaxeTier ?? this.pickaxeTier;
+      this.autoReturnSell = saved.autoReturnSell ?? this.autoReturnSell;
       if (this.floorNumber === DRAGON_LAIR_FLOOR) {
         this.dragonNoise = saved.dragonNoise ?? 0;
         this.dragonAwake = saved.dragonAwake ?? false;
@@ -1126,6 +1205,9 @@ class MineScene extends Phaser.Scene {
 
     this.time.addEvent({ delay: 5000, loop: true, callback: () => this.saveGame() });
     this.time.addEvent({ delay: 900, loop: true, callback: () => this.ambientSparkle() });
+    this.gpsHistory = [{ time: Date.now(), gold: this.gold }];
+    this.gpsValue = 0;
+    this.time.addEvent({ delay: 1000, loop: true, callback: () => this.sampleGps() });
     window.addEventListener("beforeunload", () => this.saveGame());
     this.schedulePlayerAutoTick();
 
@@ -1756,6 +1838,7 @@ class MineScene extends Phaser.Scene {
     this.mineProgress = 0;
     this.gaugeBg.setVisible(true);
     this.gaugeFill.setVisible(true);
+    this.gaugeFill.setFillStyle(PICKAXE_TIERS[this.pickaxeTier].tint); // 곡괭이 등급 색상을 채굴 게이지에 반영
     this.swingTween = this.tweens.add({
       targets: this.player,
       scaleX: this.playerBaseScale * 1.15, scaleY: this.playerBaseScale * 0.88,
@@ -1775,6 +1858,7 @@ class MineScene extends Phaser.Scene {
   currentCycleMs() {
     const base = Math.max(500, BASE_CYCLE_MS - (this.pickaxeLevel - 1) * 150);
     let mult = this.hasTrait(this, "workaholic") ? 0.5 : 1;
+    mult /= PICKAXE_TIERS[this.pickaxeTier].speedMult; // 장비 등급의 공속 보너스 (예: 미스릴 곡괭이 +15%)
     if (Date.now() < this.speedBuffUntil) mult /= SECTOR_SPEED_BUFF_MULT; // 온천 이벤트 버프
     return base * mult;
   }
@@ -1823,7 +1907,13 @@ class MineScene extends Phaser.Scene {
 
   /** 곡괭이 파워 강화 단계 + 철갑 슬라임 진화(+30%) + 고대 거인의 장갑 유물(+50%)에 비례해 타격당 암반 내구도를 깎는다. */
   get pickaxePower() {
-    return this.pickaxeLevel * (1 + 0.3 * this.evolutionCounts.ironclad) * (1 + 0.5 * this.hasRelic("gauntlet")) + this.bossPowerBonus;
+    return this.pickaxeLevel * (1 + 0.3 * this.evolutionCounts.ironclad) * (1 + 0.5 * this.hasRelic("gauntlet"))
+      + this.bossPowerBonus + PICKAXE_TIERS[this.pickaxeTier].powerBonus;
+  }
+
+  /** 크리티컬 확률 - 기본값에 장비 등급의 크리티컬 보너스(드래곤 슬레이어 곡괭이 +20%)를 더한다. */
+  get criticalChance() {
+    return CRITICAL_CHANCE + PICKAXE_TIERS[this.pickaxeTier].critBonus;
   }
 
   /** 가방 기본 용량(강화 단계) + 거대 슬라임 진화 보너스(+15칸)를 합산해 최신화한다. */
@@ -1891,7 +1981,7 @@ class MineScene extends Phaser.Scene {
    * 데미지가 2배가 되고, 부서진 내구도만큼 떠오르는 데미지 텍스트를 함께 띄운다.
    */
   applyMiningDamage(rock, baseDamage) {
-    const isCritical = Math.random() < CRITICAL_CHANCE;
+    const isCritical = Math.random() < this.criticalChance;
     const amount = Math.max(1, Math.round(baseDamage * (isCritical ? CRITICAL_MULTIPLIER : 1)));
     rock.uses -= amount;
     this.spawnDamageText(rock.sprite.x, rock.sprite.y, amount, isCritical);
@@ -2058,6 +2148,7 @@ class MineScene extends Phaser.Scene {
           this.addLog("가방이 가득 찼습니다! 상점에서 판매하고 오세요.", "#ff9a76");
           item.warned = true;
         }
+        if (this.autoReturnSell) this.triggerAutoReturnSell();
         continue;
       }
 
@@ -2619,7 +2710,37 @@ class MineScene extends Phaser.Scene {
     }
     document.getElementById("btn-reroll-trait").disabled = this.gold < TRAIT_REROLL_COST;
 
+    const autoReturnBtn = document.getElementById("btn-toggle-auto-return");
+    autoReturnBtn.textContent = this.autoReturnSell ? "ON" : "OFF";
+    autoReturnBtn.classList.toggle("filled-toggle", this.autoReturnSell);
+
+    this.renderEquipTab();
     this.renderRelicsTab();
+  }
+
+  /** 쉼터 [장비] 탭: 곡괭이 등급표를 현재 보유/제작 가능 상태에 맞춰 다시 그린다. */
+  renderEquipTab() {
+    const currentTier = PICKAXE_TIERS[this.pickaxeTier];
+    document.getElementById("equip-current-name").textContent = currentTier.name;
+
+    const list = document.getElementById("equip-craft-list");
+    list.innerHTML = PICKAXE_TIERS.map((tier, idx) => {
+      if (idx === 0) return ""; // 나무 곡괭이는 시작 장비라 제작 목록에 표시하지 않는다
+      const owned = idx <= this.pickaxeTier;
+      const affordable = !owned && tier.cost && this.gold >= tier.cost.gold
+        && this.inventory.iron >= tier.cost.iron && this.inventory.mithril >= tier.cost.mithril;
+      const effectText = [
+        tier.powerBonus ? `파워 +${tier.powerBonus}` : null,
+        tier.speedMult !== 1 ? `공속 +${Math.round((tier.speedMult - 1) * 100)}%` : null,
+        tier.critBonus ? `크리티컬 +${Math.round(tier.critBonus * 100)}%` : null,
+      ].filter(Boolean).join(" · ");
+      const costText = `철${tier.cost.iron} · 미스릴${tier.cost.mithril} · ${tier.cost.gold}G`;
+      return `
+        <button class="shop-btn" data-craft-tier="${idx}" ${owned || !affordable ? "disabled" : ""}>
+          ${tier.name} (${effectText})
+          <span class="cost">${owned ? "제작완료" : costText}</span>
+        </button>`;
+    }).join("");
   }
 
   sellAll() {
@@ -2701,6 +2822,82 @@ class MineScene extends Phaser.Scene {
     this.saveGame();
   }
 
+  /** 장비 제작소: 재료(철광석/미스릴/골드)를 소모해 곡괭이 등급을 올린다 (하위 등급을 건너뛸 수도 있다). */
+  craftPickaxeTier(idx) {
+    const tier = PICKAXE_TIERS[idx];
+    if (!tier || !tier.cost || idx <= this.pickaxeTier) return;
+    if (this.gold < tier.cost.gold || this.inventory.iron < tier.cost.iron || this.inventory.mithril < tier.cost.mithril) return;
+    this.gold -= tier.cost.gold;
+    this.inventory.iron -= tier.cost.iron;
+    this.inventory.mithril -= tier.cost.mithril;
+    this.pickaxeTier = idx;
+    document.getElementById("shop-msg").textContent = `${tier.name}를 제작했습니다!`;
+    this.addLog(`🗡️ ${tier.name}를 제작했습니다!`, "#ffd166");
+    sfx.playFanfareSound();
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 가방이 가득 찼을 때 자동으로 쉼터로 귀환해 일괄 판매할지 여부를 토글한다. */
+  toggleAutoReturnSell() {
+    this.autoReturnSell = !this.autoReturnSell;
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 가방이 가득 찼고 자동 귀환 판매가 켜져 있으면, 포탈로 이동해 조용히 일괄 판매한다. */
+  triggerAutoReturnSell() {
+    if (this.autoReturning) return;
+    this.autoReturning = true;
+    this.addLog("🎒 가방이 가득 차 자동으로 쉼터에 귀환합니다...", "#ffd166");
+    const dx = this.player.x - this.shopSprite.x;
+    const dy = this.player.y - this.shopSprite.y;
+    const dist = Math.max(1, Math.hypot(dx, dy));
+    const ax = this.shopSprite.x + (dx / dist) * SHOP_APPROACH_DIST;
+    const ay = this.shopSprite.y + (dy / dist) * SHOP_APPROACH_DIST;
+    this.moveTo(ax, ay, () => {
+      this.sellAll();
+      this.addLog("💰 자동 판매를 마치고 다시 채굴을 시작합니다.", "#8fdc8f");
+      this.autoReturning = false;
+    });
+  }
+
+  /* =========================================================================
+     세이브 백업 / 복원 (Export / Import)
+     ========================================================================= */
+
+  /** 현재 세이브 데이터를 Base64 문자열로 클립보드에 복사한다 (다른 브라우저에서 이어하기용). */
+  exportSave() {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) {
+      document.getElementById("shop-msg").textContent = "저장된 데이터가 없습니다.";
+      return;
+    }
+    const encoded = btoa(unescape(encodeURIComponent(raw)));
+    const done = () => { document.getElementById("shop-msg").textContent = "세이브 코드를 클립보드에 복사했습니다!"; };
+    const fallback = () => window.prompt("아래 코드를 복사해 보관하세요:", encoded);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(encoded).then(done).catch(fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  /** Base64로 내보낸 세이브 코드를 붙여넣어 진행도를 복원한다. */
+  importSave() {
+    const input = window.prompt("내보내기 한 세이브 코드를 붙여넣으세요:");
+    if (!input) return;
+    try {
+      const raw = decodeURIComponent(escape(atob(input.trim())));
+      JSON.parse(raw); // 형식 검증 (깨진 코드면 여기서 예외 발생)
+      localStorage.setItem(SAVE_KEY, raw);
+      document.getElementById("shop-msg").textContent = "불러오기 완료! 잠시 후 새로고침합니다...";
+      this.time.delayedCall(700, () => location.reload());
+    } catch (e) {
+      document.getElementById("shop-msg").textContent = "잘못된 세이브 코드입니다.";
+    }
+  }
+
   /* =========================================================================
      채팅 로그 / 가방 팝업 / UI 갱신
      ========================================================================= */
@@ -2738,6 +2935,39 @@ class MineScene extends Phaser.Scene {
     document.getElementById("inventory-modal").style.display = "block";
   }
 
+  /** 1초마다 골드 스냅샷을 쌓아 최근 5초 이동평균으로 GPS(초당 채굴 골드량)를 갱신한다 (순간값 대신 부드러운 값). */
+  sampleGps() {
+    const now = Date.now();
+    this.gpsHistory.push({ time: now, gold: this.gold });
+    const cutoff = now - 5000;
+    while (this.gpsHistory.length > 1 && this.gpsHistory[0].time < cutoff) this.gpsHistory.shift();
+    const oldest = this.gpsHistory[0];
+    const elapsedSec = Math.max(1, (now - oldest.time) / 1000);
+    this.gpsValue = Math.max(0, (this.gold - oldest.gold) / elapsedSec);
+    this.updateStatsHud();
+  }
+
+  /** 상단 HUD(층수/구역, GPS, 버프 타이머)를 현재 상태로 갱신한다. */
+  updateStatsHud() {
+    const floorLabel = document.getElementById("hud-floor");
+    if (floorLabel) floorLabel.textContent = `B${this.floorNumber}F · 구역 ${this.activeSectorIndex + 1}/${this.sectorsThisFloor}`;
+    const gpsLabel = document.getElementById("hud-gps");
+    if (gpsLabel) gpsLabel.textContent = `GPS ${Math.round(this.gpsValue ?? 0)}G/s`;
+
+    const buffLabel = document.getElementById("hud-buff");
+    if (!buffLabel) return;
+    const now = Date.now();
+    const parts = [];
+    if (now < this.speedBuffUntil) parts.push(`⚡ 채굴속도+20% ${Math.ceil((this.speedBuffUntil - now) / 1000)}초`);
+    if (now < this.oreValueBuffUntil) parts.push(`💰 판매가2배 ${Math.ceil((this.oreValueBuffUntil - now) / 1000)}초`);
+    if (parts.length > 0) {
+      buffLabel.textContent = parts.join("  ·  ");
+      buffLabel.hidden = false;
+    } else {
+      buffLabel.hidden = true;
+    }
+  }
+
   updateUI() {
     // 상태창
     document.getElementById("stat-level").textContent = this.level;
@@ -2752,9 +2982,15 @@ class MineScene extends Phaser.Scene {
       document.getElementById("stat-trait").textContent = `특성: ${trait.emoji} ${trait.name}`;
     }
 
-    // 퀵슬롯 곡괭이 내구도
+    // 퀵슬롯 곡괭이 내구도 + 장비 등급(색상/툴팁) 반영
     document.getElementById("pickaxe-durability").textContent =
       `${this.pickaxeDurability}/${this.pickaxeMaxDurability}`;
+    const tier = PICKAXE_TIERS[this.pickaxeTier];
+    const pickaxeSlot = document.getElementById("quickslot-pickaxe");
+    pickaxeSlot.title = tier.name;
+    pickaxeSlot.style.borderColor = `#${tier.tint.toString(16).padStart(6, "0")}`;
+
+    this.updateStatsHud();
 
     if (this.shopOpen) this.refreshShopUI();
     if (document.getElementById("inventory-modal").style.display === "block") this.openInventory();
@@ -2866,6 +3102,8 @@ class MineScene extends Phaser.Scene {
       dragonAwake: this.dragonAwake,
       sectorsThisFloor: this.sectorsThisFloor,
       bossPowerBonus: this.bossPowerBonus,
+      pickaxeTier: this.pickaxeTier,
+      autoReturnSell: this.autoReturnSell,
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -3020,6 +3258,13 @@ document.getElementById("btn-reroll-trait").addEventListener("click", () => wind
 document.getElementById("btn-repair").addEventListener("click", () => window.gameScene?.repairPickaxe());
 document.getElementById("btn-upgrade").addEventListener("click", () => window.gameScene?.upgradePickaxe());
 document.getElementById("btn-expand").addEventListener("click", () => window.gameScene?.expandBag());
+document.getElementById("btn-toggle-auto-return").addEventListener("click", () => window.gameScene?.toggleAutoReturnSell());
+
+// 장비 제작 목록은 매번 다시 그려지므로(renderEquipTab), 위임(delegation) 방식으로 클릭을 받는다.
+document.getElementById("equip-craft-list").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-craft-tier]");
+  if (btn) window.gameScene?.craftPickaxeTier(Number(btn.dataset.craftTier));
+});
 document.getElementById("btn-hire-worker").addEventListener("click", () => window.gameScene?.hireWorker());
 document.getElementById("btn-descend").addEventListener("click", () => window.gameScene?.descendFloor());
 document.getElementById("btn-close-shop").addEventListener("click", () => window.gameScene?.closeShop());
@@ -3047,6 +3292,8 @@ document.getElementById("btn-offline-close").addEventListener("click", () => {
   document.getElementById("offline-modal").style.display = "none";
 });
 
+document.getElementById("btn-export-save").addEventListener("click", () => window.gameScene?.exportSave());
+document.getElementById("btn-import-save").addEventListener("click", () => window.gameScene?.importSave());
 document.getElementById("btn-reset-save").addEventListener("click", () => window.gameScene?.resetSaveData());
 
 const muteBtn = document.getElementById("btn-mute");
@@ -3061,6 +3308,34 @@ document.addEventListener("keydown", (e) => {
     window.gameScene.closeShop();
   }
 });
+
+/* -------------------------------------------------------------------------
+   6. 반응형 뷰포트 - #game-wrap(800x600 디자인 해상도)을 통째로 화면 폭에 맞춰 축소한다.
+   Phaser 내부 좌표계는 그대로 유지되므로(클릭 좌표는 브라우저가 알아서 변환), 게임 로직은 무영향.
+   ------------------------------------------------------------------------- */
+(function setupResponsiveViewport() {
+  const viewport = document.getElementById("game-viewport");
+  const wrap = document.getElementById("game-wrap");
+  let naturalW = wrap.offsetWidth || 820;
+  let naturalH = wrap.offsetHeight || 610;
+
+  function fit() {
+    const margin = 16;
+    const scale = Math.min(1, (window.innerWidth - margin) / naturalW);
+    wrap.style.transform = `scale(${scale})`;
+    viewport.style.height = `${naturalH * scale}px`;
+  }
+
+  // ResizeObserver는 관찰 시작 직후 최초 1회를 포함해 body 크기가 바뀔 때마다 콜백을 호출한다.
+  // 순수 window "resize" 이벤트가 발생하지 않는 임베디드/자동화 뷰포트 환경에서도 안정적으로 반응한다.
+  if (window.ResizeObserver) {
+    new ResizeObserver(fit).observe(document.body);
+  } else {
+    window.addEventListener("resize", fit);
+    fit();
+  }
+  window.addEventListener("orientationchange", fit);
+})();
 </script>
 </body>
 </html>
