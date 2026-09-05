@@ -877,6 +877,10 @@
         <button id="btn-hire-worker" class="shop-btn">미니 일꾼 슬라임 고용 <span class="cost" id="cost-hire-worker">100G</span></button>
         <button id="btn-expand-workers" class="shop-btn">일꾼 한도 확장 <span class="cost" id="cost-expand-workers">250G</span></button>
         <div class="shop-note">현재 고용: <span id="worker-count">0</span>/<span id="worker-max">3</span> · 한도 확장(+1, +2)으로 최대 6마리까지 늘릴 수 있습니다.</div>
+        <div id="worker-heal-row" style="display:none; margin-top:8px;">
+          <button id="btn-heal-workers" class="shop-btn reset-btn">🩹 부상당한 일꾼 치료 <span class="cost" id="cost-heal-workers"></span></button>
+          <div class="shop-note" style="color:#ff9a9a;">몬스터에게 패배하면 함께 있던 미니 일꾼들이 부상당해, 치료 전까지는 일하지 않습니다.</div>
+        </div>
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="elevator" style="display:none">
@@ -1054,9 +1058,9 @@ const BATWING_SELL_PRICE = 10;
    1a-2. 필드 몬스터 (개미/두더지/지네) + 층별 수문장 보스(바위 골렘)
    ------------------------------------------------------------------------- */
 const MONSTER_TYPES = {
-  ant:       { name: "동굴 개미",   sprite: "m_ant",       display: 52, originY: 0.82, hp: 3, goldMin: 3, goldMax: 8,  exp: 15 },
-  mole:      { name: "땅굴 두더지", sprite: "m_mole",      display: 60, originY: 0.85, hp: 5, goldMin: 6, goldMax: 14, exp: 22 },
-  centipede: { name: "동굴 지네",   sprite: "m_centipede", display: 56, originY: 0.82, hp: 4, goldMin: 4, goldMax: 10, exp: 18 },
+  ant:       { name: "동굴 개미",   sprite: "m_ant",       display: 52, originY: 0.82, hp: 3, goldMin: 3, goldMax: 8,  exp: 15, role: "melee",  attackMs: 900,  melee: 4 },
+  mole:      { name: "땅굴 두더지", sprite: "m_mole",      display: 60, originY: 0.85, hp: 5, goldMin: 6, goldMax: 14, exp: 22, role: "melee",  attackMs: 1100, melee: 6 },
+  centipede: { name: "동굴 지네",   sprite: "m_centipede", display: 56, originY: 0.82, hp: 4, goldMin: 4, goldMax: 10, exp: 18, role: "ranged", attackMs: 1400, melee: 3 },
 };
 const FIELD_MONSTER_TYPE_IDS = Object.keys(MONSTER_TYPES);
 const FIELD_MONSTER_SPAWN_CHANCE = 0.1;        // 채굴 타격마다(보스 구역 제외) 필드 몬스터가 나타날 확률
@@ -1150,6 +1154,13 @@ const ALTAR_WAVE_COUNT = 3;
 
 const PLAYER_ATK_RANGE = 78;
 const PLAYER_ATK_MS = 700;
+
+/* ---- 필드 몬스터 전용 전투 화면 배치 상수 ---- */
+const BATTLE_OVERLAY_DEPTH = 3000;
+const BATTLE_PLAYER_POS = { x: 220, y: 380 };
+const BATTLE_MONSTER_POS = { x: 580, y: 300 };
+const BATTLE_PLAYER_DISPLAY = 140;
+const BATTLE_MONSTER_DISPLAY_MULT = 2.4;
 const WORKER_ATK_RANGE = 58;
 const WORKER_ATK_MS = 900;
 const BURST_MAX = 100;
@@ -1220,6 +1231,7 @@ const ABYSS_TARGET_FLOOR = 100;       // 무한 모드의 목표 표시 층수 (
 
 // 미니 일꾼 슬라임 (자율 배회형 방치 채굴 AI)
 const WORKER_COST = 100;
+const WORKER_HEAL_COST_PER_UNIT = 150; // 필드 전투 패배로 부상당한 일꾼 1마리를 치료하는 데 드는 골드
 const WORKER_MAX = 3; // 기본 한도. 상점 확장(+1, +2)과 전설 특성으로 늘어난다.
 const WORKER_EXPAND_STEPS = [
   { add: 1, gold: 250, name: "일꾼 한도 +1" },
@@ -1702,6 +1714,8 @@ class MineScene extends Phaser.Scene {
     this.groundItems = [];
     this.miningTarget = null;
     this.mineProgress = 0;
+    this.battleActive = false; // 필드 몬스터 전용 전투 화면이 떠 있는 동안 true
+    this.fieldBattle = null;   // 현재 진행 중인 필드 전투 상태(오버레이/스프라이트/HP바 등)
     this.shopOpen = false;
     this.activeTab = "general";
     this.chatMessages = [];
@@ -2021,7 +2035,7 @@ class MineScene extends Phaser.Scene {
 
     /* ---- 3-8. 입력: 바닥 클릭 = 이동, 오브젝트 클릭은 각자 핸들러가 처리 ---- */
     this.input.on("pointerdown", (pointer) => {
-      if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.legendTraitOpen || this.towerBuildOpen) return;
+      if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.legendTraitOpen || this.towerBuildOpen || this.battleActive) return;
       if (this.pendingAcid) {
         this.castAcidAt(pointer.worldX, pointer.worldY);
         return;
@@ -2034,7 +2048,7 @@ class MineScene extends Phaser.Scene {
     });
     this.input.on("pointermove", (pointer) => {
       if (!pointer.isDown || !this.dragPinging) return;
-      if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen) return;
+      if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.battleActive) return;
       this.pingEnemiesAlong(pointer.worldX, pointer.worldY);
     });
     this.input.on("pointerup", () => { this.dragPinging = false; });
@@ -2939,8 +2953,12 @@ class MineScene extends Phaser.Scene {
   }
 
   onOreClicked(cluster) {
-    if (cluster.broken || this.evolutionOpen || this.bossRewardOpen || this.isDefenseActive()) return;
-    if (cluster.kind === "monster" || cluster.kind === "boss" || cluster.kind === "wave") {
+    if (cluster.broken || this.evolutionOpen || this.bossRewardOpen || this.isDefenseActive() || this.battleActive) return;
+    if (cluster.kind === "monster") {
+      this.startFieldBattle(cluster);
+      return;
+    }
+    if (cluster.kind === "boss" || cluster.kind === "wave") {
       this.rallyOnClick(cluster);
       return;
     }
@@ -2967,7 +2985,7 @@ class MineScene extends Phaser.Scene {
 
   playerAutoTick() {
     if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.miningTarget) return;
-    if (this.isDefenseActive() || this.legendTraitOpen || this.towerBuildOpen) return;
+    if (this.isDefenseActive() || this.legendTraitOpen || this.towerBuildOpen || this.battleActive) return;
     if (this.tweens.isTweening(this.player)) return;
     if (this.rallyTarget && !this.unitIsDead(this.rallyTarget)) return; // 지휘 중에는 자동 채굴을 쉰다
     const target = this.findNextAutoRock();
@@ -2990,7 +3008,7 @@ class MineScene extends Phaser.Scene {
   }
 
   onShopClicked() {
-    if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen) return;
+    if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.battleActive) return;
     const dx = this.player.x - this.shopSprite.x;
     const dy = this.player.y - this.shopSprite.y;
     const dist = Math.max(1, Math.hypot(dx, dy));
@@ -3146,7 +3164,6 @@ class MineScene extends Phaser.Scene {
     this.sp = Math.max(0, this.sp - SP_COST_PER_CYCLE);
     sfx.playPickSound(cluster.isLavaRock);
 
-    if (cluster.kind === "monster") { this.resolveMonsterHit(cluster); return; }
     if (cluster.kind === "boss") { this.resolveBossHit(cluster); return; }
 
     this.applyMiningDamage(cluster, this.pickaxePower);
@@ -3305,7 +3322,7 @@ class MineScene extends Phaser.Scene {
       stroke: "#2e2013", strokeThickness: 3,
     }).setOrigin(0.5, 1).setDepth(y + 1);
     const monster = { kind: "monster", typeId, sprite, label, col: spot.col, row: spot.row, uses: hp, maxUses: hp, broken: false };
-    sprite.on("pointerdown", () => this.rallyOnClick(monster));
+    sprite.on("pointerdown", () => this.startFieldBattle(monster));
     this.monsters.push(monster);
     this.addLog(`[전투] ${type.name}이(가) 암반 틈에서 튀어나왔습니다! 처치하면 골드와 경험치를 얻습니다.`, "#ff9a76", "battle");
   }
@@ -3318,16 +3335,6 @@ class MineScene extends Phaser.Scene {
       if (this.isWalkableCell(c, r)) return { col: c, row: r };
     }
     return null;
-  }
-
-  /** 필드 몬스터를 타격했을 때의 처리 (채굴과 동일한 타격 주기를 공유한다). */
-  resolveMonsterHit(monster) {
-    this.applyMiningDamage(monster, this.pickaxePower);
-    this.spawnRockChips(monster.sprite.x, monster.sprite.y);
-    this.cameras.main.shake(90, 0.0015);
-    this.updateUI();
-    if (monster.uses <= 0) { this.defeatFieldMonster(monster); return; }
-    this.saveGame();
   }
 
   /** 필드 몬스터를 처치한다: 골드/경험치를 지급하고 스프라이트를 제거한다. */
@@ -3346,6 +3353,170 @@ class MineScene extends Phaser.Scene {
     if (idx >= 0) this.monsters.splice(idx, 1);
     if (this.rallyTarget === monster) this.clearRally();
     this.cancelMining();
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /* =========================================================================
+     필드 몬스터 전용 전투 화면 - 광석 등 채굴 필드를 어두운 오버레이로 덮고
+     플레이어/몬스터를 화면 중앙에 확대해 마주 세운 뒤 자동으로 근거리/원거리
+     공격을 주고받는다. 보스전/사다리 수호전은 기존 방식 그대로 유지한다.
+     ========================================================================= */
+
+  /** 필드 몬스터를 클릭(또는 자동채굴이 선택)하면 채굴 필드 대신 이 전용 화면으로 진입한다. */
+  startFieldBattle(monster) {
+    if (this.battleActive || monster.broken) return;
+    this.battleActive = true;
+    this.cancelMining();
+    this.tweens.killTweensOf(this.player);
+    if (this.rallyTarget === monster) this.clearRally();
+
+    const type = MONSTER_TYPES[monster.typeId];
+    const overlay = this.add.rectangle(ROOM_W / 2, ROOM_H / 2, ROOM_W, ROOM_H, 0x0a0705, 0.94)
+      .setDepth(BATTLE_OVERLAY_DEPTH);
+    const vignette = this.add.image(ROOM_W / 2, ROOM_H / 2, "glow")
+      .setBlendMode(Phaser.BlendModes.ADD).setTint(0x3a2a18).setAlpha(0.5).setScale(9)
+      .setDepth(BATTLE_OVERLAY_DEPTH + 1);
+
+    const playerSprite = this.add.image(BATTLE_PLAYER_POS.x, BATTLE_PLAYER_POS.y, "slime")
+      .setOrigin(0.5, SLIME_ORIGIN_Y)
+      .setDisplaySize(BATTLE_PLAYER_DISPLAY, BATTLE_PLAYER_DISPLAY)
+      .setFlipX(true)
+      .setDepth(BATTLE_OVERLAY_DEPTH + 2);
+    const monsterDisplay = type.display * BATTLE_MONSTER_DISPLAY_MULT;
+    const monsterSprite = this.add.image(BATTLE_MONSTER_POS.x, BATTLE_MONSTER_POS.y, type.sprite)
+      .setOrigin(0.5, type.originY)
+      .setDisplaySize(monsterDisplay, monsterDisplay)
+      .setDepth(BATTLE_OVERLAY_DEPTH + 2);
+    const monsterLabel = this.add.text(
+      BATTLE_MONSTER_POS.x, BATTLE_MONSTER_POS.y - monsterDisplay * type.originY - 12,
+      `${type.name} ${type.role === "ranged" ? "🏹 원거리" : "⚔️ 근거리"}`,
+      { fontSize: "13px", fontFamily: "Malgun Gothic, sans-serif", color: "#ffd166", stroke: "#2e2013", strokeThickness: 3 }
+    ).setOrigin(0.5, 1).setDepth(BATTLE_OVERLAY_DEPTH + 3);
+
+    const makeHpBar = (x, y, color) => ({
+      bg: this.add.rectangle(x, y, 120, 10, 0x1a1a1a).setStrokeStyle(1, 0x5a4a3a).setDepth(BATTLE_OVERLAY_DEPTH + 3),
+      fill: this.add.rectangle(x - 60, y, 120, 10, color).setOrigin(0, 0.5).setDepth(BATTLE_OVERLAY_DEPTH + 4),
+    });
+    const playerHpBar = makeHpBar(BATTLE_PLAYER_POS.x, BATTLE_PLAYER_POS.y - BATTLE_PLAYER_DISPLAY * SLIME_ORIGIN_Y - 16, 0x5ad06b);
+    const monsterHpBar = makeHpBar(BATTLE_MONSTER_POS.x, BATTLE_MONSTER_POS.y - monsterDisplay * type.originY - 30, 0xff6b5a);
+
+    this.fieldBattle = {
+      monster, type, overlay, vignette, playerSprite, monsterSprite, monsterLabel,
+      playerHpBar, monsterHpBar, playerAtkAcc: 0, monsterAtkAcc: 0,
+    };
+    this.refreshFieldBattleHpBars();
+    this.addLog(`⚔️ ${type.name}와(과) 전투 시작!`, "#ff9a76", "battle");
+  }
+
+  refreshFieldBattleHpBars() {
+    const b = this.fieldBattle;
+    if (!b) return;
+    b.playerHpBar.fill.width = 120 * Math.max(0, this.hp / this.maxHP);
+    b.monsterHpBar.fill.width = 120 * Math.max(0, b.monster.uses / b.monster.maxUses);
+  }
+
+  /** 매 프레임 호출 - 플레이어/몬스터 공격 누적 타이머를 흘려보내며 자동으로 공방을 주고받는다. */
+  tickFieldBattle(delta) {
+    const b = this.fieldBattle;
+    if (!b) { this.battleActive = false; return; }
+    const { monster, type } = b;
+    this.refreshFieldBattleHpBars(); // 물약 등으로 HP가 바뀐 경우에도 매 프레임 반영
+
+    b.playerAtkAcc += delta;
+    if (b.playerAtkAcc >= PLAYER_ATK_MS) {
+      b.playerAtkAcc = 0;
+      const dmg = this.combatDamage();
+      monster.uses -= dmg;
+      this.spawnFloatingDmg(BATTLE_MONSTER_POS.x, BATTLE_MONSTER_POS.y - 40, dmg);
+      this.tweens.add({ targets: b.playerSprite, x: BATTLE_PLAYER_POS.x + 26, duration: 90, yoyo: true });
+      b.monsterSprite.setTintFill(0xffffff);
+      this.time.delayedCall(70, () => b.monsterSprite?.clearTint());
+      sfx.playPickSound();
+      this.refreshFieldBattleHpBars();
+      if (monster.uses <= 0) { this.resolveFieldBattleWin(); return; }
+    }
+
+    b.monsterAtkAcc += delta;
+    if (b.monsterAtkAcc >= type.attackMs) {
+      b.monsterAtkAcc = 0;
+      if (type.role === "ranged") {
+        const bolt = this.add.circle(BATTLE_MONSTER_POS.x, BATTLE_MONSTER_POS.y, 5, 0x9b6bff).setDepth(BATTLE_OVERLAY_DEPTH + 5);
+        this.tweens.add({
+          targets: bolt, x: BATTLE_PLAYER_POS.x, y: BATTLE_PLAYER_POS.y, duration: 260,
+          onComplete: () => { bolt.destroy(); this.applyFieldBattleDamageToPlayer(type.melee); },
+        });
+      } else {
+        this.tweens.add({ targets: b.monsterSprite, x: BATTLE_MONSTER_POS.x - 26, duration: 90, yoyo: true });
+        this.applyFieldBattleDamageToPlayer(type.melee);
+      }
+    }
+  }
+
+  /** 몬스터의 공격이 명중했을 때 플레이어 HP에 실제로 반영한다 (강철 피부 특성이면 무효화). */
+  applyFieldBattleDamageToPlayer(amount) {
+    if (!this.battleActive || !this.fieldBattle) return; // 전투가 이미 끝난 뒤 지연 도착한 투사체는 무시
+    if (this.hasTrait(this, "iron_skin")) {
+      this.addLog("🦾 강철 피부로 몬스터의 공격을 무효화했습니다!", "#9ad1ff", "battle");
+    } else {
+      this.hp = Math.max(0, this.hp - amount);
+      this.spawnFloatingDmg(BATTLE_PLAYER_POS.x, BATTLE_PLAYER_POS.y - 40, amount);
+      this.fieldBattle.playerSprite.setTintFill(0xff6b5a);
+      this.time.delayedCall(80, () => this.fieldBattle?.playerSprite?.clearTint());
+      this.updateUI();
+      this.refreshFieldBattleHpBars();
+    }
+    if (this.hp <= 0) this.resolveFieldBattleLoss();
+  }
+
+  /** 전투 오버레이/스프라이트/HP바를 정리한다 (승리/패배 공용). */
+  teardownFieldBattle() {
+    const b = this.fieldBattle;
+    if (!b) return;
+    b.overlay.destroy(); b.vignette.destroy();
+    b.playerSprite.destroy(); b.monsterSprite.destroy(); b.monsterLabel.destroy();
+    b.playerHpBar.bg.destroy(); b.playerHpBar.fill.destroy();
+    b.monsterHpBar.bg.destroy(); b.monsterHpBar.fill.destroy();
+    this.fieldBattle = null;
+    this.battleActive = false;
+  }
+
+  /** 몬스터 HP를 다 깎았을 때 - 기존 defeatFieldMonster()가 보상 지급/필드 제거를 그대로 처리한다. */
+  resolveFieldBattleWin() {
+    const monster = this.fieldBattle?.monster;
+    this.teardownFieldBattle();
+    if (monster) this.defeatFieldMonster(monster);
+  }
+
+  /**
+   * 플레이어 HP가 0이 됐을 때 - 보상 없이 인카운터를 종료하고, 고용 중인 미니 슬라임들이
+   * 전부 부상당해(injured) 치료 전까지 일을 쉰다. 플레이어는 HP 1로 포탈 근처로 후퇴한다.
+   */
+  resolveFieldBattleLoss() {
+    const b = this.fieldBattle;
+    if (!b) return;
+    const { monster, type } = b;
+    this.teardownFieldBattle();
+
+    monster.broken = true;
+    monster.sprite.destroy();
+    monster.label.destroy();
+    const idx = this.monsters.indexOf(monster);
+    if (idx >= 0) this.monsters.splice(idx, 1);
+
+    const newlyInjured = this.workers.filter((w) => !w.injured);
+    newlyInjured.forEach((w) => { w.injured = true; w.sprite.setTint(0xff8080); });
+
+    const spawnCell = this.gridToScreen(1, 1);
+    this.player.setPosition(spawnCell.x, spawnCell.y).setDepth(spawnCell.y);
+    this.hp = 1;
+
+    this.addLog(
+      newlyInjured.length > 0
+        ? `💀 ${type.name}에게 패배했습니다! 보상을 얻지 못했고, 미니 슬라임 ${newlyInjured.length}마리가 부상당했습니다. 상점에서 치료하세요.`
+        : `💀 ${type.name}에게 패배했습니다! 보상을 얻지 못했습니다.`,
+      "#ff6b6b", "battle"
+    );
     this.updateUI();
     this.saveGame();
   }
@@ -3448,7 +3619,7 @@ class MineScene extends Phaser.Scene {
       .setDisplaySize(HAT_DISPLAY, HAT_DISPLAY * (hatCrop.h / hatCrop.w))
       .setOrigin(0.5, 0.8)
       .setDepth(spawnCell.y + 0.5);
-    const worker = { sprite, traitLabel, hatSprite, trait, col: 1, row: 1, state: "idle", mineTarget: null, timer: null };
+    const worker = { sprite, traitLabel, hatSprite, trait, col: 1, row: 1, state: "idle", mineTarget: null, timer: null, injured: false };
     this.workers.push(worker);
     this.scheduleWorkerTick(worker);
     return worker;
@@ -3472,6 +3643,7 @@ class MineScene extends Phaser.Scene {
 
   /** 매 주기마다: 채굴 중이면 한 번 타격, 아니면 인접 암반을 찾아 채굴을 시작하거나 배회한다. */
   workerTick(worker) {
+    if (worker.injured) return; // 부상 중에는 치료 전까지 아무 행동도 하지 않는다
     if (this.isDefenseActive() || this.rallyTarget) {
       this.workerCombatStep(worker);
       return;
@@ -3495,11 +3667,13 @@ class MineScene extends Phaser.Scene {
     this.workerWanderStep(worker);
   }
 
-  /** (col,row) 기준 8방향 중 살아있는 필드 몬스터 또는 보스가 있으면 반환한다 (일꾼의 우선 공격 대상). */
+  /**
+   * (col,row) 기준 8방향 중 살아있는 보스가 있으면 반환한다 (일꾼의 우선 공격 대상).
+   * 필드 몬스터는 startFieldBattle() 전용 화면에서만 싸우므로 일꾼이 알아서 깎지 않는다.
+   */
   findAdjacentMonster(col, row) {
-    const candidates = this.monsters.filter((m) => !m.broken);
-    if (this.boss && !this.boss.broken) candidates.push(this.boss);
-    return candidates.find((m) => Math.abs(m.col - col) <= 1 && Math.abs(m.row - row) <= 1) ?? null;
+    if (!this.boss || this.boss.broken) return null;
+    return Math.abs(this.boss.col - col) <= 1 && Math.abs(this.boss.row - row) <= 1 ? this.boss : null;
   }
 
   /** 이미 뚫린 바닥 타일 중 이동 가능한 인접 칸 하나를 골라 걸어간다. */
@@ -3585,6 +3759,18 @@ class MineScene extends Phaser.Scene {
     this.addLog(msg, "#a8d8a8");
     this.questProgress.recruit_or_reroll += 1;
     this.checkQuestCompletion("recruit_or_reroll");
+    this.updateUI();
+    this.saveGame();
+  }
+
+  /** 필드 전투 패배로 부상당한 일꾼을 전부 치료한다 (골드 = 부상 인원 × WORKER_HEAL_COST_PER_UNIT). */
+  healInjuredWorkers() {
+    const injured = this.workers.filter((w) => w.injured);
+    const cost = injured.length * WORKER_HEAL_COST_PER_UNIT;
+    if (injured.length === 0 || this.gold < cost) return;
+    this.gold -= cost;
+    injured.forEach((w) => { w.injured = false; w.sprite.clearTint(); });
+    this.addLog(`🩹 미니 슬라임 ${injured.length}마리를 치료했습니다! (-${cost}G)`, "#a8d8a8");
     this.updateUI();
     this.saveGame();
   }
@@ -4087,6 +4273,17 @@ class MineScene extends Phaser.Scene {
     }
     this.renderWorkerExpandBtn();
 
+    const injuredCount = this.workers.filter((w) => w.injured).length;
+    const healRow = document.getElementById("worker-heal-row");
+    if (healRow) {
+      healRow.style.display = injuredCount > 0 ? "block" : "none";
+      if (injuredCount > 0) {
+        const cost = injuredCount * WORKER_HEAL_COST_PER_UNIT;
+        document.getElementById("cost-heal-workers").textContent = `(${injuredCount}마리) ${cost}G`;
+        document.getElementById("btn-heal-workers").disabled = this.gold < cost;
+      }
+    }
+
     document.getElementById("elevator-floor").textContent = `B${this.floorNumber}F`;
     document.getElementById("elevator-next-floor").textContent = this.infiniteMode
       ? `B${this.floorNumber + 1}F`
@@ -4386,7 +4583,9 @@ class MineScene extends Phaser.Scene {
 
     if (this.playerTrait) {
       const trait = TRAIT_TYPES[this.playerTrait];
-      document.getElementById("stat-trait").textContent = `특성: ${trait.emoji} ${trait.name}`;
+      const traitEl = document.getElementById("stat-trait");
+      traitEl.textContent = `특성: ${trait.emoji} ${trait.name}`;
+      traitEl.title = trait.desc; // 마우스를 올리면 효과 설명이 뜨도록
     }
     const legendEl = document.getElementById("stat-legend-trait");
     if (legendEl) {
@@ -4394,6 +4593,7 @@ class MineScene extends Phaser.Scene {
         const lt = LEGEND_TRAIT_TYPES[this.legendTrait];
         legendEl.style.display = "block";
         legendEl.textContent = `전설: ${lt.emoji} ${lt.name}`;
+        legendEl.title = lt.desc;
       } else {
         legendEl.style.display = "none";
       }
@@ -4782,9 +4982,10 @@ class MineScene extends Phaser.Scene {
     return unit?.sprite ? { x: unit.sprite.x, y: unit.sprite.y } : null;
   }
 
+  // 필드 몬스터(this.monsters)는 이제 startFieldBattle() 전용 화면에서만 싸우므로,
+  // 플레이어/일꾼의 상시 자동공격 대상 목록에는 포함하지 않는다.
   liveCombatTargets() {
     const list = this.combatUnits.filter((u) => !this.unitIsDead(u));
-    this.monsters.forEach((m) => { if (!this.unitIsDead(m)) list.push(m); });
     if (this.boss && !this.unitIsDead(this.boss)) list.push(this.boss);
     return list;
   }
@@ -4873,7 +5074,7 @@ class MineScene extends Phaser.Scene {
   }
 
   useBurstSkill(id) {
-    if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.legendTraitOpen) return;
+    if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.legendTraitOpen || this.battleActive) return;
     if (this.burstGauge < BURST_MAX) {
       this.addLog("버스트 게이지가 부족합니다. 타격으로 충전하세요!", "#aaaaaa");
       return;
@@ -5598,6 +5799,9 @@ class MineScene extends Phaser.Scene {
 
   /* ---- 매 프레임 실행 ---- */
   update(time, delta) {
+    // 필드 몬스터 전투 화면이 떠 있는 동안은 채굴/이동 등 나머지 필드 로직을 전부 멈춘다.
+    if (this.battleActive) { this.tickFieldBattle(delta); return; }
+
     // 기력(SP) 자연 회복 - 채굴 중이 아닐 때만
     if (!this.miningTarget && this.sp < this.maxSP) {
       this.sp = Math.min(this.maxSP, this.sp + (SP_REGEN_PER_SEC * delta) / 1000);
@@ -5787,6 +5991,7 @@ document.getElementById("quest-list").addEventListener("click", (e) => {
 });
 document.getElementById("btn-hire-worker").addEventListener("click", () => window.gameScene?.hireWorker());
 document.getElementById("btn-expand-workers").addEventListener("click", () => window.gameScene?.expandWorkerCap());
+document.getElementById("btn-heal-workers").addEventListener("click", () => window.gameScene?.healInjuredWorkers());
 document.getElementById("btn-descend").addEventListener("click", () => window.gameScene?.ascendFloor());
 document.getElementById("btn-close-shop").addEventListener("click", () => window.gameScene?.closeShop());
 document.getElementById("shop-close-x").addEventListener("click", () => window.gameScene?.closeShop());
