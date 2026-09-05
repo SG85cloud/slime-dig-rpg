@@ -267,6 +267,41 @@
   }
   .menu-icon:hover { border-color: #ffd166; }
 
+  /* ---- 스프라이트 시트에서 잘라 쓰는 DOM 아이콘 (인벤토리/제작목록/퀵슬롯 공용) ---- */
+  .sprite-icon { display: inline-block; vertical-align: middle; image-rendering: pixelated; background-repeat: no-repeat; }
+  .icon-inline { margin-right: 4px; }
+
+  /* ---- 하단 퀵슬롯 소모품 버프 슬롯(체력/황금/가속 물약) ---- */
+  .quick-slot.potion-slot { padding: 0; margin: 0; font: inherit; cursor: pointer; }
+  .potion-icon { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .potion-slot.on-cooldown .potion-icon { opacity: 0.5; filter: grayscale(0.5); }
+  .potion-cooldown-overlay {
+    position: absolute; inset: 0; border-radius: 4px; pointer-events: none;
+    background: conic-gradient(rgba(10,8,6,0.85) calc(var(--cd, 0) * 360deg), transparent 0deg);
+  }
+  .potion-cooldown-text {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: bold; color: #ffe066; text-shadow: 1px 1px 2px #000; pointer-events: none;
+  }
+  .potion-hotkey { position: absolute; top: 1px; left: 3px; font-size: 9px; color: #9ad1ff; pointer-events: none; }
+  .potion-slot.on-buff { border-color: #8fdc8f; box-shadow: 0 0 6px rgba(143,220,143,0.8); }
+
+  /* ---- 대장간 탭: 대장장이 두더지 NPC + 대사 말풍선 (온천 탭 spa-scene과 동일한 구조) ---- */
+  .smithy-scene { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 6px 0 10px; }
+  .smithy-bubble {
+    position: relative; background: #fff; color: #333; font-size: 11px; padding: 4px 10px;
+    border-radius: 10px; margin-bottom: 6px;
+  }
+  .smithy-bubble::after {
+    content: ""; position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%);
+    border-width: 6px 5px 0 5px; border-style: solid; border-color: #fff transparent transparent transparent;
+  }
+  .smithy-npc { width: 68px; height: 68px; image-rendering: pixelated; animation: spa-bob 1.8s ease-in-out infinite; }
+
+  /* ---- 탈출 의뢰 게시판 탭 헤더 ---- */
+  .quest-board-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .quest-board-header span { font-size: 13px; color: #ffd166; font-weight: bold; }
+
   /* ---- 가방(인벤토리) 팝업 ---- */
   #inventory-modal { right: 12px; bottom: 56px; width: 210px; display: none; }
   .inv-row { display: flex; justify-content: space-between; padding: 3px 0; color: #ddd; }
@@ -431,6 +466,11 @@
     box-shadow: 0 0 40px rgba(255,220,120,0.6), 0 8px 24px rgba(0,0,0,0.5);
     text-align: center;
   }
+  .ending-banner {
+    display: block; width: calc(100% + 44px); margin: -20px -22px 12px -22px;
+    height: 120px; object-fit: cover; object-position: center 35%;
+    border-radius: 9px 9px 0 0;
+  }
   .ending-panel h2 { margin: 0 0 4px; font-size: 22px; color: #7a4a10; }
   .ending-desc { font-size: 13px; color: #6a4a1a; margin-bottom: 12px; }
   .ending-stats { background: rgba(255,255,255,0.45); border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; }
@@ -528,12 +568,27 @@
   <!-- 하단 중앙: 퀵슬롯 바 -->
   <div id="quickslot-bar">
     <div class="quick-slot filled" id="quickslot-pickaxe" title="나무 곡괭이">
-      ⛏️
+      <span id="quickslot-pickaxe-icon">⛏️</span>
       <div class="slot-durability" id="pickaxe-durability">50/50</div>
     </div>
-    <div class="quick-slot"></div>
-    <div class="quick-slot"></div>
-    <div class="quick-slot"></div>
+    <button class="quick-slot potion-slot" id="potion-slot-heal" title="체력 회복 물약 (즉시 HP 100% 회복)">
+      <span class="potion-icon" id="potion-icon-heal"></span>
+      <div class="potion-cooldown-overlay"></div>
+      <div class="potion-cooldown-text"></div>
+      <div class="potion-hotkey">1</div>
+    </button>
+    <button class="quick-slot potion-slot" id="potion-slot-luck" title="황금 행운 물약 (45초간 골드 획득 2배)">
+      <span class="potion-icon" id="potion-icon-luck"></span>
+      <div class="potion-cooldown-overlay"></div>
+      <div class="potion-cooldown-text"></div>
+      <div class="potion-hotkey">2</div>
+    </button>
+    <button class="quick-slot potion-slot" id="potion-slot-haste" title="채굴 가속 물약 (45초간 채굴 속도 2배)">
+      <span class="potion-icon" id="potion-icon-haste"></span>
+      <div class="potion-cooldown-overlay"></div>
+      <div class="potion-cooldown-text"></div>
+      <div class="potion-hotkey">3</div>
+    </button>
     <div class="quick-slot"></div>
   </div>
 
@@ -591,13 +646,19 @@
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="smithy" style="display:none">
+        <div class="smithy-scene">
+          <div class="smithy-bubble" id="smithy-bubble">좋은 원석을 가져왔나?</div>
+          <img src="assets/npc_blacksmith.png" class="smithy-npc" alt="대장장이 두더지">
+        </div>
         <button id="btn-repair" class="shop-btn">곡괭이 수리 <span class="cost" id="cost-repair"></span></button>
         <button id="btn-upgrade" class="shop-btn">곡괭이 파워 강화 <span class="cost" id="cost-upgrade"></span></button>
         <div class="shop-note">파워 강화 시 타격 한 번에 암반을 더 크게 깎습니다.</div>
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="equip" style="display:none">
-        <div class="shop-note" style="margin:2px 2px 8px;">현재 장비: <b id="equip-current-name">나무 곡괭이</b></div>
+        <div class="shop-note" style="margin:2px 2px 8px; display:flex; align-items:center; gap:6px;">
+          현재 장비: <span id="equip-current-icon"></span><b id="equip-current-name">나무 곡괭이</b>
+        </div>
         <div id="equip-craft-list"></div>
       </div>
 
@@ -626,6 +687,10 @@
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="quests" style="display:none">
+        <div class="quest-board-header">
+          <span id="quest-board-icon"></span>
+          <span>탈출 의뢰 게시판</span>
+        </div>
         <div id="quest-list"></div>
         <div class="shop-note">완료한 의뢰는 즉시 보상을 지급하고 같은 자리에서 다시 시작됩니다.</div>
       </div>
@@ -702,6 +767,7 @@
   <!-- 지상 탈출 엔딩 축하 모달 -->
   <div id="ending-modal">
     <div class="ending-panel">
+      <img src="assets/ending_surface.png" class="ending-banner" alt="지상 탈출">
       <h2>🎉 자유의 햇살!</h2>
       <div class="ending-desc">지상 탈출에 성공했습니다!</div>
       <div class="ending-stats">
@@ -981,6 +1047,9 @@ const PORTAL_DISPLAY = 195; const PORTAL_ORIGIN_Y = 0.85;
 const LAMP_DISPLAY   = 120; const LAMP_ORIGIN_Y   = 0.825;
 const SLIME_DISPLAY  = 64; const SLIME_ORIGIN_Y  = 0.75;
 const ORE_ITEM_DISPLAY = 98; const ORE_ITEM_ORIGIN_Y = 0.68;
+// 구역(층) 클리어 연출용 사다리 - ladder.png는 677x369 캔버스라 실제 그림 영역만 잘라 쓴다.
+const LADDER_CROP = { x: 217, y: 6, w: 266, h: 363 };
+const LADDER_DISPLAY_H = 140; const LADDER_ORIGIN_Y = 0.12;
 
 const PLAYER_LIGHT_SCALE = 3.4;       // 슬라임 랜턴 발광 이미지 배율
 const PLAYER_LIGHT_STAMP_SCALE = 3.6; // 안개를 지우는 반경 배율
@@ -1020,6 +1089,63 @@ const PICKAXE_TIERS = [
   { id: "mithril",name: "미스릴 곡괭이",       tint: 0x9b6bff, powerBonus: 8,  speedMult: 1.15, critBonus: 0,    cost: { iron: 60, mithril: 30, gold: 300 } },
   { id: "dragon", name: "드래곤 슬레이어 곡괭이", tint: 0xff5a3c, powerBonus: 20, speedMult: 1,    critBonus: 0.2,  cost: { iron: 100, mithril: 80, gold: 1200 } },
 ];
+// 곡괭이 등급 id → pickaxes.png 스프라이트 시트 아이콘 키 (나무 곡괭이는 시작 장비라 아이콘 없이 이모지를 그대로 쓴다)
+const PICKAXE_ICON_MAP = { iron: "pick_iron", mithril: "pick_mithril", dragon: "pick_dragon" };
+// 광물 종류 id → ores.png 스프라이트 시트 아이콘 키 (암석/흙·화염 원석은 전용 아이콘이 없어 기존 tint 방식을 그대로 쓴다)
+const ORE_ICON_MAP = { iron: "ore_iron", mithril: "ore_mithril" };
+
+/* -------------------------------------------------------------------------
+   2b-3. 소모품 버프 퀵슬롯 - 재료 소모 없이 재사용 대기시간(쿨타임)으로 관리하는 물약 3종.
+   ------------------------------------------------------------------------- */
+const POTION_TYPES = {
+  heal:  { name: "체력 회복 물약",  icon: "potion_heal",  cooldownMs: 60000 },
+  luck:  { name: "황금 행운 물약",  icon: "potion_luck",  cooldownMs: 90000, durationMs: 45000, buffKey: "potionLuckUntil" },
+  haste: { name: "채굴 가속 물약",  icon: "potion_haste", cooldownMs: 90000, durationMs: 45000, buffKey: "potionHasteUntil" },
+};
+const POTION_GOLD_MULT = 2;  // 황금 행운 물약: 지속시간 동안 골드 획득량 배율
+const POTION_HASTE_MULT = 2; // 채굴 가속 물약: 지속시간 동안 채굴 속도 배율
+
+/* -------------------------------------------------------------------------
+   2b-4. 스프라이트 시트에서 잘라 쓰는 DOM 아이콘 (인벤토리/제작목록/퀵슬롯/게시판 등)
+   - ores.png · pickaxes.png · potions.png · board.png는 한 파일에 여러 그림이 들어있어,
+     각 그림의 투명 여백을 제외한 실제 픽셀 영역(x,y,w,h)을 미리 측정해 잘라 쓴다.
+   - iconHtml()이 이 사각형을 목표 표시 너비에 맞춰 background-size/position을 계산해주므로,
+     호출부는 아이콘 키와 원하는 폭(px)만 넘기면 된다.
+   ------------------------------------------------------------------------- */
+const SPRITE_SHEETS = {
+  ores:      { src: "assets/ores.png",     w: 500, h: 500 },
+  pickaxes:  { src: "assets/pickaxes.png", w: 500, h: 500 },
+  potions:   { src: "assets/potions.png",  w: 677, h: 369 },
+  board:     { src: "assets/board.png",    w: 677, h: 369 },
+};
+const ICON_RECTS = {
+  ore_iron:     { sheet: "ores",     x: 10,  y: 174, w: 150, h: 151 },
+  ore_gold:     { sheet: "ores",     x: 174, y: 174, w: 152, h: 152 },
+  ore_mithril:  { sheet: "ores",     x: 344, y: 174, w: 136, h: 147 },
+  pick_iron:    { sheet: "pickaxes", x: 10,  y: 120, w: 163, h: 255 },
+  pick_mithril: { sheet: "pickaxes", x: 161, y: 111, w: 178, h: 265 },
+  pick_dragon:  { sheet: "pickaxes", x: 327, y: 111, w: 164, h: 266 },
+  potion_heal:  { sheet: "potions",  x: 81,  y: 95,  w: 120, h: 174 },
+  potion_luck:  { sheet: "potions",  x: 281, y: 95,  w: 123, h: 171 },
+  potion_haste: { sheet: "potions",  x: 482, y: 95,  w: 119, h: 171 },
+  board:        { sheet: "board",    x: 178, y: 3,   w: 312, h: 360 },
+};
+/** iconKey(ICON_RECTS)의 잘린 영역을 표시 폭 displayWidth(px)에 맞춰 보여주는 <span> HTML을 만든다. */
+function iconHtml(iconKey, displayWidth, extraClass) {
+  const rect = ICON_RECTS[iconKey];
+  if (!rect) return "";
+  const sheet = SPRITE_SHEETS[rect.sheet];
+  const scale = displayWidth / rect.w;
+  const dispH = Math.round(rect.h * scale);
+  const bgW = Math.round(sheet.w * scale);
+  const bgH = Math.round(sheet.h * scale);
+  const bgX = Math.round(rect.x * scale);
+  const bgY = Math.round(rect.y * scale);
+  const cls = extraClass ? `sprite-icon ${extraClass}` : "sprite-icon";
+  return `<span class="${cls}" style="width:${displayWidth}px;height:${dispH}px;`
+    + `background-image:url('${sheet.src}');background-size:${bgW}px ${bgH}px;`
+    + `background-position:-${bgX}px -${bgY}px;"></span>`;
+}
 
 /* -------------------------------------------------------------------------
    2c. Web Audio API 기반 8비트 효과음 - 외부 음원 파일 없이 오실레이터로 직접 합성한다.
@@ -1141,6 +1267,10 @@ class MineScene extends Phaser.Scene {
     this.sectorEventProp = null; // 다음 구역에 실체화된 온천/황금상자 오브젝트 (없으면 null)
     this.speedBuffUntil = 0;    // Date.now() 기준, 이 시각까지 채굴 속도 +20% (온천 이벤트)
     this.oreValueBuffUntil = 0; // 이 시각까지 판매가 2배 (황금 상자 이벤트)
+    this.potionLuckUntil = 0;   // 이 시각까지 골드 획득 2배 (황금 행운 물약)
+    this.potionHasteUntil = 0;  // 이 시각까지 채굴 속도 2배 (채굴 가속 물약)
+    this.potionCooldownUntil = { heal: 0, luck: 0, haste: 0 }; // 물약별 재사용 가능 시각 (세이브하지 않는 세션 한정 쿨타임)
+    this.ladderSprite = null;   // 구역 클리어 시 잠깐 등장하는 탈출 사다리 연출 스프라이트
     this.playerAutoTimer = null;
 
     this.pickaxeTier = 0;        // 장비 제작소에서 올린 곡괭이 등급 인덱스 (PICKAXE_TIERS, 파워강화 단계와 별개로 누적)
@@ -1187,11 +1317,33 @@ class MineScene extends Phaser.Scene {
     this.load.image("env_chest", "assets/chest.png");
     this.load.image("rock_lava", "assets/rock_lava.png");
     this.load.image("m_dragon", "assets/dragon.png");
+    // 스프라이트 시트(3분할 아이콘)는 원본 그대로 불러온 뒤 create()에서 실제 그림 영역만 잘라 프레임으로 등록한다.
+    this.load.image("ore_icons", "assets/ores.png");
+    this.load.image("pickaxe_icons", "assets/pickaxes.png");
+    this.load.image("potion_icons", "assets/potions.png");
+    this.load.image("ladder", "assets/ladder.png");
   }
 
   create() {
     /* ---- 3-1. 조명 마스크 텍스처 생성 (안개용 글로우만 예외적으로 절차 생성) ---- */
     makeGlowTexture(this, "glow", 46, 0xffcf6b);
+
+    /* ---- 3-1b. 3분할 스프라이트 시트에서 ICON_RECTS에 측정해둔 실제 그림 영역만 프레임으로 등록 ---- */
+    ["ore_iron", "ore_gold", "ore_mithril", "pick_iron", "pick_mithril", "pick_dragon", "potion_heal", "potion_luck", "potion_haste"]
+      .forEach((key) => {
+        const rect = ICON_RECTS[key];
+        const texKey = rect.sheet === "ores" ? "ore_icons" : rect.sheet === "pickaxes" ? "pickaxe_icons" : "potion_icons";
+        this.textures.get(texKey).add(key, 0, rect.x, rect.y, rect.w, rect.h);
+      });
+    // ladder.png(677x369)도 실제 그림 영역만 잘라 프레임으로 등록한다.
+    this.textures.get("ladder").add("ladder_frame", 0, LADDER_CROP.x, LADDER_CROP.y, LADDER_CROP.w, LADDER_CROP.h);
+
+    /* ---- 3-1c. 소모품 퀵슬롯(체력/황금/가속 물약) 아이콘 + 대장간/게시판 DOM 아이콘을 한 번만 채워 넣는다 ---- */
+    document.getElementById("potion-icon-heal").innerHTML = iconHtml("potion_heal", 30);
+    document.getElementById("potion-icon-luck").innerHTML = iconHtml("potion_luck", 30);
+    document.getElementById("potion-icon-haste").innerHTML = iconHtml("potion_haste", 30);
+    const questBoardIcon = document.getElementById("quest-board-icon");
+    if (questBoardIcon) questBoardIcon.innerHTML = iconHtml("board", 48);
 
     /* ---- 3-2. 경제 상태 기본값 + 세이브 데이터 불러오기 ---- */
     this.gold = 0;
@@ -1351,6 +1503,8 @@ class MineScene extends Phaser.Scene {
     this.gpsHistory = [{ time: Date.now(), gold: this.gold }];
     this.gpsValue = 0;
     this.time.addEvent({ delay: 1000, loop: true, callback: () => this.sampleGps() });
+    this.time.addEvent({ delay: 200, loop: true, callback: () => this.updatePotionUI() });
+    this.updatePotionUI();
     this.beforeUnloadHandler = () => this.saveGame();
     window.addEventListener("beforeunload", this.beforeUnloadHandler);
     this.schedulePlayerAutoTick();
@@ -1384,6 +1538,7 @@ class MineScene extends Phaser.Scene {
     this.monsters.forEach((m) => { m.sprite.destroy(); m.label.destroy(); });
     if (this.boss) { this.boss.sprite.destroy(); this.boss.label.destroy(); }
     if (this.sectorEventProp) { this.sectorEventProp.sprite.destroy(); this.sectorEventProp.label.destroy(); }
+    if (this.ladderSprite) { this.ladderSprite.destroy(); this.ladderSprite = null; }
     this.chest = null;
     this.chestGuardians = [];
     this.dragon = null;
@@ -1531,6 +1686,7 @@ class MineScene extends Phaser.Scene {
       this.sectorAdvancing = true;
       this.addLog(`🎉 B${this.floorNumber}F 탈출로를 뚫었습니다! 위층으로 자동 이동합니다...`, "#ffe066");
       this.cameras.main.flash(250, 255, 255, 255, false);
+      this.spawnAscendLadder();
       this.time.delayedCall(900, () => { this.sectorAdvancing = false; this.ascendFloor(); });
     }
   }
@@ -1549,6 +1705,23 @@ class MineScene extends Phaser.Scene {
       if (this.isBossSectorActive()) this.spawnBossGolem(); // 방금 진입한 구역이 이 층의 마지막(보스) 구역이라면 수문장을 등장시킨다
       this.checkSectorClear(); // 연출 중에 다음 구역까지 이미 끝났다면(다수 일꾼의 동시 타격 등) 놓치지 않고 이어서 처리한다.
     });
+  }
+
+  /** 층의 마지막 구역까지 뚫렸을 때, 위층으로 올라가는 자리에 잠깐 반짝이는 사다리를 띄운다 (ascendFloor 직전 연출). */
+  spawnAscendLadder() {
+    const x = this.player.x + 34;
+    const y = this.player.y - 6;
+    const targetW = LADDER_DISPLAY_H * (LADDER_CROP.w / LADDER_CROP.h);
+    const ladder = this.add.image(x, y, "ladder", "ladder_frame")
+      .setOrigin(0.5, LADDER_ORIGIN_Y)
+      .setDisplaySize(targetW, LADDER_DISPLAY_H)
+      .setDepth(y + 6)
+      .setAlpha(0);
+    const baseScaleX = ladder.scaleX, baseScaleY = ladder.scaleY;
+    ladder.setScale(baseScaleX * 0.6, baseScaleY * 0.6); // 등장 시 살짝 작게 시작해 튕기듯 커지는 연출
+    this.tweens.add({ targets: ladder, alpha: 1, scaleX: baseScaleX, scaleY: baseScaleY, duration: 400, ease: "Back.easeOut" });
+    this.ladderSprite = ladder;
+    this.addLog("🪜 반짝이는 탈출 사다리가 나타났습니다!", "#ffe066");
   }
 
   /** 구역 돌파 시 4가지 돌발 이벤트 중 하나를 무작위로 발생시킨다. */
@@ -1610,7 +1783,7 @@ class MineScene extends Phaser.Scene {
       this.addLog("[이벤트] ♨️ 따뜻한 천연 온천에 몸을 담갔습니다! 모든 슬라임의 HP/SP가 회복되고 1분간 채굴 속도 +20% 버프를 얻습니다.", "#8fdc8f", "battle");
       sfx.playFanfareSound();
     } else if (prop.typeId === "goldchest") {
-      this.gold += SECTOR_GOLDBOX_GOLD;
+      this.gainGold(SECTOR_GOLDBOX_GOLD);
       this.gainExp(SECTOR_BATSWARM_EXP);
       this.oreValueBuffUntil = Date.now() + SECTOR_ORE_VALUE_BUFF_MS;
       this.spawnSparkle(prop.sprite.x, prop.sprite.y, 0xffd700);
@@ -1699,7 +1872,7 @@ class MineScene extends Phaser.Scene {
     const exploreGold = Math.round(
       (ASCEND_GOLD_BASE + ASCEND_GOLD_PER_FLOOR * this.floorsClimbed) * (1 + 0.25 * this.hasRelic("compass"))
     );
-    this.gold += exploreGold;
+    this.gainGold(exploreGold);
 
     const dirLabel = this.infiniteMode ? "더 깊은 심연" : "위층";
     this.addLog(`🪜 [탈출] ${dirLabel}으로 향하는 갱도를 뚫었습니다! B${this.floorNumber}F에 도착했습니다. (탐사 보상 +${exploreGold}G)`, "#9ad1ff");
@@ -1806,7 +1979,7 @@ class MineScene extends Phaser.Scene {
     this.chest.label.setText("빈 보물 상자");
 
     const gold = TREASURE_GOLD_BASE + TREASURE_GOLD_PER_FLOOR * this.floorsClimbed;
-    this.gold += gold;
+    this.gainGold(gold);
 
     const relicId = this.rollRelic();
     if (relicId) {
@@ -1816,7 +1989,7 @@ class MineScene extends Phaser.Scene {
       this.addLog(`골드 +${gold}G 도 함께 획득했습니다.`, "#ffd166", "battle");
     } else {
       const bonusGold = Math.round(gold * 0.5);
-      this.gold += bonusGold;
+      this.gainGold(bonusGold);
       this.addLog(`[희귀 발견!] 이미 모든 유물을 보유하고 있어, 보너스 골드 +${gold + bonusGold}G를 획득했습니다!`, "#ffd700", "battle");
     }
 
@@ -1921,7 +2094,7 @@ class MineScene extends Phaser.Scene {
     this.checkQuestCompletion("beat_boss");
     this.minFloorReached = Math.min(this.minFloorReached, this.floorNumber);
     this.inventory.dragonScale += DRAGON_ESCAPE_SCALES;
-    this.gold += DRAGON_ESCAPE_GOLD;
+    this.gainGold(DRAGON_ESCAPE_GOLD);
     this.addLog(`🐉 무사히 탈출했습니다! 드래곤 비늘 ${DRAGON_ESCAPE_SCALES}개와 전설의 보상 ${DRAGON_ESCAPE_GOLD}G를 획득했습니다!`, "#ffd700", "battle");
     this.spawnSparkle(this.player.x, this.player.y - 20, 0xffd700);
     sfx.playFanfareSound();
@@ -2122,6 +2295,7 @@ class MineScene extends Phaser.Scene {
     mult /= PICKAXE_TIERS[this.pickaxeTier].speedMult; // 장비 등급의 공속 보너스 (예: 미스릴 곡괭이 +15%)
     if (Date.now() < this.speedBuffUntil) mult /= SECTOR_SPEED_BUFF_MULT; // 온천 이벤트 버프
     if (Date.now() < this.questSpeedBuffUntil) mult /= QUEST_SPEED_BUFF_MULT; // 탈출 의뢰 보상 버프
+    if (Date.now() < this.potionHasteUntil) mult /= POTION_HASTE_MULT; // 채굴 가속 물약
     return base * mult;
   }
 
@@ -2167,6 +2341,16 @@ class MineScene extends Phaser.Scene {
     return Date.now() < this.oreValueBuffUntil ? SECTOR_ORE_VALUE_BUFF_MULT : 1;
   }
 
+  /** 황금 행운 물약이 활성 중이면 모든 골드 획득량이 2배가 된다. */
+  goldGainMultiplier() {
+    return Date.now() < this.potionLuckUntil ? POTION_GOLD_MULT : 1;
+  }
+
+  /** 골드를 얻는 모든 지점(판매/보상/전리품 등)에서 이 메서드를 통해 지급해야 황금 행운 물약 버프가 일괄 반영된다. */
+  gainGold(amount) {
+    this.gold += Math.round(amount * this.goldGainMultiplier());
+  }
+
   /** 곡괭이 파워 강화 단계 + 철갑 슬라임 진화(+30%) + 고대 거인의 장갑 유물(+50%)에 비례해 타격당 암반 내구도를 깎는다. */
   get pickaxePower() {
     const base = this.pickaxeLevel * (1 + 0.3 * this.evolutionCounts.ironclad) * (1 + 0.5 * this.hasRelic("gauntlet"))
@@ -2201,6 +2385,7 @@ class MineScene extends Phaser.Scene {
     let mult = this.hasRelic("pickaxe") ? 1.5 : 1;
     if (this.hasTrait(worker, "workaholic")) mult *= 1.5;
     if (Date.now() < this.speedBuffUntil) mult *= SECTOR_SPEED_BUFF_MULT; // 온천 이벤트 버프
+    if (Date.now() < this.potionHasteUntil) mult *= POTION_HASTE_MULT; // 채굴 가속 물약
     return mult;
   }
 
@@ -2217,7 +2402,7 @@ class MineScene extends Phaser.Scene {
     const oreKey = cluster.guaranteedOreKey ?? this.rollOreType(cluster.tier, cluster.isLavaRock);
     this.grantMiningRewards(this, cluster, oreKey);
     this.gainExp(4);
-    if (this.floorsClimbed < EARLY_GOLD_BONUS_FLOORS_CLIMBED) this.gold += EARLY_GOLD_BONUS_PER_HIT; // 초반 쾌속 세팅: 골드가 넉넉하게
+    if (this.floorsClimbed < EARLY_GOLD_BONUS_FLOORS_CLIMBED) this.gainGold(EARLY_GOLD_BONUS_PER_HIT); // 초반 쾌속 세팅: 골드가 넉넉하게
     this.spawnRockChips(cluster.sprite.x, cluster.sprite.y);
     this.cameras.main.shake(100, 0.0015);
     this.rollMiningEvent(cluster);
@@ -2242,7 +2427,7 @@ class MineScene extends Phaser.Scene {
       this.spawnGroundItem(cluster.sprite.x, cluster.sprite.y, oreKey);
     }
     if (oreKey === "rock" && this.hasTrait(owner, "golden_touch") && Math.random() < 0.05) {
-      this.gold += GOLDEN_TOUCH_BONUS_GOLD;
+      this.gainGold(GOLDEN_TOUCH_BONUS_GOLD);
       this.addLog(`🪙 황금 손등 발동! 보너스 골드 +${GOLDEN_TOUCH_BONUS_GOLD}G`, "#ffd166");
       sfx.playCoinSound();
     }
@@ -2398,7 +2583,7 @@ class MineScene extends Phaser.Scene {
     monster.broken = true;
     const type = MONSTER_TYPES[monster.typeId];
     const gold = Phaser.Math.Between(type.goldMin, type.goldMax);
-    this.gold += gold;
+    this.gainGold(gold);
     this.gainExp(type.exp);
     this.addLog(`[전투] ${type.name}을(를) 처치했습니다! 골드 +${gold}G, 경험치 +${type.exp}`, "#ffd166", "battle");
     this.spawnSparkle(monster.sprite.x, monster.sprite.y, 0xff9a76);
@@ -2417,11 +2602,22 @@ class MineScene extends Phaser.Scene {
     const ore = ORE_TYPES[oreKey];
     const ox = x + Phaser.Math.Between(-16, 16);
     const oy = y - 4 + Phaser.Math.Between(-8, 8);
-    const sprite = this.add.image(ox, oy, "ore_item")
-      .setDisplaySize(ORE_ITEM_DISPLAY * 0.55, ORE_ITEM_DISPLAY * 0.55)
-      .setOrigin(0.5, ORE_ITEM_ORIGIN_Y)
-      .setDepth(oy)
-      .setTint(ore.color);
+    const iconKey = ORE_ICON_MAP[oreKey]; // 철광석/미스릴은 전용 아이콘, 그 외에는 기존 tint 방식 그대로
+    let sprite;
+    if (iconKey) {
+      const rect = ICON_RECTS[iconKey];
+      const w = ORE_ITEM_DISPLAY * 0.5;
+      sprite = this.add.image(ox, oy, "ore_icons", iconKey)
+        .setDisplaySize(w, w * (rect.h / rect.w))
+        .setOrigin(0.5, 0.6)
+        .setDepth(oy);
+    } else {
+      sprite = this.add.image(ox, oy, "ore_item")
+        .setDisplaySize(ORE_ITEM_DISPLAY * 0.55, ORE_ITEM_DISPLAY * 0.55)
+        .setOrigin(0.5, ORE_ITEM_ORIGIN_Y)
+        .setDepth(oy)
+        .setTint(ore.color);
+    }
     this.tweens.add({ targets: sprite, y: oy - 6, duration: 480, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
     this.groundItems.push({ sprite, oreKey, warned: false });
   }
@@ -2597,7 +2793,7 @@ class MineScene extends Phaser.Scene {
     const oreKey = target.guaranteedOreKey ?? this.rollOreType(target.tier, target.isLavaRock);
     this.grantMiningRewards(worker, target, oreKey);
     this.addLog("[일꾼] 미니 슬라임이 암석을 채굴했습니다!", "#a8d8a8");
-    if (this.floorsClimbed < EARLY_GOLD_BONUS_FLOORS_CLIMBED) this.gold += EARLY_GOLD_BONUS_PER_HIT;
+    if (this.floorsClimbed < EARLY_GOLD_BONUS_FLOORS_CLIMBED) this.gainGold(EARLY_GOLD_BONUS_PER_HIT);
     if (this.floorNumber === DRAGON_LAIR_FLOOR) this.addDragonNoise(DRAGON_NOISE_PER_HIT);
 
     if (target.uses <= 0) {
@@ -2703,7 +2899,7 @@ class MineScene extends Phaser.Scene {
       this.addLog(`❤️ ${reward.name} 획득! 최대 HP가 +20 되어 ${this.maxHP}이(가) 되었습니다.`, "#8fdc8f");
     } else if (id === "fortune") {
       const bonusGold = 50 + this.floorsClimbed * 20;
-      this.gold += bonusGold;
+      this.gainGold(bonusGold);
       this.addLog(`💰 ${reward.name} 획득! 골드 +${bonusGold}G를 획득했습니다.`, "#ffd166");
     }
     document.getElementById("boss-reward-modal").style.display = "none";
@@ -2792,7 +2988,7 @@ class MineScene extends Phaser.Scene {
   /** 의뢰 보상을 지급한다. */
   grantQuestReward(id, quest) {
     if (id === "mine_rocks") {
-      this.gold += 500;
+      this.gainGold(500);
     } else if (id === "beat_boss") {
       this.bossPowerBonus += 1;
     } else if (id === "recruit_or_reroll") {
@@ -3003,6 +3199,10 @@ class MineScene extends Phaser.Scene {
       const lines = ["쿨쿨...", "노곤노곤~", "개운해요!", "물이 참 따뜻하네요~"];
       document.getElementById("spa-bubble").textContent = lines[Phaser.Math.Between(0, lines.length - 1)];
     }
+    if (tab === "smithy") {
+      const lines = ["좋은 원석을 가져왔나?", "쓸만한 광석이 있으면 가져와보게.", "곡괭이는 늘 날카롭게 관리해야지!", "다음 작품을 기대해도 좋아."];
+      document.getElementById("smithy-bubble").textContent = lines[Phaser.Math.Between(0, lines.length - 1)];
+    }
   }
 
   closeShop() {
@@ -3087,6 +3287,8 @@ class MineScene extends Phaser.Scene {
   renderEquipTab() {
     const currentTier = PICKAXE_TIERS[this.pickaxeTier];
     document.getElementById("equip-current-name").textContent = currentTier.name;
+    const currentIconKey = PICKAXE_ICON_MAP[currentTier.id];
+    document.getElementById("equip-current-icon").innerHTML = currentIconKey ? iconHtml(currentIconKey, 28) : "";
 
     const list = document.getElementById("equip-craft-list");
     list.innerHTML = PICKAXE_TIERS.map((tier, idx) => {
@@ -3100,9 +3302,10 @@ class MineScene extends Phaser.Scene {
         tier.critBonus ? `크리티컬 +${Math.round(tier.critBonus * 100)}%` : null,
       ].filter(Boolean).join(" · ");
       const costText = `철${tier.cost.iron} · 미스릴${tier.cost.mithril} · ${tier.cost.gold}G`;
+      const icon = iconHtml(PICKAXE_ICON_MAP[tier.id], 22, "icon-inline");
       return `
         <button class="shop-btn" data-craft-tier="${idx}" ${owned || !affordable ? "disabled" : ""}>
-          ${tier.name} (${effectText})
+          ${icon}${tier.name} (${effectText})
           <span class="cost">${owned ? "제작완료" : costText}</span>
         </button>`;
     }).join("");
@@ -3115,7 +3318,7 @@ class MineScene extends Phaser.Scene {
       + this.inventory.flame_ore * ORE_TYPES.flame_ore.sell
       + this.inventory.batwing * BATWING_SELL_PRICE) * this.oreValueMultiplier());
     if (value <= 0) return;
-    this.gold += value;
+    this.gainGold(value);
     this.inventory.rock = 0;
     this.inventory.iron = 0;
     this.inventory.mithril = 0;
@@ -3303,8 +3506,8 @@ class MineScene extends Phaser.Scene {
       <div class="inv-row"><span>가방</span><span>${total}/${this.bagCapacity}</span></div>
       <hr>
       <div class="inv-row"><span>🪨 암석/흙</span><span>${this.inventory.rock}</span></div>
-      <div class="inv-row"><span>🟫 철광석</span><span>${this.inventory.iron}</span></div>
-      <div class="inv-row"><span>🟣 미스릴</span><span>${this.inventory.mithril}</span></div>
+      <div class="inv-row"><span>${iconHtml("ore_iron", 16, "icon-inline")}철광석</span><span>${this.inventory.iron}</span></div>
+      <div class="inv-row"><span>${iconHtml("ore_mithril", 16, "icon-inline")}미스릴</span><span>${this.inventory.mithril}</span></div>
       <div class="inv-row"><span>🔥 화염 원석</span><span>${this.inventory.flame_ore}</span></div>
       <div class="inv-row"><span>🦇 ${BATWING_NAME}</span><span>${this.inventory.batwing}</span></div>
       <div class="inv-row"><span>🐉 드래곤 비늘</span><span>${this.inventory.dragonScale}</span></div>
@@ -3348,6 +3551,8 @@ class MineScene extends Phaser.Scene {
     const parts = [];
     if (now < this.speedBuffUntil) parts.push(`⚡ 채굴속도+20% ${Math.ceil((this.speedBuffUntil - now) / 1000)}초`);
     if (now < this.oreValueBuffUntil) parts.push(`💰 판매가2배 ${Math.ceil((this.oreValueBuffUntil - now) / 1000)}초`);
+    if (now < this.potionLuckUntil) parts.push(`🍯 골드획득2배 ${Math.ceil((this.potionLuckUntil - now) / 1000)}초`);
+    if (now < this.potionHasteUntil) parts.push(`🚀 채굴가속2배 ${Math.ceil((this.potionHasteUntil - now) / 1000)}초`);
     if (parts.length > 0) {
       buffLabel.textContent = parts.join("  ·  ");
       buffLabel.hidden = false;
@@ -3377,11 +3582,52 @@ class MineScene extends Phaser.Scene {
     const pickaxeSlot = document.getElementById("quickslot-pickaxe");
     pickaxeSlot.title = tier.name;
     pickaxeSlot.style.borderColor = `#${tier.tint.toString(16).padStart(6, "0")}`;
+    const pickaxeIconKey = PICKAXE_ICON_MAP[tier.id];
+    document.getElementById("quickslot-pickaxe-icon").innerHTML = pickaxeIconKey ? iconHtml(pickaxeIconKey, 26) : "⛏️";
 
     this.updateStatsHud();
 
     if (this.shopOpen) this.refreshShopUI();
     if (document.getElementById("inventory-modal").style.display === "block") this.openInventory();
+  }
+
+  /** 소모품 퀵슬롯 물약을 사용한다: 재료 소모 없이 물약별 재사용 대기시간(쿨타임)만 있는 즉발형 버프/회복. */
+  usePotion(key) {
+    const def = POTION_TYPES[key];
+    if (!def) return;
+    const now = Date.now();
+    if ((this.potionCooldownUntil[key] ?? 0) > now) return;
+    this.potionCooldownUntil[key] = now + def.cooldownMs;
+
+    if (key === "heal") {
+      this.hp = this.maxHP;
+      this.addLog("🧪 체력 회복 물약을 사용해 HP를 가득 채웠습니다!", "#8fdc8f");
+    } else if (key === "luck") {
+      this.potionLuckUntil = now + def.durationMs;
+      this.addLog(`✨ 황금 행운 물약! ${def.durationMs / 1000}초간 골드 획득량이 2배가 됩니다.`, "#ffd700");
+    } else if (key === "haste") {
+      this.potionHasteUntil = now + def.durationMs;
+      this.addLog(`🚀 채굴 가속 물약! ${def.durationMs / 1000}초간 채굴 속도가 2배가 됩니다.`, "#9ad1ff");
+    }
+    sfx.playCoinSound();
+    this.updateUI();
+    this.updatePotionUI();
+  }
+
+  /** 물약 퀵슬롯 3칸의 쿨타임 오버레이(원형으로 차오르는 애니메이션) + 잔여 초 + 버프 활성 테두리를 매 틱 갱신한다. */
+  updatePotionUI() {
+    const now = Date.now();
+    Object.entries(POTION_TYPES).forEach(([key, def]) => {
+      const btn = document.getElementById(`potion-slot-${key}`);
+      if (!btn) return;
+      const remaining = Math.max(0, (this.potionCooldownUntil[key] ?? 0) - now);
+      const frac = def.cooldownMs > 0 ? Math.min(1, remaining / def.cooldownMs) : 0;
+      btn.style.setProperty("--cd", frac.toFixed(3));
+      btn.classList.toggle("on-cooldown", remaining > 0);
+      btn.querySelector(".potion-cooldown-text").textContent = remaining > 0 ? Math.ceil(remaining / 1000) : "";
+      const buffUntil = def.buffKey ? this[def.buffKey] : 0;
+      btn.classList.toggle("on-buff", !!buffUntil && now < buffUntil);
+    });
   }
 
   drawMinimap() {
@@ -3533,7 +3779,7 @@ class MineScene extends Phaser.Scene {
     const iron = Math.round(minutes * workerCount * OFFLINE_IRON_PER_WORKER_PER_MIN);
     if (gold <= 0 && iron <= 0) return null;
 
-    this.gold += gold;
+    this.gainGold(gold);
     this.inventory.iron += iron;
     return { gold, iron, minutes: Math.round(minutes) };
   }
@@ -3681,6 +3927,17 @@ document.getElementById("btn-hire-worker").addEventListener("click", () => windo
 document.getElementById("btn-descend").addEventListener("click", () => window.gameScene?.ascendFloor());
 document.getElementById("btn-close-shop").addEventListener("click", () => window.gameScene?.closeShop());
 document.getElementById("shop-close-x").addEventListener("click", () => window.gameScene?.closeShop());
+
+// 소모품 퀵슬롯(체력/황금/가속 물약) - 클릭 또는 숫자키 1/2/3으로 사용한다.
+["heal", "luck", "haste"].forEach((key) => {
+  document.getElementById(`potion-slot-${key}`)?.addEventListener("click", () => window.gameScene?.usePotion(key));
+});
+const POTION_HOTKEYS = { "1": "heal", "2": "luck", "3": "haste" };
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  const key = POTION_HOTKEYS[e.key];
+  if (key) window.gameScene?.usePotion(key);
+});
 
 document.querySelectorAll(".shop-tab").forEach((btn) => {
   btn.addEventListener("click", () => window.gameScene?.switchShopTab(btn.dataset.shoptab));
