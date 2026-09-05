@@ -55,6 +55,60 @@
   #hud-gps { color: #9ad1ff !important; }
   #hud-buff { color: #8fdc8f !important; }
 
+  /* ---- 수호전/봉인전 HUD (상단 중앙, 보스바 아래) ---- */
+  #defense-hud {
+    display: none;
+    position: absolute;
+    top: 70px; left: 50%; transform: translateX(-50%);
+    width: 420px;
+    z-index: 16;
+  }
+  #defense-hud .rpg-window-header { justify-content: space-between; }
+  #defense-timer { color: #ffe066; font-weight: bold; }
+  #defense-wave { color: #9ad1ff; }
+  .stat-bar-fill.altar-hp { background: linear-gradient(180deg, #ffb347, #c45c12); }
+
+  /* ---- 슬라임 버스트 스킬바 (퀵슬롯 위) ---- */
+  #skill-bar {
+    position: absolute;
+    left: 50%; bottom: 62px;
+    transform: translateX(-50%);
+    display: flex; align-items: center; gap: 6px;
+    z-index: 16;
+    pointer-events: auto;
+  }
+  #burst-gauge {
+    width: 72px; height: 10px;
+    background: #1a120c; border: 1px solid #7a5a34; border-radius: 4px; overflow: hidden;
+  }
+  #burst-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #5ad0ff, #ffe066); transition: width 0.15s; }
+  .skill-btn {
+    width: 52px; height: 36px;
+    background: rgba(20,15,10,0.88); border: 2px solid #7a5a34; border-radius: 6px;
+    color: #eee; font-size: 10px; cursor: pointer; line-height: 1.15; padding: 2px;
+  }
+  .skill-btn:hover:not(:disabled) { border-color: #ffd166; color: #ffd166; }
+  .skill-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .skill-btn.ready { border-color: #8fdc8f; box-shadow: 0 0 8px rgba(143,220,143,0.55); }
+  .skill-hotkey { display: block; font-size: 9px; color: #9ad1ff; }
+
+  /* ---- 타워 건설 선택 오버레이 ---- */
+  #tower-build-modal {
+    display: none;
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.62);
+    align-items: center; justify-content: center; z-index: 24;
+  }
+  .tower-build-panel { width: 340px; }
+  .tower-cost { font-size: 11px; color: #ffd166; }
+
+  #legend-trait-modal {
+    display: none;
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.75);
+    align-items: center; justify-content: center; z-index: 28;
+  }
+
   /* ---- 반응형 뷰포트: #game-wrap(디자인 해상도 고정) 전체를 화면 폭에 맞춰 축소 ---- */
   #game-viewport {
     width: 100%;
@@ -582,6 +636,7 @@
     <div class="rpg-window-body">
       <div class="stat-line">Lv.<span id="stat-level">1</span> / Job Lv.1 / Exp. <span id="stat-exp">0</span>%</div>
       <div class="stat-line" id="stat-trait" style="color:#c9a6ff; font-size:11px;">특성: -</div>
+      <div class="stat-line" id="stat-legend-trait" style="color:#ffb347; font-size:11px; display:none;">전설: -</div>
       <div class="stat-row">
         <span class="stat-label">HP</span>
         <div class="stat-bar-bg"><div id="hp-bar" class="stat-bar-fill hp"></div></div>
@@ -612,8 +667,28 @@
         <button class="shop-btn dev-jump-btn" data-devfloor="10">B10F</button>
         <button class="shop-btn dev-jump-btn" data-devfloor="0">1F</button>
       </div>
+      <div class="dev-jump-row">
+        <button class="shop-btn dev-jump-btn" data-devfloor="25">B25F</button>
+        <button class="shop-btn dev-jump-btn" data-devfloor="15">B15F</button>
+        <button class="shop-btn dev-jump-btn" data-devfloor="5">B5F</button>
+      </div>
+      <button id="dev-btn-ladderdef" class="shop-btn">🪜 사다리 수호전 시작</button>
+      <button id="dev-btn-altardef" class="shop-btn">🔮 제단 봉인전 시작</button>
       <button id="dev-btn-clearfloor" class="shop-btn">⚡ 구역/보스 원킬</button>
       <button id="dev-btn-resetsave" class="shop-btn reset-btn">⚠️ 게임 완전 초기화</button>
+    </div>
+  </div>
+
+  <!-- 상단 중앙: 수호전/봉인전 HUD (평소에는 숨김) -->
+  <div id="defense-hud" class="rpg-window">
+    <div class="rpg-window-header">
+      <span id="defense-title">사다리 복구 수호전</span>
+      <span id="defense-timer">45초</span>
+    </div>
+    <div class="rpg-window-body" style="padding:8px 10px;">
+      <div id="defense-wave" class="coord-text" style="margin:0 0 6px;">웨이브 준비</div>
+      <div class="stat-bar-bg" style="height:12px;"><div id="defense-hp-bar" class="stat-bar-fill altar-hp" style="width:100%;"></div></div>
+      <div class="coord-text" id="defense-hp-text" style="margin-top:3px;">HP 100/100</div>
     </div>
   </div>
 
@@ -676,6 +751,20 @@
       <div class="potion-hotkey">3</div>
     </button>
     <div class="quick-slot"></div>
+  </div>
+
+  <!-- 하단 중앙: 버스트 스킬 Q/W/E -->
+  <div id="skill-bar">
+    <div id="burst-gauge" title="버스트 게이지 (타격으로 충전)"><div id="burst-fill"></div></div>
+    <button class="skill-btn" id="skill-btn-roll" data-skill="roll" title="슬라임 롤링 (전방 돌진 넉백 · 보호막 파쇄)">
+      <span class="skill-hotkey">Q</span>롤링
+    </button>
+    <button class="skill-btn" id="skill-btn-frenzy" data-skill="frenzy" title="광부의 맹타 (6초간 아군 공속 3배)">
+      <span class="skill-hotkey">W</span>맹타
+    </button>
+    <button class="skill-btn" id="skill-btn-acid" data-skill="acid" title="끈적한 포격 (지정 범위 속박 4초)">
+      <span class="skill-hotkey">E</span>포격
+    </button>
   </div>
 
   <!-- 우측 하단: 메뉴 아이콘 -->
@@ -762,7 +851,8 @@
 
       <div class="shop-tab-panel" data-shoppanel="workers" style="display:none">
         <button id="btn-hire-worker" class="shop-btn">미니 일꾼 슬라임 고용 <span class="cost" id="cost-hire-worker">100G</span></button>
-        <div class="shop-note">현재 고용: <span id="worker-count">0</span>/3 · 갱도를 자유롭게 돌아다니며 인접한 암반을 알아서 캡니다.</div>
+        <button id="btn-expand-workers" class="shop-btn">일꾼 한도 확장 <span class="cost" id="cost-expand-workers">250G</span></button>
+        <div class="shop-note">현재 고용: <span id="worker-count">0</span>/<span id="worker-max">3</span> · 한도 확장(+1, +2)으로 최대 6마리까지 늘릴 수 있습니다.</div>
       </div>
 
       <div class="shop-tab-panel" data-shoppanel="elevator" style="display:none">
@@ -879,11 +969,34 @@
       <button id="btn-ending-reenter" class="shop-btn ending-btn">🕳️ 더 깊은 심연으로 재침투</button>
     </div>
   </div>
+
+  <!-- 타워 건설 3지선다 -->
+  <div id="tower-build-modal">
+    <div class="shop-panel tower-build-panel">
+      <div class="shop-header">
+        <h2>🗼 타워 건설</h2>
+        <button id="tower-build-close" class="win-close">×</button>
+      </div>
+      <div class="shop-note" style="margin-bottom:8px;">캐둔 광석과 골드로 즉시 건설합니다.</div>
+      <div id="tower-build-list"></div>
+      <button id="btn-cancel-tower" class="shop-btn">취소</button>
+    </div>
+  </div>
+
+  <!-- 2단계 전설 특성 3택 1 -->
+  <div id="legend-trait-modal">
+    <div class="evo-panel">
+      <h2>✨ 전설 특성 각성</h2>
+      <div class="evo-desc">봉인전을 지켜냈습니다! 2단계 전설 특성을 하나 선택하세요.</div>
+      <div class="evo-options" id="legend-trait-options"></div>
+    </div>
+  </div>
 </div>
 </div>
 
 <div id="help">
   바닥을 <b>좌클릭</b>하면 슬라임이 이동합니다. <b>암반(바위)</b>을 클릭하면 다가가서 자동으로 곡괭이질을 시작합니다.<br>
+  몬스터를 클릭하면 일제 돌격(Rally)합니다. 드래그로 여러 적에게 공격 핑을 넣을 수 있습니다. <b>Q/W/E</b>는 버스트 스킬입니다.<br>
   부순 암반 자리에 떨어진 <b>광물</b>은 슬라임이 다가가면 자동으로 줍습니다. <b>포탈</b>을 클릭하면 임시 은신처가 열립니다. 진행 상황은 자동 저장됩니다.
 </div>
 
@@ -925,6 +1038,90 @@ const FIELD_MONSTER_TYPE_IDS = Object.keys(MONSTER_TYPES);
 const FIELD_MONSTER_SPAWN_CHANCE = 0.1;        // 채굴 타격마다(보스 구역 제외) 필드 몬스터가 나타날 확률
 const FIELD_MONSTER_HP_MULT_PER_FLOOR = 0.15;  // 층이 깊어질수록 필드 몬스터 체력이 늘어난다
 const FIELD_MONSTER_MAX_ALIVE = 2;             // 동시에 등장 가능한 필드 몬스터 수
+
+/* -------------------------------------------------------------------------
+   1a-2b. 실시간 지휘 전투 + 2대 타워 디펜스
+   - monsters.png / towers.png 가로 3분할 시트, ui_target.png 조준선, dragon_altar.png 봉인 제단.
+   ------------------------------------------------------------------------- */
+const COMBAT_MONSTER_SHEET = { src: "assets/monsters.png", w: 1280, h: 720 };
+const COMBAT_MONSTER_CROPS = [
+  { x: 18,  y: 159, w: 408, h: 373 }, // 0 바위갑각거북
+  { x: 426, y: 139, w: 409, h: 404 }, // 1 마그마두더지
+  { x: 864, y: 156, w: 395, h: 402 }, // 2 수정거미
+];
+const COMBAT_MONSTER_TYPES = {
+  turtle: {
+    name: "바위갑각거북", frame: "cm_turtle", crop: 0, role: "tank",
+    display: 78, originY: 0.86, hp: 28, armor: 0.45, speed: 28, melee: 6, attackMs: 1100,
+    goldMin: 8, goldMax: 14, exp: 22, hasShield: true,
+  },
+  magma_mole: {
+    name: "마그마두더지", frame: "cm_mole", crop: 1, role: "melee",
+    display: 70, originY: 0.86, hp: 16, armor: 0, speed: 72, melee: 8, attackMs: 420,
+    goldMin: 6, goldMax: 12, exp: 18, hasShield: false,
+  },
+  crystal_spider: {
+    name: "수정거미", frame: "cm_spider", crop: 2, role: "ranged",
+    display: 68, originY: 0.82, hp: 12, armor: 0, speed: 46, melee: 5, attackMs: 900,
+    goldMin: 7, goldMax: 13, exp: 20, hasShield: false, projectileRange: 170,
+  },
+};
+const COMBAT_MONSTER_IDS = Object.keys(COMBAT_MONSTER_TYPES);
+
+const TOWER_SHEET = { src: "assets/towers.png", w: 1280, h: 720 };
+const TOWER_CROPS = [
+  { x: 27,  y: 233, w: 372, h: 306 }, // 0 스파이크 트랩
+  { x: 426, y: 174, w: 414, h: 394 }, // 1 발리스타
+  { x: 861, y: 50,  w: 409, h: 563 }, // 2 랜턴 타워
+];
+const TOWER_TYPES = {
+  spike: {
+    name: "스파이크 트랩", frame: "tw_spike", crop: 0, display: 56, originY: 0.78,
+    cost: { iron: 15, gold: 0, mithril: 0 },
+    range: 42, tickMs: 350, damage: 3, slowMs: 600, slowMult: 0.55,
+  },
+  ballista: {
+    name: "발리스타", frame: "tw_ballista", crop: 1, display: 72, originY: 0.82,
+    cost: { iron: 20, gold: 10, mithril: 0 },
+    range: 210, tickMs: 900, damage: 10, pierce: true,
+  },
+  lantern: {
+    name: "랜턴 타워", frame: "tw_lantern", crop: 2, display: 80, originY: 0.88,
+    range: 110, tickMs: 500, damage: 2, slowMs: 800, slowMult: 0.6, fireDotMs: 1600,
+    cost: { iron: 0, gold: 20, mithril: 10 },
+  },
+};
+const TOWER_TYPE_IDS = Object.keys(TOWER_TYPES);
+
+const UI_TARGET_CROP = { x: 330, y: 312, w: 368, h: 382 };
+const ALTAR_CROP = { x: 29, y: 108, w: 965, h: 803 };
+const UI_TARGET_DISPLAY = 36;
+const ALTAR_DISPLAY = 128;
+
+const LADDER_DEFENSE_FLOORS = [25, 20, 15, 10, 5];
+const LADDER_REPAIR_MS = 45000;
+const LADDER_DEFENSE_HP = 140;
+const HIDDEN_LAIR_MAX_FLOOR = 20;
+const HIDDEN_LAIR_MIN_FLOOR = 15;
+const ALTAR_DEFENSE_HP = 180;
+const ALTAR_WAVE_COUNT = 3;
+
+const PLAYER_ATK_RANGE = 78;
+const PLAYER_ATK_MS = 700;
+const WORKER_ATK_RANGE = 58;
+const WORKER_ATK_MS = 900;
+const BURST_MAX = 100;
+const BURST_PER_HIT = 8;
+const SKILL_FRENZY_MS = 6000;
+const SKILL_FRENZY_MULT = 3;
+const SKILL_ACID_MS = 4000;
+const SKILL_ACID_RADIUS = 78;
+
+const LEGEND_TRAIT_TYPES = {
+  dragonheart:    { name: "용심의 맥동",     emoji: "🐉", desc: "전투 공격력 +30% · 최대 HP +40" },
+  siege_master:   { name: "공성 장인의 눈", emoji: "🎯", desc: "타워 공격력 +40% · 사거리 +25%" },
+  slime_overseer: { name: "슬라임 지휘관",   emoji: "👑", desc: "일꾼 한도 +1 · 일꾼 전투 속도 +50%" },
+};
 
 const BOSS_DISPLAY_SCALE = 1.5;
 const BOSS_BASE_HP = 80;
@@ -981,7 +1178,11 @@ const ABYSS_TARGET_FLOOR = 100;       // 무한 모드의 목표 표시 층수 (
 
 // 미니 일꾼 슬라임 (자율 배회형 방치 채굴 AI)
 const WORKER_COST = 100;
-const WORKER_MAX = 3;
+const WORKER_MAX = 3; // 기본 한도. 상점 확장(+1, +2)과 전설 특성으로 늘어난다.
+const WORKER_EXPAND_STEPS = [
+  { add: 1, gold: 250, name: "일꾼 한도 +1" },
+  { add: 2, gold: 600, name: "일꾼 한도 +2" },
+];
 const WORKER_SCALE = 0.6;
 const WORKER_MINE_INTERVAL = 3000;       // ms, 채굴 중일 때 타격 주기
 const WORKER_WANDER_INTERVAL = [2000, 4000]; // ms, 배회 중일 때 다음 이동까지 대기 범위
@@ -1474,6 +1675,35 @@ class MineScene extends Phaser.Scene {
     this.ambientLanterns = [];  // B30~B15 갱도 벽면에 배치한 장식용 랜턴(글로우+스프라이트) 목록
     this.playerAutoTimer = null;
 
+    // 실시간 지휘 전투 / 타워 디펜스
+    this.workerExpandLevel = 0;   // 0=기본3, 1=+1, 2=+1+2
+    this.legendTrait = null;      // 2단계 전설 특성 (봉인전 보상)
+    this.hiddenLairCleared = false;
+    this.ladderDefenseCleared = false;
+    this.defenseMode = null;      // null | "ladder" | "altar"
+    this.defenseHp = 0; this.defenseMaxHp = 0;
+    this.defenseEndsAt = 0;
+    this.defenseWave = 0;
+    this.combatUnits = [];
+    this.towers = [];
+    this.towerSlots = [];
+    this.projectiles = [];
+    this.rallyTarget = null;
+    this.rallyQueue = [];
+    this.targetMarker = null;
+    this.burstGauge = 0;
+    this.allyHasteUntil = 0;
+    this.pendingAcid = false;
+    this.playerAtkCd = 0;
+    this.dragPinging = false;
+    this.repairLadder = null;
+    this.altarObj = null;
+    this.hiddenPortal = null;
+    this.pendingTowerSlot = null;
+    this.legendTraitOpen = false;
+    this.towerBuildOpen = false;
+    this.acidZones = [];
+
     this.pickaxeTier = 0;        // 장비 제작소에서 올린 곡괭이 등급 인덱스 (PICKAXE_TIERS, 파워강화 단계와 별개로 누적)
     this.autoReturnSell = false; // 가방이 가득 차면 자동으로 임시 은신처로 귀환해 일괄 판매할지 여부
     this.autoReturning = false;  // 자동 귀환 판매가 이미 진행 중인지 (중복 트리거 방지)
@@ -1526,6 +1756,10 @@ class MineScene extends Phaser.Scene {
     this.load.image("hat_icons", "assets/hats.png");
     this.load.image("ladder", "assets/ladder.png");
     this.load.image("lantern_wall", "assets/lantern.png");
+    this.load.image("combat_monsters", "assets/monsters.png");
+    this.load.image("combat_towers", "assets/towers.png");
+    this.load.image("ui_target", "assets/ui_target.png");
+    this.load.image("dragon_altar", "assets/dragon_altar.png");
   }
 
   create() {
@@ -1548,6 +1782,16 @@ class MineScene extends Phaser.Scene {
     HAT_CROPS.forEach((crop, idx) => {
       this.textures.get("hat_icons").add(`hat_${idx}`, 0, crop.x, crop.y, crop.w, crop.h);
     });
+    COMBAT_MONSTER_CROPS.forEach((crop, idx) => {
+      const key = ["cm_turtle", "cm_mole", "cm_spider"][idx];
+      this.textures.get("combat_monsters").add(key, 0, crop.x, crop.y, crop.w, crop.h);
+    });
+    TOWER_CROPS.forEach((crop, idx) => {
+      const key = ["tw_spike", "tw_ballista", "tw_lantern"][idx];
+      this.textures.get("combat_towers").add(key, 0, crop.x, crop.y, crop.w, crop.h);
+    });
+    this.textures.get("ui_target").add("ui_target_frame", 0, UI_TARGET_CROP.x, UI_TARGET_CROP.y, UI_TARGET_CROP.w, UI_TARGET_CROP.h);
+    this.textures.get("dragon_altar").add("altar_frame", 0, ALTAR_CROP.x, ALTAR_CROP.y, ALTAR_CROP.w, ALTAR_CROP.h);
 
     /* ---- 3-1c. 소모품 퀵슬롯(체력/황금/가속 물약) 아이콘 + 대장간/게시판 DOM 아이콘을 한 번만 채워 넣는다 ---- */
     document.getElementById("potion-icon-heal").innerHTML = iconHtml("potion_heal", 30);
@@ -1605,6 +1849,10 @@ class MineScene extends Phaser.Scene {
       this.totalRocksMined = saved.totalRocksMined ?? 0;
       this.totalBossesDefeated = saved.totalBossesDefeated ?? 0;
       this.totalPlaytimeMs = saved.totalPlaytimeMs ?? 0;
+      this.workerExpandLevel = saved.workerExpandLevel ?? 0;
+      this.legendTrait = saved.legendTrait ?? null;
+      this.hiddenLairCleared = saved.hiddenLairCleared ?? false;
+      if (this.legendTrait === "dragonheart") this.maxHP = Math.max(this.maxHP, 140);
       if (this.floorNumber === DRAGON_LAIR_FLOOR) {
         this.dragonNoise = saved.dragonNoise ?? 0;
         this.dragonAwake = saved.dragonAwake ?? false;
@@ -1613,7 +1861,7 @@ class MineScene extends Phaser.Scene {
     }
     if (!this.playerTrait) this.playerTrait = rollRandomTrait(); // 최초 생성 시 1회 무작위 배정
     this.recalcBagCapacity();
-    const savedWorkerTraits = (saved?.workerTraits ?? []).slice(0, WORKER_MAX);
+    const savedWorkerTraits = (saved?.workerTraits ?? []).slice(0, this.workerMax());
     const offlineReward = this.computeOfflineReward(saved);
 
     /* ---- 3-3. 아이소메트릭 바닥 그리드 + 암반(rock) 배치 ----
@@ -1689,15 +1937,31 @@ class MineScene extends Phaser.Scene {
 
     /* ---- 3-8. 입력: 바닥 클릭 = 이동, 오브젝트 클릭은 각자 핸들러가 처리 ---- */
     this.input.on("pointerdown", (pointer) => {
-      if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen) return;
+      if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.legendTraitOpen || this.towerBuildOpen) return;
+      if (this.pendingAcid) {
+        this.castAcidAt(pointer.worldX, pointer.worldY);
+        return;
+      }
       const hits = this.input.hitTestPointer(pointer);
       if (hits.length > 0) return; // 광맥/상점 등 인터랙티브 오브젝트는 자체 핸들러가 처리
+      this.dragPinging = true;
       this.moveTo(pointer.worldX, pointer.worldY, null);
     });
+    this.input.on("pointermove", (pointer) => {
+      if (!pointer.isDown || !this.dragPinging) return;
+      if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen) return;
+      this.pingEnemiesAlong(pointer.worldX, pointer.worldY);
+    });
+    this.input.on("pointerup", () => { this.dragPinging = false; });
 
     this.input.keyboard.on("keydown-ESC", () => {
+      if (this.pendingAcid) { this.pendingAcid = false; this.addLog("산성탄 조준을 취소했습니다.", "#aaaaaa"); return; }
+      if (this.towerBuildOpen) { this.closeTowerBuild(); return; }
       if (this.shopOpen) this.closeShop();
     });
+    this.input.keyboard.on("keydown-Q", () => this.useBurstSkill("roll"));
+    this.input.keyboard.on("keydown-W", () => this.useBurstSkill("frenzy"));
+    this.input.keyboard.on("keydown-E", () => this.useBurstSkill("acid"));
 
     /* ---- 3-9. 최초 안내 로그 ---- */
     this.addLog("슬라임 광부: 오늘도 열심히 캐보자~!", "#8fdc8f");
@@ -1745,6 +2009,7 @@ class MineScene extends Phaser.Scene {
     document.addEventListener("visibilitychange", this.visibilityChangeHandler);
 
     this.schedulePlayerAutoTick();
+    this.updateSkillUI();
 
     if (offlineReward) this.showOfflineRewardModal(offlineReward);
   }
@@ -1776,6 +2041,7 @@ class MineScene extends Phaser.Scene {
     if (this.boss) { this.boss.sprite.destroy(); this.boss.label.destroy(); }
     if (this.sectorEventProp) { this.sectorEventProp.sprite.destroy(); this.sectorEventProp.label.destroy(); }
     if (this.ladderSprite) { this.ladderSprite.destroy(); this.ladderSprite = null; }
+    this.cleanupCombatWorld();
     (this.ambientLanterns ?? []).forEach((obj) => obj.destroy());
     this.ambientLanterns = [];
     this.chest = null;
@@ -1856,6 +2122,10 @@ class MineScene extends Phaser.Scene {
     this.spawnAmbientLanterns();
 
     this.buildSectorGroups();
+    this.ladderDefenseCleared = false;
+    if (!this.infiniteMode && this.floorNumber >= HIDDEN_LAIR_MIN_FLOOR && this.floorNumber <= HIDDEN_LAIR_MAX_FLOOR && !this.hiddenLairCleared) {
+      this.spawnHiddenLairPortal();
+    }
   }
 
   /** B30~B15 심층 갱도 구간에서 양쪽 암벽에 은은한 주황빛 랜턴을 장식으로 배치한다 (무한 모드에서는 생략). */
@@ -1950,6 +2220,11 @@ class MineScene extends Phaser.Scene {
       this.activeSectorIndex = idx + 1;
       this.advanceSector(idx);
     } else if (!this.sectorAdvancing) {
+      if (this.needsLadderDefense() && !this.ladderDefenseCleared) {
+        this.spawnRepairLadder();
+        this.addLog("🪜 부서진 탈출 사다리가 드러났습니다. 클릭해 수리를 시작하세요!", "#ffe066");
+        return;
+      }
       // 마지막 구역까지 끝났다: 짧게 축하 연출 후 자동으로 위층으로 올라간다.
       this.sectorAdvancing = true;
       this.addLog(`🎉 B${this.floorNumber}F 탈출로를 뚫었습니다! 위층으로 자동 이동합니다...`, "#ffe066");
@@ -2104,6 +2379,12 @@ class MineScene extends Phaser.Scene {
     if (this.boss && !this.boss.broken) {
       document.getElementById("shop-msg").textContent = "수문장을 먼저 처치해야 다음 층으로 이동할 수 있습니다!";
       this.addLog("🗿 수문장을 먼저 처치해야 다음 층으로 이동할 수 있습니다!", "#ff9a76", "battle");
+      return;
+    }
+    if (this.needsLadderDefense() && !this.ladderDefenseCleared) {
+      document.getElementById("shop-msg").textContent = "부서진 사다리를 먼저 수리해야 합니다!";
+      this.addLog("🪜 사다리를 클릭해 복구 수호전을 시작하세요.", "#ff9a76", "battle");
+      this.spawnRepairLadder();
       return;
     }
     if (!this.infiniteMode && this.floorNumber <= 1) {
@@ -2483,7 +2764,11 @@ class MineScene extends Phaser.Scene {
   }
 
   onOreClicked(cluster) {
-    if (cluster.broken || this.evolutionOpen || this.bossRewardOpen) return;
+    if (cluster.broken || this.evolutionOpen || this.bossRewardOpen || this.isDefenseActive()) return;
+    if (cluster.kind === "monster" || cluster.kind === "boss" || cluster.kind === "wave") {
+      this.rallyOnClick(cluster);
+      return;
+    }
     const dx = this.player.x - cluster.sprite.x;
     const dy = this.player.y - cluster.sprite.y;
     const dist = Math.max(1, Math.hypot(dx, dy));
@@ -2506,8 +2791,10 @@ class MineScene extends Phaser.Scene {
   }
 
   playerAutoTick() {
-    if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.miningTarget) return; // 이미 뭔가 하고 있으면 방해하지 않는다
-    if (this.tweens.isTweening(this.player)) return; // 수동 클릭으로 이동 중이면 우선권을 준다
+    if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.miningTarget) return;
+    if (this.isDefenseActive() || this.legendTraitOpen || this.towerBuildOpen) return;
+    if (this.tweens.isTweening(this.player)) return;
+    if (this.rallyTarget && !this.unitIsDead(this.rallyTarget)) return; // 지휘 중에는 자동 채굴을 쉰다
     const target = this.findNextAutoRock();
     if (target) this.onOreClicked(target);
   }
@@ -2848,7 +3135,7 @@ class MineScene extends Phaser.Scene {
       stroke: "#2e2013", strokeThickness: 3,
     }).setOrigin(0.5, 1).setDepth(y + 1);
     const monster = { kind: "monster", typeId, sprite, label, col: spot.col, row: spot.row, uses: hp, maxUses: hp, broken: false };
-    sprite.on("pointerdown", () => this.onOreClicked(monster));
+    sprite.on("pointerdown", () => this.rallyOnClick(monster));
     this.monsters.push(monster);
     this.addLog(`[전투] ${type.name}이(가) 암반 틈에서 튀어나왔습니다! 처치하면 골드와 경험치를 얻습니다.`, "#ff9a76", "battle");
   }
@@ -2887,6 +3174,7 @@ class MineScene extends Phaser.Scene {
     monster.label.destroy();
     const idx = this.monsters.indexOf(monster);
     if (idx >= 0) this.monsters.splice(idx, 1);
+    if (this.rallyTarget === monster) this.clearRally();
     this.cancelMining();
     this.updateUI();
     this.saveGame();
@@ -2998,10 +3286,14 @@ class MineScene extends Phaser.Scene {
 
   /** 채굴 중이면 3초, 배회 중이면 2~4초 뒤에 다음 행동을 하도록 스스로를 재예약한다. */
   scheduleWorkerTick(worker) {
-    const baseDelay = worker.state === "mining"
-      ? WORKER_MINE_INTERVAL
-      : Phaser.Math.Between(WORKER_WANDER_INTERVAL[0], WORKER_WANDER_INTERVAL[1]);
-    const delay = baseDelay / this.workerSpeedMultiplier(worker);
+    const combat = this.isDefenseActive() || (this.rallyTarget && !this.unitIsDead(this.rallyTarget));
+    const haste = combat ? this.combatHasteMult() * (this.legendTrait === "slime_overseer" ? 1.5 : 1) : this.workerSpeedMultiplier(worker);
+    const baseDelay = combat
+      ? WORKER_ATK_MS
+      : worker.state === "mining"
+        ? WORKER_MINE_INTERVAL
+        : Phaser.Math.Between(WORKER_WANDER_INTERVAL[0], WORKER_WANDER_INTERVAL[1]);
+    const delay = baseDelay / haste;
     worker.timer = this.time.delayedCall(delay, () => {
       this.workerTick(worker);
       if (this.workers.includes(worker)) this.scheduleWorkerTick(worker);
@@ -3010,6 +3302,10 @@ class MineScene extends Phaser.Scene {
 
   /** 매 주기마다: 채굴 중이면 한 번 타격, 아니면 인접 암반을 찾아 채굴을 시작하거나 배회한다. */
   workerTick(worker) {
+    if (this.isDefenseActive() || this.rallyTarget) {
+      this.workerCombatStep(worker);
+      return;
+    }
     if (worker.state === "mining") {
       this.workerMineStep(worker);
       return;
@@ -3108,13 +3404,13 @@ class MineScene extends Phaser.Scene {
     this.saveGame();
   }
 
-  /** 임시 은신처 일꾼 관리소: 골드를 내고 미니 일꾼 슬라임을 고용한다 (최대 3마리). */
+  /** 임시 은신처 일꾼 관리소: 골드를 내고 미니 일꾼 슬라임을 고용한다. */
   hireWorker() {
-    if (this.workers.length >= WORKER_MAX || this.gold < WORKER_COST) return;
+    if (this.workers.length >= this.workerMax() || this.gold < WORKER_COST) return;
     this.gold -= WORKER_COST;
     const worker = this.spawnWorker();
     const trait = TRAIT_TYPES[worker.trait];
-    const msg = `미니 일꾼 슬라임을 고용했습니다! (${this.workers.length}/${WORKER_MAX}) - 특성: ${trait.emoji} ${trait.name}`;
+    const msg = `미니 일꾼 슬라임을 고용했습니다! (${this.workers.length}/${this.workerMax()}) - 특성: ${trait.emoji} ${trait.name}`;
     document.getElementById("shop-msg").textContent = msg;
     this.addLog(msg, "#a8d8a8");
     this.questProgress.recruit_or_reroll += 1;
@@ -3152,7 +3448,7 @@ class MineScene extends Phaser.Scene {
       kind: "boss", sprite, label, col: BOSS_COL, row: BOSS_ROW, uses: hp, maxUses: hp, broken: false,
       name: theme.name, bonusMithril: theme.bonusMithril,
     };
-    sprite.on("pointerdown", () => this.onOreClicked(this.boss));
+    sprite.on("pointerdown", () => this.rallyOnClick(this.boss));
     this.addLog(`🗿 B${this.floorNumber}F 마지막 구역! 수문장 [${theme.name}]이(가) 모습을 드러냈습니다!`, "#ff9a76", "battle");
     this.cameras.main.flash(200, 255, 120, 60, false);
     sfx.playBreakSound();
@@ -3219,6 +3515,11 @@ class MineScene extends Phaser.Scene {
     sfx.playFanfareSound();
     this.updateUI();
     this.saveGame();
+    if (this.needsLadderDefense() && !this.ladderDefenseCleared) {
+      this.spawnRepairLadder();
+      this.addLog("🪜 수문장을 쓰러뜨렸습니다. 이제 사다리를 수리해야 위층으로 갈 수 있습니다!", "#ffe066");
+      return;
+    }
     this.ascendFloor();
   }
 
@@ -3521,6 +3822,10 @@ class MineScene extends Phaser.Scene {
      ========================================================================= */
 
   openShop() {
+    if (this.isDefenseActive()) {
+      this.addLog("수호전 중에는 은신처에 들어갈 수 없습니다!", "#ff9a76");
+      return;
+    }
     // 고룡의 레어(B30F)에서 눈을 뜬 고룡을 피해 포탈로 돌아온 경우: 평범한 상점 대신 탈출 정산을 먼저 처리한다.
     if (this.floorNumber === DRAGON_LAIR_FLOOR && this.dragonAwake && !this.dragonLairCleared) {
       this.escapeDragonLair();
@@ -3607,14 +3912,17 @@ class MineScene extends Phaser.Scene {
     }
 
     document.getElementById("worker-count").textContent = this.workers.length;
+    const maxEl = document.getElementById("worker-max");
+    if (maxEl) maxEl.textContent = this.workerMax();
     const hireBtn = document.getElementById("btn-hire-worker");
-    if (this.workers.length >= WORKER_MAX) {
+    if (this.workers.length >= this.workerMax()) {
       document.getElementById("cost-hire-worker").textContent = "MAX";
       hireBtn.disabled = true;
     } else {
       document.getElementById("cost-hire-worker").textContent = `${WORKER_COST}G`;
       hireBtn.disabled = this.gold < WORKER_COST;
     }
+    this.renderWorkerExpandBtn();
 
     document.getElementById("elevator-floor").textContent = `B${this.floorNumber}F`;
     document.getElementById("elevator-next-floor").textContent = this.infiniteMode
@@ -3928,6 +4236,16 @@ class MineScene extends Phaser.Scene {
       const trait = TRAIT_TYPES[this.playerTrait];
       document.getElementById("stat-trait").textContent = `특성: ${trait.emoji} ${trait.name}`;
     }
+    const legendEl = document.getElementById("stat-legend-trait");
+    if (legendEl) {
+      if (this.legendTrait && LEGEND_TRAIT_TYPES[this.legendTrait]) {
+        const lt = LEGEND_TRAIT_TYPES[this.legendTrait];
+        legendEl.style.display = "block";
+        legendEl.textContent = `전설: ${lt.emoji} ${lt.name}`;
+      } else {
+        legendEl.style.display = "none";
+      }
+    }
 
     // 퀵슬롯 곡괭이 내구도 + 장비 등급(색상/툴팁) 반영
     document.getElementById("pickaxe-durability").textContent =
@@ -4200,6 +4518,9 @@ class MineScene extends Phaser.Scene {
         totalRocksMined: this.totalRocksMined,
         totalBossesDefeated: this.totalBossesDefeated,
         totalPlaytimeMs: this.totalPlaytimeMs,
+        workerExpandLevel: this.workerExpandLevel,
+        legendTrait: this.legendTrait,
+        hiddenLairCleared: this.hiddenLairCleared,
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) {
@@ -4234,7 +4555,7 @@ class MineScene extends Phaser.Scene {
    * 보상을 지급한다. 일꾼이 없거나 자리를 비운 시간이 1분 미만이면 null을 반환해 모달을 띄우지 않는다.
    */
   computeOfflineReward(saved) {
-    const workerCount = Phaser.Math.Clamp(saved?.workerTraits?.length ?? 0, 0, WORKER_MAX);
+    const workerCount = Phaser.Math.Clamp(saved?.workerTraits?.length ?? 0, 0, 8);
     if (!saved?.lastSeenAt || !workerCount) return null;
     const elapsedMs = Math.min(Date.now() - saved.lastSeenAt, OFFLINE_CAP_MS);
     if (elapsedMs < OFFLINE_MIN_MS) return null;
@@ -4249,6 +4570,863 @@ class MineScene extends Phaser.Scene {
       `골드 +${reward.gold}G / 철광석 +${reward.iron}개 획득`;
     document.getElementById("offline-modal").style.display = "flex";
   }
+
+  workerMax() {
+    let cap = WORKER_MAX;
+    if (this.workerExpandLevel >= 1) cap += WORKER_EXPAND_STEPS[0].add;
+    if (this.workerExpandLevel >= 2) cap += WORKER_EXPAND_STEPS[1].add;
+    if (this.legendTrait === "slime_overseer") cap += 1;
+    return cap;
+  }
+
+  renderWorkerExpandBtn() {
+    const btn = document.getElementById("btn-expand-workers");
+    const costEl = document.getElementById("cost-expand-workers");
+    if (!btn || !costEl) return;
+    const step = WORKER_EXPAND_STEPS[this.workerExpandLevel];
+    if (!step) {
+      costEl.textContent = "MAX";
+      btn.disabled = true;
+      return;
+    }
+    costEl.textContent = `${step.name} ${step.gold}G`;
+    btn.disabled = this.gold < step.gold;
+  }
+
+  expandWorkerCap() {
+    const step = WORKER_EXPAND_STEPS[this.workerExpandLevel];
+    if (!step || this.gold < step.gold) return;
+    this.gold -= step.gold;
+    this.workerExpandLevel += 1;
+    const msg = `${step.name} 구매! 일꾼 한도가 ${this.workerMax()}마리로 늘었습니다.`;
+    document.getElementById("shop-msg").textContent = msg;
+    this.addLog(msg, "#a8d8a8");
+    this.updateUI();
+    this.saveGame();
+  }
+
+  combatDamage() {
+    let dmg = this.pickaxePower;
+    if (this.legendTrait === "dragonheart") dmg *= 1.3;
+    return Math.max(1, Math.round(dmg));
+  }
+
+  combatHasteMult() {
+    return Date.now() < this.allyHasteUntil ? SKILL_FRENZY_MULT : 1;
+  }
+
+  towerStatMult() {
+    return this.legendTrait === "siege_master" ? 1.4 : 1;
+  }
+
+  towerRangeMult() {
+    return this.legendTrait === "siege_master" ? 1.25 : 1;
+  }
+
+  isDefenseActive() {
+    return this.defenseMode === "ladder" || this.defenseMode === "altar";
+  }
+
+  needsLadderDefense() {
+    return !this.infiniteMode && LADDER_DEFENSE_FLOORS.includes(this.floorNumber);
+  }
+
+  unitIsDead(unit) {
+    if (!unit) return true;
+    if (unit.kind === "wave") return !!unit.broken || unit.hp <= 0;
+    return !!unit.broken || (unit.uses ?? 1) <= 0;
+  }
+
+  unitPos(unit) {
+    return unit?.sprite ? { x: unit.sprite.x, y: unit.sprite.y } : null;
+  }
+
+  liveCombatTargets() {
+    const list = this.combatUnits.filter((u) => !this.unitIsDead(u));
+    this.monsters.forEach((m) => { if (!this.unitIsDead(m)) list.push(m); });
+    if (this.boss && !this.unitIsDead(this.boss)) list.push(this.boss);
+    return list;
+  }
+
+  cleanupCombatWorld() {
+    this.endDefense(false, true);
+    if (this.repairLadder) { this.repairLadder.destroy(); this.repairLadder = null; }
+    if (this.hiddenPortal) {
+      this.hiddenPortal.sprite.destroy();
+      this.hiddenPortal.label.destroy();
+      this.hiddenPortal.glow?.destroy();
+      this.hiddenPortal = null;
+    }
+    if (this.altarObj) {
+      this.altarObj.sprite.destroy();
+      this.altarObj.label?.destroy();
+      this.altarObj.glow?.destroy();
+      this.altarObj = null;
+    }
+    this.clearRally();
+  }
+
+  /* =========================================================================
+     하이브리드 지휘 전투 (자동 타격 + Rally + 드래그 핑 + Q/W/E)
+     ========================================================================= */
+
+  rallyOnClick(unit) {
+    if (this.unitIsDead(unit)) return;
+    this.setRallyTarget(unit, true);
+  }
+
+  setRallyTarget(unit, logIt) {
+    if (this.unitIsDead(unit)) return;
+    this.rallyTarget = unit;
+    this.cancelMining();
+    this.tweens.killTweensOf(this.player);
+    this.ensureTargetMarker(unit);
+    this.workers.forEach((w) => {
+      w.state = "combat";
+      w.mineTarget = null;
+    });
+    const pos = this.unitPos(unit);
+    if (pos) this.moveTo(pos.x, pos.y, null);
+    if (logIt) {
+      const name = unit.name || COMBAT_MONSTER_TYPES[unit.typeId]?.name || MONSTER_TYPES[unit.typeId]?.name || "목표";
+      this.addLog(`🎯 [${name}] 일점사! 슬라임과 일꾼이 일제 돌격합니다.`, "#ffd166", "battle");
+    }
+  }
+
+  ensureTargetMarker(unit) {
+    const pos = this.unitPos(unit);
+    if (!pos) return;
+    if (!this.targetMarker) {
+      this.targetMarker = this.add.image(pos.x, pos.y - 48, "ui_target", "ui_target_frame")
+        .setDisplaySize(UI_TARGET_DISPLAY, UI_TARGET_DISPLAY)
+        .setDepth(1200);
+      this.tweens.add({
+        targets: this.targetMarker, scaleX: this.targetMarker.scaleX * 1.18, scaleY: this.targetMarker.scaleY * 1.18,
+        duration: 380, yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+      });
+    }
+    this.targetMarker.setVisible(true);
+  }
+
+  clearRally() {
+    this.rallyTarget = null;
+    this.rallyQueue = [];
+    if (this.targetMarker) { this.tweens.killTweensOf(this.targetMarker); this.targetMarker.destroy(); this.targetMarker = null; }
+  }
+
+  pingEnemiesAlong(x, y) {
+    this.liveCombatTargets().forEach((unit) => {
+      const p = this.unitPos(unit);
+      if (!p) return;
+      if (Phaser.Math.Distance.Between(x, y, p.x, p.y) > 36) return;
+      if (this.rallyQueue.includes(unit) || unit === this.rallyTarget) return;
+      unit.pinged = true;
+      this.rallyQueue.push(unit);
+      if (!this.rallyTarget) this.setRallyTarget(unit, true);
+      else this.addLog("📍 우선 공격 핑을 부여했습니다.", "#9ad1ff", "battle");
+    });
+  }
+
+  chargeBurst(amount) {
+    this.burstGauge = Math.min(BURST_MAX, this.burstGauge + amount);
+  }
+
+  useBurstSkill(id) {
+    if (this.shopOpen || this.evolutionOpen || this.bossRewardOpen || this.legendTraitOpen) return;
+    if (this.burstGauge < BURST_MAX) {
+      this.addLog("버스트 게이지가 부족합니다. 타격으로 충전하세요!", "#aaaaaa");
+      return;
+    }
+    if (id === "acid") {
+      this.pendingAcid = true;
+      this.addLog("🧪 끈적한 포격: 속박할 위치를 클릭하세요.", "#c9a6ff", "battle");
+      return;
+    }
+    this.burstGauge = 0;
+    if (id === "roll") this.castSlimeRoll();
+    else if (id === "frenzy") this.castMinerFrenzy();
+    this.updateSkillUI();
+  }
+
+  castSlimeRoll() {
+    const dir = this.player.flipX ? -1 : 1;
+    const startX = this.player.x, startY = this.player.y;
+    const destX = Phaser.Math.Clamp(startX + dir * 150, GRID_MIN_X + 16, GRID_MAX_X - 16);
+    this.cancelMining();
+    this.tweens.killTweensOf(this.player);
+    this.tweens.add({
+      targets: this.player, x: destX, duration: 280, ease: "Cubic.easeOut",
+      onUpdate: () => this.player.setDepth(this.player.y),
+    });
+    this.liveCombatTargets().forEach((unit) => {
+      const p = this.unitPos(unit);
+      if (!p) return;
+      const onPath = Math.abs(p.y - startY) < 46 && ((dir > 0 && p.x >= startX - 10 && p.x <= destX + 10) || (dir < 0 && p.x <= startX + 10 && p.x >= destX - 10));
+      if (!onPath) return;
+      if (unit.hasShield) { unit.hasShield = false; this.addLog("🛡️ 바위갑각거북의 보호막을 파쇄했습니다!", "#ffd166", "battle"); }
+      this.dealCombatDamage(unit, this.combatDamage() * 2, { knockbackDir: dir });
+    });
+    this.addLog("🌀 슬라임 롤링!", "#8fdc8f", "battle");
+    this.cameras.main.shake(120, 0.004);
+    sfx.playBreakSound();
+  }
+
+  castMinerFrenzy() {
+    this.allyHasteUntil = Date.now() + SKILL_FRENZY_MS;
+    this.addLog("⚒️ 광부의 맹타! 6초간 아군 공속이 3배가 됩니다.", "#ffd166", "battle");
+    sfx.playFanfareSound();
+  }
+
+  castAcidAt(x, y) {
+    if (!this.pendingAcid) return;
+    this.pendingAcid = false;
+    this.burstGauge = 0;
+    const zone = this.add.circle(x, y, SKILL_ACID_RADIUS, 0x88ff44, 0.22).setDepth(50).setStrokeStyle(2, 0x66cc33);
+    this.acidZones.push({ sprite: zone, until: Date.now() + SKILL_ACID_MS, x, y });
+    this.liveCombatTargets().forEach((unit) => {
+      const p = this.unitPos(unit);
+      if (!p) return;
+      if (Phaser.Math.Distance.Between(x, y, p.x, p.y) <= SKILL_ACID_RADIUS) unit.rootUntil = Date.now() + SKILL_ACID_MS;
+    });
+    this.addLog("🧪 끈적한 포격! 범위 안 적을 4초간 속박합니다.", "#c9a6ff", "battle");
+    sfx.playHealChime();
+    this.updateSkillUI();
+    this.time.delayedCall(SKILL_ACID_MS, () => {
+      zone.destroy();
+      this.acidZones = this.acidZones.filter((z) => z.sprite !== zone);
+    });
+  }
+
+  updateSkillUI() {
+    const fill = document.getElementById("burst-fill");
+    if (fill) fill.style.width = `${Math.round((this.burstGauge / BURST_MAX) * 100)}%`;
+    const ready = this.burstGauge >= BURST_MAX;
+    ["roll", "frenzy", "acid"].forEach((id) => {
+      const btn = document.getElementById(`skill-btn-${id}`);
+      if (!btn) return;
+      btn.disabled = !ready;
+      btn.classList.toggle("ready", ready);
+    });
+  }
+
+  nearestEnemy(x, y, range) {
+    let best = null, bestD = range;
+    this.liveCombatTargets().forEach((unit) => {
+      const p = this.unitPos(unit);
+      if (!p) return;
+      const d = Phaser.Math.Distance.Between(x, y, p.x, p.y);
+      if (d < bestD) { bestD = d; best = unit; }
+    });
+    return best;
+  }
+
+  dealCombatDamage(unit, rawDmg, opts = {}) {
+    if (this.unitIsDead(unit)) return;
+    let dmg = rawDmg;
+    if (unit.kind === "wave") {
+      const type = COMBAT_MONSTER_TYPES[unit.typeId];
+      const armor = unit.hasShield ? 0.7 : (type?.armor ?? 0);
+      dmg = Math.max(1, Math.round(dmg * (1 - armor)));
+      unit.hp -= dmg;
+      this.chargeBurst(BURST_PER_HIT);
+      this.spawnFloatingDmg(unit.sprite.x, unit.sprite.y - 30, dmg);
+      if (opts.knockbackDir && unit.sprite) {
+        unit.sprite.x += opts.knockbackDir * 36;
+      }
+      this.refreshWaveHpBar(unit);
+      if (unit.hp <= 0) this.defeatWaveMonster(unit);
+      return;
+    }
+    this.applyMiningDamage(unit, dmg);
+    this.chargeBurst(BURST_PER_HIT);
+    this.spawnFloatingDmg(unit.sprite.x, unit.sprite.y - 24, dmg);
+    if (unit.kind === "boss") this.updateBossBar();
+    if (unit.uses <= 0) {
+      if (unit.kind === "monster") this.defeatFieldMonster(unit);
+      else if (unit.kind === "boss") this.defeatBoss(unit);
+    }
+  }
+
+  spawnFloatingDmg(x, y, dmg) {
+    const t = this.add.text(x + Phaser.Math.Between(-10, 10), y, `${dmg}`, {
+      fontSize: "13px", fontFamily: "Malgun Gothic, sans-serif", color: "#ffe066",
+      stroke: "#2e2013", strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(1300);
+    this.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 420, onComplete: () => t.destroy() });
+  }
+
+  refreshWaveHpBar(unit) {
+    if (!unit.hpBarFill || !unit.maxHp) return;
+    unit.hpBarFill.width = 36 * Math.max(0, unit.hp / unit.maxHp);
+  }
+
+  defeatWaveMonster(unit) {
+    unit.broken = true;
+    unit.hp = 0;
+    const type = COMBAT_MONSTER_TYPES[unit.typeId];
+    const gold = Phaser.Math.Between(type.goldMin, type.goldMax);
+    this.gainGold(gold);
+    this.gainExp(type.exp);
+    this.addLog(`[전투] ${type.name}을(를) 처치했습니다! 골드 +${gold}G`, "#ffd166", "battle");
+    this.spawnSparkle(unit.sprite.x, unit.sprite.y, 0xff9a76);
+    sfx.playCoinSound();
+    unit.sprite.destroy();
+    unit.label?.destroy();
+    unit.hpBarBg?.destroy();
+    unit.hpBarFill?.destroy();
+    const idx = this.combatUnits.indexOf(unit);
+    if (idx >= 0) this.combatUnits.splice(idx, 1);
+    if (this.rallyTarget === unit) {
+      const next = this.rallyQueue.find((u) => !this.unitIsDead(u));
+      this.rallyQueue = this.rallyQueue.filter((u) => !this.unitIsDead(u));
+      if (next) this.setRallyTarget(next, false);
+      else this.clearRally();
+    }
+    this.updateUI();
+  }
+
+  workerCombatStep(worker) {
+    const haste = this.combatHasteMult() * (this.legendTrait === "slime_overseer" ? 1.5 : 1);
+    let target = (this.rallyTarget && !this.unitIsDead(this.rallyTarget)) ? this.rallyTarget : this.nearestEnemy(worker.sprite.x, worker.sprite.y, 240);
+    if (!target) {
+      worker.state = "idle";
+      return;
+    }
+    const p = this.unitPos(target);
+    const dist = Phaser.Math.Distance.Between(worker.sprite.x, worker.sprite.y, p.x, p.y);
+    if (dist > WORKER_ATK_RANGE) {
+      worker.sprite.setFlipX(p.x < worker.sprite.x);
+      const labelOffsetY = SLIME_DISPLAY * WORKER_SCALE * SLIME_ORIGIN_Y + 4;
+      this.tweens.killTweensOf(worker.sprite);
+      this.tweens.add({
+        targets: worker.sprite, x: p.x, y: p.y, duration: Math.max(180, (dist / (MOVE_SPEED * haste)) * 1000),
+        onUpdate: () => {
+          worker.sprite.setDepth(worker.sprite.y);
+          worker.traitLabel.setPosition(worker.sprite.x, worker.sprite.y - labelOffsetY).setDepth(worker.sprite.y + 1);
+          worker.hatSprite?.setPosition(worker.sprite.x, worker.sprite.y - WORKER_HAT_OFFSET_Y).setDepth(worker.sprite.y + 0.5);
+        },
+      });
+      return;
+    }
+    this.dealCombatDamage(target, 1);
+    sfx.playPickSound();
+    this.spawnRockChips(p.x, p.y);
+  }
+
+  updateCombat(delta) {
+    if (this.targetMarker && this.rallyTarget && !this.unitIsDead(this.rallyTarget)) {
+      const p = this.unitPos(this.rallyTarget);
+      const h = this.rallyTarget.sprite?.displayHeight ?? 48;
+      this.targetMarker.setPosition(p.x, p.y - h * 0.85).setDepth(p.y + 20);
+    } else if (this.targetMarker && (!this.rallyTarget || this.unitIsDead(this.rallyTarget))) {
+      this.clearRally();
+    }
+
+    this.playerAtkCd = Math.max(0, this.playerAtkCd - delta * this.combatHasteMult());
+    const autoTarget = (this.rallyTarget && !this.unitIsDead(this.rallyTarget))
+      ? this.rallyTarget
+      : this.nearestEnemy(this.player.x, this.player.y, PLAYER_ATK_RANGE);
+    if (autoTarget && this.playerAtkCd <= 0 && !this.shopOpen && !this.evolutionOpen) {
+      const p = this.unitPos(autoTarget);
+      if (p && Phaser.Math.Distance.Between(this.player.x, this.player.y, p.x, p.y) <= PLAYER_ATK_RANGE + 8) {
+        this.playerAtkCd = PLAYER_ATK_MS;
+        this.player.setFlipX(p.x < this.player.x);
+        this.dealCombatDamage(autoTarget, this.combatDamage());
+        sfx.playPickSound();
+        this.spawnRockChips(p.x, p.y);
+      }
+    }
+
+    if (this.isDefenseActive()) this.tickDefense(delta);
+
+    this.towers.forEach((tw) => this.tickTower(tw, delta));
+    this.tickProjectiles(delta);
+
+    const now = Date.now();
+    this.combatUnits.forEach((unit) => {
+      if (this.unitIsDead(unit)) return;
+      if (unit.fireDotUntil && now < unit.fireDotUntil) {
+        unit.fireAcc = (unit.fireAcc ?? 0) + delta;
+        if (unit.fireAcc >= 400) {
+          unit.fireAcc = 0;
+          this.dealCombatDamage(unit, 1);
+        }
+      }
+    });
+  }
+
+  /* =========================================================================
+     사다리 복구 수호전 / 드래곤 레어 봉인전
+     ========================================================================= */
+
+  spawnRepairLadder() {
+    if (this.repairLadder) return;
+    const { x, y } = this.gridToScreen(2, 4);
+    const targetW = LADDER_DISPLAY_H * (LADDER_CROP.w / LADDER_CROP.h);
+    const ladder = this.add.image(x, y, "ladder", "ladder_frame")
+      .setOrigin(0.5, LADDER_ORIGIN_Y)
+      .setDisplaySize(targetW, LADDER_DISPLAY_H)
+      .setDepth(y + 6)
+      .setInteractive({ useHandCursor: true, pixelPerfect: true });
+    ladder.on("pointerdown", () => this.onRepairLadderClicked());
+    this.repairLadder = ladder;
+    this.addLog("🪜 부서진 탈출 사다리가 나타났습니다. 클릭하면 수리를 시작합니다.", "#ffe066");
+  }
+
+  onRepairLadderClicked() {
+    if (this.isDefenseActive()) return;
+    this.startLadderDefense();
+  }
+
+  startLadderDefense() {
+    if (this.isDefenseActive()) return;
+    this.closeShop();
+    this.cancelMining();
+    this.defenseMode = "ladder";
+    this.defenseHp = LADDER_DEFENSE_HP;
+    this.defenseMaxHp = LADDER_DEFENSE_HP;
+    this.defenseEndsAt = Date.now() + LADDER_REPAIR_MS;
+    this.defenseWave = 0;
+    this.buildTowerSlotsAround(2, 4);
+    this.scheduleLadderWaves();
+    this.showDefenseHud("🪜 사다리 복구 수호전", "양옆 통로에서 몬스터가 몰려옵니다!");
+    this.addLog("수리 모드 돌입! 45초 동안 사다리를 지키세요. 슬롯을 클릭해 타워를 건설할 수 있습니다.", "#ff9a76", "battle");
+    this.cameras.main.flash(180, 255, 180, 80, false);
+  }
+
+  scheduleLadderWaves() {
+    const plan = [
+      [800, ["turtle", "turtle"]],
+      [8000, ["magma_mole", "magma_mole", "crystal_spider"]],
+      [16000, ["turtle", "magma_mole", "crystal_spider", "magma_mole"]],
+      [24000, ["magma_mole", "crystal_spider", "turtle", "crystal_spider"]],
+      [32000, ["turtle", "magma_mole", "magma_mole", "crystal_spider", "crystal_spider"]],
+      [40000, ["magma_mole", "magma_mole", "turtle"]],
+    ];
+    plan.forEach(([at, ids], i) => {
+      this.time.delayedCall(at, () => {
+        if (this.defenseMode !== "ladder") return;
+        this.defenseWave = i + 1;
+        ids.forEach((id, n) => this.spawnWaveMonster(id, n % 2 === 0 ? "left" : "right"));
+        this.updateDefenseHud();
+      });
+    });
+  }
+
+  spawnHiddenLairPortal() {
+    if (this.hiddenPortal) return;
+    const col = 0, row = 7;
+    const rock = this.rockBlocks.find((r) => r.col === col && r.row === row && !r.broken);
+    if (rock) { rock.broken = true; rock.sprite.destroy(); this.brokenCells.add(`${col},${row}`); }
+    const { x, y } = this.gridToScreen(col, row);
+    const glow = this.add.image(x, y, "glow").setBlendMode(Phaser.BlendModes.ADD).setTint(0xff5a3c).setScale(1.6).setAlpha(0.75).setDepth(y + 1);
+    const sprite = this.add.image(x, y, "dragon_altar", "altar_frame")
+      .setOrigin(0.5, 0.82)
+      .setDisplaySize(72, 72)
+      .setDepth(y + 2)
+      .setInteractive({ useHandCursor: true, pixelPerfect: true });
+    const label = this.add.text(x, y - 64, "🔮 봉인된 균열", {
+      fontSize: "11px", fontFamily: "Malgun Gothic, sans-serif", color: "#ffb347",
+      stroke: "#2e2013", strokeThickness: 3,
+    }).setOrigin(0.5, 1).setDepth(y + 3);
+    sprite.on("pointerdown", () => this.startAltarDefense());
+    this.hiddenPortal = { sprite, label, glow };
+    this.tweens.add({ targets: glow, alpha: 0.35, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+  }
+
+  startAltarDefense() {
+    if (this.isDefenseActive() || this.hiddenLairCleared) return;
+    this.closeShop();
+    this.cancelMining();
+    if (this.altarObj) {
+      this.altarObj.sprite.destroy();
+      this.altarObj.label?.destroy();
+      this.altarObj.glow?.destroy();
+      this.altarObj = null;
+    }
+    const { x, y } = this.gridToScreen(BOSS_COL, BOSS_ROW);
+    [[BOSS_COL, BOSS_ROW], [BOSS_COL + 1, BOSS_ROW], [BOSS_COL, BOSS_ROW + 1], [BOSS_COL - 1, BOSS_ROW]].forEach(([c, r]) => {
+      const rock = this.rockBlocks.find((rk) => rk.col === c && rk.row === r && !rk.broken);
+      if (rock) { rock.broken = true; rock.sprite.destroy(); this.brokenCells.add(`${c},${r}`); }
+    });
+    const glow = this.add.image(x, y, "glow").setBlendMode(Phaser.BlendModes.ADD).setTint(0xff7043).setScale(2.4).setAlpha(0.85).setDepth(y - 1);
+    const sprite = this.add.image(x, y, "dragon_altar", "altar_frame")
+      .setOrigin(0.5, 0.86)
+      .setDisplaySize(ALTAR_DISPLAY, ALTAR_DISPLAY * (ALTAR_CROP.h / ALTAR_CROP.w))
+      .setDepth(y + 2);
+    const label = this.add.text(x, y - ALTAR_DISPLAY, "🐉 봉인 제단", {
+      fontSize: "13px", fontFamily: "Malgun Gothic, sans-serif", fontStyle: "bold", color: "#ffb347",
+      stroke: "#2e2013", strokeThickness: 3,
+    }).setOrigin(0.5, 1).setDepth(y + 3);
+    this.altarObj = { sprite, label, glow, x, y };
+    this.defenseMode = "altar";
+    this.defenseHp = ALTAR_DEFENSE_HP;
+    this.defenseMaxHp = ALTAR_DEFENSE_HP;
+    this.defenseEndsAt = 0;
+    this.defenseWave = 0;
+    this.buildTowerSlotsAround(BOSS_COL, BOSS_ROW);
+    this.scheduleAltarWaves();
+    this.showDefenseHud("🔮 드래곤 레어 봉인전", "제단을 3웨이브 동안 수호하세요!");
+    this.addLog("봉인 제단이 깨어났습니다! 특수 침공이 시작됩니다.", "#ff9a76", "battle");
+    this.cameras.main.flash(220, 255, 80, 40, false);
+    sfx.playBreakSound();
+  }
+
+  scheduleAltarWaves() {
+    const waves = [
+      [600, ["turtle", "turtle", "magma_mole"]],
+      [14000, ["magma_mole", "magma_mole", "crystal_spider", "crystal_spider", "turtle"]],
+      [28000, ["turtle", "turtle", "magma_mole", "magma_mole", "crystal_spider", "crystal_spider"]],
+    ];
+    waves.forEach(([at, ids], i) => {
+      this.time.delayedCall(at, () => {
+        if (this.defenseMode !== "altar") return;
+        this.defenseWave = i + 1;
+        ids.forEach((id, n) => this.spawnWaveMonster(id, n % 2 === 0 ? "left" : "right"));
+        this.updateDefenseHud();
+        this.addLog(`🌊 봉인전 웨이브 ${i + 1}/${ALTAR_WAVE_COUNT}!`, "#ff9a76", "battle");
+      });
+    });
+  }
+
+  spawnWaveMonster(typeId, side) {
+    const type = COMBAT_MONSTER_TYPES[typeId];
+    const row = type.role === "tank" ? 4 : type.role === "ranged" ? 6 : 3;
+    const col = side === "left" ? 0 : GRID_COLS - 1;
+    const { x, y } = this.gridToScreen(col, row);
+    const spawnX = side === "left" ? x - 40 : x + 40;
+    const crop = COMBAT_MONSTER_CROPS[type.crop];
+    const sprite = this.add.image(spawnX, y, "combat_monsters", type.frame)
+      .setOrigin(0.5, type.originY)
+      .setDisplaySize(type.display, type.display * (crop.h / crop.w))
+      .setDepth(y)
+      .setInteractive({ useHandCursor: true, pixelPerfect: true });
+    const label = this.add.text(spawnX, y - type.display, type.name, {
+      fontSize: "11px", fontFamily: "Malgun Gothic, sans-serif", color: "#ff9a76",
+      stroke: "#2e2013", strokeThickness: 3,
+    }).setOrigin(0.5, 1).setDepth(y + 1);
+    const hpBarBg = this.add.rectangle(spawnX, y - type.display - 8, 36, 5, 0x1a1a1a).setStrokeStyle(1, 0x5a4a3a).setDepth(y + 2);
+    const hpBarFill = this.add.rectangle(spawnX - 18, y - type.display - 8, 36, 5, 0xff6b5a).setOrigin(0, 0.5).setDepth(y + 3);
+    const hp = Math.round(type.hp * (1 + this.floorsClimbed * 0.08));
+    const unit = {
+      kind: "wave", typeId, name: type.name, sprite, label, hpBarBg, hpBarFill,
+      hp, maxHp: hp, speed: type.speed, hasShield: !!type.hasShield, role: type.role,
+      attackMs: type.attackMs, melee: type.melee, atkAcc: 0, broken: false, pinged: false,
+      rootUntil: 0, slowUntil: 0, fireDotUntil: 0,
+    };
+    sprite.on("pointerdown", () => this.rallyOnClick(unit));
+    this.combatUnits.push(unit);
+  }
+
+  buildTowerSlotsAround(col, row) {
+    this.clearTowerSlots();
+    const spots = [[col - 1, row - 1], [col + 1, row - 1], [col - 1, row + 1], [col + 1, row + 1]];
+    spots.forEach(([c, r]) => {
+      if (c < 0 || r < 0 || c >= GRID_COLS || r >= GRID_ROWS) return;
+      const rock = this.rockBlocks.find((rk) => rk.col === c && rk.row === r && !rk.broken);
+      if (rock) { rock.broken = true; rock.sprite.destroy(); this.brokenCells.add(`${c},${r}`); }
+      const { x, y } = this.gridToScreen(c, r);
+      const marker = this.add.rectangle(x, y - 8, 34, 20, 0x2e2013, 0.55)
+        .setStrokeStyle(2, 0xffd166).setDepth(y + 5)
+        .setInteractive({ useHandCursor: true });
+      const slot = { col: c, row: r, x, y, marker, occupied: false };
+      marker.on("pointerdown", () => this.openTowerBuild(slot));
+      this.towerSlots.push(slot);
+    });
+  }
+
+  clearTowerSlots() {
+    this.towerSlots.forEach((s) => s.marker?.destroy());
+    this.towerSlots = [];
+    this.towers.forEach((tw) => tw.sprite.destroy());
+    this.towers = [];
+    this.projectiles.forEach((p) => p.sprite.destroy());
+    this.projectiles = [];
+  }
+
+  openTowerBuild(slot) {
+    if (!this.isDefenseActive() || slot.occupied) return;
+    this.pendingTowerSlot = slot;
+    this.towerBuildOpen = true;
+    const list = document.getElementById("tower-build-list");
+    list.innerHTML = TOWER_TYPE_IDS.map((id) => {
+      const t = TOWER_TYPES[id];
+      const ok = this.canAffordTower(t);
+      const cost = [
+        t.cost.iron ? `철${t.cost.iron}` : null,
+        t.cost.gold ? `${t.cost.gold}G` : null,
+        t.cost.mithril ? `미스릴${t.cost.mithril}` : null,
+      ].filter(Boolean).join(" · ");
+      return `<button class="shop-btn" data-build-tower="${id}" ${ok ? "" : "disabled"}>${t.name} <span class="cost">${cost}</span></button>`;
+    }).join("");
+    document.getElementById("tower-build-modal").style.display = "flex";
+  }
+
+  closeTowerBuild() {
+    this.towerBuildOpen = false;
+    this.pendingTowerSlot = null;
+    document.getElementById("tower-build-modal").style.display = "none";
+  }
+
+  canAffordTower(t) {
+    return this.inventory.iron >= t.cost.iron && this.gold >= t.cost.gold && this.inventory.mithril >= t.cost.mithril;
+  }
+
+  buildTower(typeId) {
+    const slot = this.pendingTowerSlot;
+    const def = TOWER_TYPES[typeId];
+    if (!slot || slot.occupied || !def || !this.canAffordTower(def)) return;
+    this.inventory.iron -= def.cost.iron;
+    this.gold -= def.cost.gold;
+    this.inventory.mithril -= def.cost.mithril;
+    const crop = TOWER_CROPS[def.crop];
+    const sprite = this.add.image(slot.x, slot.y, "combat_towers", def.frame)
+      .setOrigin(0.5, def.originY)
+      .setDisplaySize(def.display, def.display * (crop.h / crop.w))
+      .setDepth(slot.y + 6);
+    slot.occupied = true;
+    slot.marker.setVisible(false);
+    this.towers.push({ typeId, def, sprite, slot, acc: 0 });
+    this.addLog(`🗼 ${def.name}을(를) 건설했습니다!`, "#ffe066", "battle");
+    sfx.playCoinSound();
+    this.closeTowerBuild();
+    this.updateUI();
+  }
+
+  tickTower(tw, delta) {
+    tw.acc += delta;
+    const range = tw.def.range * this.towerRangeMult();
+    const dmg = Math.max(1, Math.round(tw.def.damage * this.towerStatMult()));
+    if (tw.acc < tw.def.tickMs) return;
+    tw.acc = 0;
+    const enemies = this.combatUnits.filter((u) => !this.unitIsDead(u));
+    if (tw.typeId === "spike") {
+      enemies.forEach((u) => {
+        const p = this.unitPos(u);
+        if (Phaser.Math.Distance.Between(tw.sprite.x, tw.sprite.y, p.x, p.y) <= range) {
+          u.slowUntil = Date.now() + tw.def.slowMs;
+          this.dealCombatDamage(u, dmg);
+        }
+      });
+      return;
+    }
+    if (tw.typeId === "lantern") {
+      enemies.forEach((u) => {
+        const p = this.unitPos(u);
+        if (Phaser.Math.Distance.Between(tw.sprite.x, tw.sprite.y, p.x, p.y) <= range) {
+          u.slowUntil = Date.now() + tw.def.slowMs;
+          u.fireDotUntil = Date.now() + tw.def.fireDotMs;
+          this.dealCombatDamage(u, dmg);
+        }
+      });
+      return;
+    }
+    const target = this.nearestEnemy(tw.sprite.x, tw.sprite.y, range);
+    if (!target) return;
+    const p = this.unitPos(target);
+    const bolt = this.add.rectangle(tw.sprite.x, tw.sprite.y - 20, 10, 4, 0xffe066).setDepth(1100);
+    this.projectiles.push({ sprite: bolt, tx: p.x, ty: p.y, dmg, pierce: tw.def.pierce, hit: new Set(), speed: 420 });
+  }
+
+  tickProjectiles(delta) {
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const pr = this.projectiles[i];
+      const dist = Phaser.Math.Distance.Between(pr.sprite.x, pr.sprite.y, pr.tx, pr.ty);
+      const step = (pr.speed * delta) / 1000;
+      if (dist < step) {
+        if (pr.hitObjective) this.hurtDefense(5);
+        pr.sprite.destroy(); this.projectiles.splice(i, 1); continue;
+      }
+      const nx = pr.sprite.x + ((pr.tx - pr.sprite.x) / dist) * step;
+      const ny = pr.sprite.y + ((pr.ty - pr.sprite.y) / dist) * step;
+      pr.sprite.setPosition(nx, ny);
+      this.combatUnits.forEach((u) => {
+        if (this.unitIsDead(u) || pr.hit.has(u)) return;
+        const p = this.unitPos(u);
+        if (Phaser.Math.Distance.Between(nx, ny, p.x, p.y) < 22) {
+          pr.hit.add(u);
+          this.dealCombatDamage(u, pr.dmg);
+          if (!pr.pierce) { pr.sprite.destroy(); this.projectiles.splice(i, 1); }
+        }
+      });
+    }
+  }
+
+  tickDefense(delta) {
+    const obj = this.defenseObjectivePos();
+    if (!obj) return;
+    const now = Date.now();
+    this.combatUnits.forEach((unit) => {
+      if (this.unitIsDead(unit)) return;
+      const rooted = now < (unit.rootUntil ?? 0);
+      const slow = now < (unit.slowUntil ?? 0) ? 0.55 : 1;
+      const type = COMBAT_MONSTER_TYPES[unit.typeId];
+      let destX = obj.x, destY = obj.y;
+      if (type.role === "ranged") {
+        const d = Phaser.Math.Distance.Between(unit.sprite.x, unit.sprite.y, obj.x, obj.y);
+        if (d < (type.projectileRange ?? 170)) {
+          destX = unit.sprite.x; destY = unit.sprite.y;
+          unit.atkAcc = (unit.atkAcc ?? 0) + delta;
+          if (unit.atkAcc >= type.attackMs) {
+            unit.atkAcc = 0;
+            const shard = this.add.circle(unit.sprite.x, unit.sprite.y - 10, 4, 0x9b6bff).setDepth(1100);
+            this.projectiles.push({ sprite: shard, tx: obj.x, ty: obj.y, dmg: 0, pierce: false, hit: new Set(), speed: 260, hitObjective: true });
+          }
+        } else if (type.role === "tank") {
+          destY = obj.y - 8;
+        }
+      }
+      if (!rooted) {
+        const dist = Phaser.Math.Distance.Between(unit.sprite.x, unit.sprite.y, destX, destY);
+        if (dist > 4) {
+          const step = (unit.speed * slow * delta) / 1000;
+          const nx = unit.sprite.x + ((destX - unit.sprite.x) / dist) * Math.min(step, dist);
+          const ny = unit.sprite.y + ((destY - unit.sprite.y) / dist) * Math.min(step, dist);
+          unit.sprite.setPosition(nx, ny).setDepth(ny);
+          unit.sprite.setFlipX(destX < nx);
+          unit.label?.setPosition(nx, ny - (type.display)).setDepth(ny + 1);
+          unit.hpBarBg?.setPosition(nx, ny - type.display - 8);
+          unit.hpBarFill?.setPosition(nx - 18, ny - type.display - 8);
+        }
+      }
+      const dObj = Phaser.Math.Distance.Between(unit.sprite.x, unit.sprite.y, obj.x, obj.y);
+      const meleeRange = type.role === "ranged" ? 24 : 38;
+      if (dObj <= meleeRange) {
+        unit.atkAcc = (unit.atkAcc ?? 0) + delta;
+        if (unit.atkAcc >= type.attackMs) {
+          unit.atkAcc = 0;
+          this.hurtDefense(type.melee);
+        }
+      }
+    });
+
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const pr = this.projectiles[i];
+      if (!pr.hitObjective) continue;
+      if (Phaser.Math.Distance.Between(pr.sprite.x, pr.sprite.y, obj.x, obj.y) < 18) {
+        this.hurtDefense(5);
+        pr.sprite.destroy();
+        this.projectiles.splice(i, 1);
+      }
+    }
+
+    if (this.defenseMode === "ladder" && now >= this.defenseEndsAt) this.winLadderDefense();
+    if (this.defenseMode === "altar" && this.defenseWave >= ALTAR_WAVE_COUNT && this.combatUnits.every((u) => this.unitIsDead(u))) {
+      this.winAltarDefense();
+    }
+    this.updateDefenseHud();
+  }
+
+  defenseObjectivePos() {
+    if (this.defenseMode === "ladder" && this.repairLadder) return { x: this.repairLadder.x, y: this.repairLadder.y + 20 };
+    if (this.defenseMode === "altar" && this.altarObj) return { x: this.altarObj.x, y: this.altarObj.y };
+    return null;
+  }
+
+  hurtDefense(amount) {
+    this.defenseHp = Math.max(0, this.defenseHp - amount);
+    this.cameras.main.shake(60, 0.002);
+    if (this.defenseHp <= 0) this.failDefense();
+  }
+
+  showDefenseHud(title, waveText) {
+    document.getElementById("defense-title").textContent = title;
+    document.getElementById("defense-wave").textContent = waveText;
+    document.getElementById("defense-hud").style.display = "block";
+    this.updateDefenseHud();
+  }
+
+  updateDefenseHud() {
+    if (!this.isDefenseActive()) { document.getElementById("defense-hud").style.display = "none"; return; }
+    const bar = document.getElementById("defense-hp-bar");
+    const txt = document.getElementById("defense-hp-text");
+    const ratio = this.defenseMaxHp > 0 ? (this.defenseHp / this.defenseMaxHp) * 100 : 0;
+    bar.style.width = `${ratio}%`;
+    const label = this.defenseMode === "ladder" ? "사다리" : "제단";
+    txt.textContent = `${label} HP ${Math.ceil(this.defenseHp)}/${this.defenseMaxHp}`;
+    if (this.defenseMode === "ladder") {
+      const left = Math.max(0, Math.ceil((this.defenseEndsAt - Date.now()) / 1000));
+      document.getElementById("defense-timer").textContent = `${left}초`;
+      document.getElementById("defense-wave").textContent = `웨이브 ${this.defenseWave} · 타워 슬롯을 클릭해 건설`;
+    } else {
+      document.getElementById("defense-timer").textContent = `${this.defenseWave}/${ALTAR_WAVE_COUNT}`;
+    }
+  }
+
+  winLadderDefense() {
+    if (this.defenseMode !== "ladder") return;
+    this.ladderDefenseCleared = true;
+    this.addLog("🪜 사다리 수리 완료! 다음 층 진입로가 개통되었습니다.", "#ffe066", "battle");
+    sfx.playFanfareSound();
+    this.endDefense(true, false);
+    this.ascendFloor();
+  }
+
+  winAltarDefense() {
+    if (this.defenseMode !== "altar") return;
+    this.hiddenLairCleared = true;
+    this.addLog("🐉 봉인전 승리! 전설 특성이 깨어납니다.", "#ffd700", "battle");
+    sfx.playFanfareSound();
+    this.endDefense(true, false);
+    this.openLegendTraitModal();
+    this.saveGame();
+  }
+
+  failDefense() {
+    this.addLog(this.defenseMode === "ladder" ? "사다리가 무너졌습니다... 다시 클릭해 수리를 재개하세요." : "제단이 무너졌습니다. 균열을 다시 활성화하세요.", "#ff6b6b", "battle");
+    this.endDefense(false, false);
+  }
+
+  endDefense(success, silent) {
+    this.combatUnits.forEach((u) => {
+      u.sprite?.destroy(); u.label?.destroy(); u.hpBarBg?.destroy(); u.hpBarFill?.destroy();
+    });
+    this.combatUnits = [];
+    this.clearTowerSlots();
+    this.acidZones.forEach((z) => z.sprite.destroy());
+    this.acidZones = [];
+    this.defenseMode = null;
+    document.getElementById("defense-hud").style.display = "none";
+    this.closeTowerBuild();
+    if (!silent && success) this.cameras.main.flash(200, 255, 230, 120, false);
+  }
+
+  openLegendTraitModal() {
+    this.legendTraitOpen = true;
+    const box = document.getElementById("legend-trait-options");
+    box.innerHTML = Object.keys(LEGEND_TRAIT_TYPES).map((id) => {
+      const t = LEGEND_TRAIT_TYPES[id];
+      return `<button class="evo-option" data-legend="${id}">
+        <div class="evo-emoji">${t.emoji}</div>
+        <div class="evo-name">${t.name}</div>
+        <div class="evo-effect">${t.desc}</div>
+      </button>`;
+    }).join("");
+    document.getElementById("legend-trait-modal").style.display = "flex";
+  }
+
+  chooseLegendTrait(id) {
+    const t = LEGEND_TRAIT_TYPES[id];
+    if (!t || !this.legendTraitOpen) return;
+    this.legendTrait = id;
+    this.legendTraitOpen = false;
+    document.getElementById("legend-trait-modal").style.display = "none";
+    if (id === "dragonheart") { this.maxHP += 40; this.hp = this.maxHP; }
+    this.addLog(`✨ 전설 특성 [${t.emoji} ${t.name}]을(를) 각성했습니다!`, "#ffd700", "battle");
+    sfx.playFanfareSound();
+    this.updateUI();
+    this.saveGame();
+  }
+
+  devStartLadderDefense() {
+    this.spawnRepairLadder();
+    this.startLadderDefense();
+  }
+
+  devStartAltarDefense() {
+    this.startAltarDefense();
+  }
+
 
   /* ---- 매 프레임 실행 ---- */
   update(time, delta) {
@@ -4287,6 +5465,8 @@ class MineScene extends Phaser.Scene {
 
     this.collectGroundItems();
     this.checkSectorEventProp();
+    this.updateCombat(delta);
+    this.updateSkillUI();
 
     // 조명 + 안개(Fog of War) 갱신 - 플레이어 랜턴을 따라다니는 원형 시야만 밝힌다
     this.playerLight.setPosition(this.player.x, this.player.y);
@@ -4440,6 +5620,7 @@ document.getElementById("quest-list").addEventListener("click", (e) => {
   if (btn) window.gameScene?.claimQuestReward(btn.dataset.claimQuest);
 });
 document.getElementById("btn-hire-worker").addEventListener("click", () => window.gameScene?.hireWorker());
+document.getElementById("btn-expand-workers").addEventListener("click", () => window.gameScene?.expandWorkerCap());
 document.getElementById("btn-descend").addEventListener("click", () => window.gameScene?.ascendFloor());
 document.getElementById("btn-close-shop").addEventListener("click", () => window.gameScene?.closeShop());
 document.getElementById("shop-close-x").addEventListener("click", () => window.gameScene?.closeShop());
@@ -4464,6 +5645,8 @@ document.querySelectorAll(".dev-jump-btn").forEach((btn) => {
   btn.addEventListener("click", () => window.gameScene?.devJumpToFloor(Number(btn.dataset.devfloor)));
 });
 document.getElementById("dev-btn-clearfloor").addEventListener("click", () => window.gameScene?.devClearFloor());
+document.getElementById("dev-btn-ladderdef").addEventListener("click", () => window.gameScene?.devStartLadderDefense());
+document.getElementById("dev-btn-altardef").addEventListener("click", () => window.gameScene?.devStartAltarDefense());
 document.getElementById("dev-btn-resetsave").addEventListener("click", () => window.gameScene?.resetSaveData());
 
 document.querySelectorAll(".shop-tab").forEach((btn) => {
@@ -4486,6 +5669,20 @@ document.getElementById("relics-list").addEventListener("click", (e) => {
 
 document.getElementById("btn-offline-close").addEventListener("click", () => {
   document.getElementById("offline-modal").style.display = "none";
+});
+
+["roll", "frenzy", "acid"].forEach((id) => {
+  document.getElementById(`skill-btn-${id}`)?.addEventListener("click", () => window.gameScene?.useBurstSkill(id));
+});
+document.getElementById("tower-build-list").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-build-tower]");
+  if (btn) window.gameScene?.buildTower(btn.dataset.buildTower);
+});
+document.getElementById("tower-build-close").addEventListener("click", () => window.gameScene?.closeTowerBuild());
+document.getElementById("btn-cancel-tower").addEventListener("click", () => window.gameScene?.closeTowerBuild());
+document.getElementById("legend-trait-options").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-legend]");
+  if (btn) window.gameScene?.chooseLegendTrait(btn.dataset.legend);
 });
 
 document.getElementById("btn-ending-peaceful").addEventListener("click", () => window.gameScene?.closeEndingModal());
