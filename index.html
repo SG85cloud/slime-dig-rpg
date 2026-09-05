@@ -1052,17 +1052,17 @@ const COMBAT_MONSTER_CROPS = [
 const COMBAT_MONSTER_TYPES = {
   turtle: {
     name: "바위갑각거북", frame: "cm_turtle", crop: 0, role: "tank",
-    display: 78, originY: 0.86, hp: 28, armor: 0.45, speed: 28, melee: 6, attackMs: 1100,
+    display: 78, originY: 0.86, hp: 36, armor: 0.45, speed: 22, melee: 2, attackMs: 1400,
     goldMin: 8, goldMax: 14, exp: 22, hasShield: true,
   },
   magma_mole: {
     name: "마그마두더지", frame: "cm_mole", crop: 1, role: "melee",
-    display: 70, originY: 0.86, hp: 16, armor: 0, speed: 72, melee: 8, attackMs: 420,
+    display: 70, originY: 0.86, hp: 18, armor: 0, speed: 44, melee: 2, attackMs: 900,
     goldMin: 6, goldMax: 12, exp: 18, hasShield: false,
   },
   crystal_spider: {
     name: "수정거미", frame: "cm_spider", crop: 2, role: "ranged",
-    display: 68, originY: 0.82, hp: 12, armor: 0, speed: 46, melee: 5, attackMs: 900,
+    display: 68, originY: 0.82, hp: 14, armor: 0, speed: 34, melee: 1, attackMs: 1200,
     goldMin: 7, goldMax: 13, exp: 20, hasShield: false, projectileRange: 170,
   },
 };
@@ -1099,11 +1099,11 @@ const UI_TARGET_DISPLAY = 36;
 const ALTAR_DISPLAY = 128;
 
 const LADDER_DEFENSE_FLOORS = [25, 20, 15, 10, 5];
+const LADDER_DEFENSE_HP = 220;
 const LADDER_REPAIR_MS = 45000;
-const LADDER_DEFENSE_HP = 140;
 const HIDDEN_LAIR_MAX_FLOOR = 20;
 const HIDDEN_LAIR_MIN_FLOOR = 15;
-const ALTAR_DEFENSE_HP = 180;
+const ALTAR_DEFENSE_HP = 260;
 const ALTAR_WAVE_COUNT = 3;
 
 const PLAYER_ATK_RANGE = 78;
@@ -4996,12 +4996,12 @@ class MineScene extends Phaser.Scene {
 
   scheduleLadderWaves() {
     const plan = [
-      [800, ["turtle", "turtle"]],
-      [8000, ["magma_mole", "magma_mole", "crystal_spider"]],
-      [16000, ["turtle", "magma_mole", "crystal_spider", "magma_mole"]],
-      [24000, ["magma_mole", "crystal_spider", "turtle", "crystal_spider"]],
-      [32000, ["turtle", "magma_mole", "magma_mole", "crystal_spider", "crystal_spider"]],
-      [40000, ["magma_mole", "magma_mole", "turtle"]],
+      [3500, ["turtle", "turtle"]],
+      [10000, ["magma_mole", "magma_mole", "crystal_spider"]],
+      [18000, ["turtle", "magma_mole", "crystal_spider", "magma_mole"]],
+      [26000, ["magma_mole", "crystal_spider", "turtle", "crystal_spider"]],
+      [34000, ["turtle", "magma_mole", "magma_mole", "crystal_spider"]],
+      [41000, ["magma_mole", "turtle"]],
     ];
     plan.forEach(([at, ids], i) => {
       this.time.delayedCall(at, () => {
@@ -5094,7 +5094,7 @@ class MineScene extends Phaser.Scene {
     const row = type.role === "tank" ? 4 : type.role === "ranged" ? 6 : 3;
     const col = side === "left" ? 0 : GRID_COLS - 1;
     const { x, y } = this.gridToScreen(col, row);
-    const spawnX = side === "left" ? x - 40 : x + 40;
+    const spawnX = side === "left" ? 40 : ROOM_W - 40;
     const crop = COMBAT_MONSTER_CROPS[type.crop];
     const sprite = this.add.image(spawnX, y, "combat_monsters", type.frame)
       .setOrigin(0.5, type.originY)
@@ -5126,8 +5126,8 @@ class MineScene extends Phaser.Scene {
       const rock = this.rockBlocks.find((rk) => rk.col === c && rk.row === r && !rk.broken);
       if (rock) { rock.broken = true; rock.sprite.destroy(); this.brokenCells.add(`${c},${r}`); }
       const { x, y } = this.gridToScreen(c, r);
-      const marker = this.add.rectangle(x, y - 8, 34, 20, 0x2e2013, 0.55)
-        .setStrokeStyle(2, 0xffd166).setDepth(y + 5)
+      const marker = this.add.rectangle(x, y - 8, 48, 26, 0x5a4018, 0.85)
+        .setStrokeStyle(3, 0xffe066).setDepth(y + 40)
         .setInteractive({ useHandCursor: true });
       const slot = { col: c, row: r, x, y, marker, occupied: false };
       marker.on("pointerdown", () => this.openTowerBuild(slot));
@@ -5234,7 +5234,7 @@ class MineScene extends Phaser.Scene {
       const dist = Phaser.Math.Distance.Between(pr.sprite.x, pr.sprite.y, pr.tx, pr.ty);
       const step = (pr.speed * delta) / 1000;
       if (dist < step) {
-        if (pr.hitObjective) this.hurtDefense(5);
+        if (pr.hitObjective) this.hurtDefense(2);
         pr.sprite.destroy(); this.projectiles.splice(i, 1); continue;
       }
       const nx = pr.sprite.x + ((pr.tx - pr.sprite.x) / dist) * step;
@@ -5468,16 +5468,18 @@ class MineScene extends Phaser.Scene {
     this.updateCombat(delta);
     this.updateSkillUI();
 
-    // 조명 + 안개(Fog of War) 갱신 - 플레이어 랜턴을 따라다니는 원형 시야만 밝힌다
+    // 조명 + 안개(Fog of War) 갱신 - 수호전/봉인전 중에는 전장을 가리지 않는다.
     this.playerLight.setPosition(this.player.x, this.player.y);
     this.fog.clear();
-    this.fog.fill(0x05030a, 0.86);
-    this.lampSpots.forEach(([lx, ly]) => {
-      this.lightStampLamp.setPosition(lx, ly).setScale(2.0);
-      this.fog.erase(this.lightStampLamp);
-    });
-    this.lightStampPlayer.setPosition(this.player.x, this.player.y).setScale(PLAYER_LIGHT_STAMP_SCALE * this.visionMultiplier());
-    this.fog.erase(this.lightStampPlayer);
+    if (!this.isDefenseActive()) {
+      this.fog.fill(0x05030a, 0.86);
+      this.lampSpots.forEach(([lx, ly]) => {
+        this.lightStampLamp.setPosition(lx, ly).setScale(2.0);
+        this.fog.erase(this.lightStampLamp);
+      });
+      this.lightStampPlayer.setPosition(this.player.x, this.player.y).setScale(PLAYER_LIGHT_STAMP_SCALE * this.visionMultiplier());
+      this.fog.erase(this.lightStampPlayer);
+    }
 
     this.updateBuffVisuals();
     this.drawMinimap();
