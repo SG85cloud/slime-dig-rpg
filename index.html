@@ -267,7 +267,7 @@
   .dev-jump-row { display: flex; gap: 4px; margin: 6px 0; }
   .dev-jump-btn { flex: 1; text-align: center; padding: 6px 2px !important; font-size: 11px !important; }
   #minimap-window .rpg-window-header span { font-size: 12px; }
-  #minimap-canvas { display: block; background: #0c0a08; border: 1px solid #555; border-radius: 3px; }
+  #minimap-canvas { display: none; background: #0c0a08; border: 1px solid #555; border-radius: 3px; } /* 지도는 불필요하다는 피드백으로 숨김 - 층/좌표/구역 정보 텍스트는 그대로 유지 */
   .coord-text { margin-top: 4px; color: #9ad1ff; font-size: 11px; text-align: center; }
 
   /* ---- 채팅 / 로그 창 ----
@@ -354,14 +354,6 @@
     position: relative;
   }
   .quick-slot.filled { border-color: #ffd166; }
-  .slot-durability {
-    position: absolute;
-    bottom: -14px;
-    left: 0; right: 0;
-    text-align: center;
-    font-size: 9px;
-    color: #9ad1ff;
-  }
 
   /* ---- 우측 하단 메뉴 아이콘 ---- */
   #menu-icons {
@@ -764,7 +756,6 @@
   <div id="quickslot-bar">
     <div class="quick-slot filled" id="quickslot-pickaxe" title="나무 곡괭이">
       <span id="quickslot-pickaxe-icon">⛏️</span>
-      <div class="slot-durability" id="pickaxe-durability">50/50</div>
     </div>
     <button class="quick-slot potion-slot" id="potion-slot-heal" title="체력 회복 물약 (즉시 HP 100% 회복)">
       <span class="potion-icon" id="potion-icon-heal"></span>
@@ -863,7 +854,6 @@
           <div class="smithy-bubble" id="smithy-bubble">좋은 원석을 가져왔나?</div>
           <img src="assets/npc_blacksmith.png" class="smithy-npc" alt="대장장이 두더지">
         </div>
-        <button id="btn-repair" class="shop-btn">곡괭이 수리 <span class="cost" id="cost-repair"></span></button>
         <button id="btn-upgrade" class="shop-btn">곡괭이 파워 강화 <span class="cost" id="cost-upgrade"></span></button>
         <div class="shop-note">파워 강화 시 타격 한 번에 암반을 더 크게 깎습니다.</div>
       </div>
@@ -1427,9 +1417,13 @@ const ROCK_DISPLAY   = 110; const ROCK_ORIGIN_Y   = 0.84;
 // 뒤에 있는 캐릭터가 가려지지 않는다. (지표면 엔딩용 거대 바위 등 특수 오브젝트는 기존 rock.png를 그대로 쓴다.)
 const ORE_ROCK_DISPLAY = 82; const ORE_ROCK_ORIGIN_Y = 0.78;
 const PORTAL_DISPLAY = 195; const PORTAL_ORIGIN_Y = 0.85;
-const LAMP_DISPLAY   = 120; const LAMP_ORIGIN_Y   = 0.825;
 const SLIME_DISPLAY  = 64; const SLIME_ORIGIN_Y  = 0.75;
 const ORE_ITEM_DISPLAY = 98; const ORE_ITEM_ORIGIN_Y = 0.68;
+
+// 맵 북서/북동 뒤쪽 모서리 벽(wall_support.png, 원본 234x208) - 목재 지지대 + 돌벽 조각.
+const WALL_SIZE = { w: 234, h: 208 };
+const WALL_DISPLAY_W = 130;
+const WALL_ORIGIN_Y = 0.82; // 벽 이미지 아래쪽이 타일 뒤 모서리에 닿도록
 // 구역(층) 클리어 연출용 사다리 - ladder.png는 677x369 캔버스라 실제 그림 영역만 잘라 쓴다.
 const LADDER_CROP = { x: 217, y: 6, w: 266, h: 363 };
 const LADDER_DISPLAY_H = 140; const LADDER_ORIGIN_Y = 0.12;
@@ -1751,6 +1745,7 @@ class MineScene extends Phaser.Scene {
     this.potionCooldownUntil = { heal: 0, luck: 0, haste: 0 }; // 물약별 재사용 가능 시각 (세이브하지 않는 세션 한정 쿨타임)
     this.ladderSprite = null;   // 구역 클리어 시 잠깐 등장하는 탈출 사다리 연출 스프라이트
     this.ambientLanterns = [];  // B30~B15 갱도 벽면에 배치한 장식용 랜턴(글로우+스프라이트) 목록
+    this.boundaryWalls = [];    // 맵 북서/북동 뒤쪽 모서리를 감싸는 벽 스프라이트 목록
     this.playerAutoTimer = null;
 
     // 실시간 지휘 전투 / 타워 디펜스
@@ -1818,7 +1813,6 @@ class MineScene extends Phaser.Scene {
     this.load.image("floor", "assets/floor.png");
     this.load.image("rock", "assets/rock.png");
     this.load.image("portal", "assets/portal.png");
-    this.load.image("lamp", "assets/lamp.png");
     this.load.image("ore_item", "assets/ore_item.png");
     this.load.image("m_ant", "assets/ant.png");
     this.load.image("m_mole", "assets/mole.png");
@@ -1842,6 +1836,8 @@ class MineScene extends Phaser.Scene {
     this.load.image("dragon_altar", "assets/dragon_altar.png");
     this.load.image("spring_pool", "assets/spring.png");
     this.load.image("tower_slot", "assets/tower_slot.png");
+    // 맵 북서/북동 뒤쪽 모서리를 감싸는 벽(목재 지지대 + 돌벽).
+    this.load.image("wall_support", "assets/wall_support.png");
     // skills.png는 Phaser 캔버스가 아니라 하단 스킬 버튼의 CSS 배경 이미지로만 쓰이므로 여기서 불러올 필요가 없다.
   }
 
@@ -1892,8 +1888,6 @@ class MineScene extends Phaser.Scene {
     this.bagLevel = 0;
     this.bagCapacity = this.bagTiers[this.bagLevel];
     this.pickaxeLevel = 1;
-    this.pickaxeMaxDurability = 50;
-    this.pickaxeDurability = this.pickaxeMaxDurability;
     this.level = 1;
     this.expPercent = 0;
     this.maxHP = 100; this.hp = 100;
@@ -1904,7 +1898,6 @@ class MineScene extends Phaser.Scene {
       this.gold = saved.gold ?? this.gold;
       this.bagLevel = saved.bagLevel ?? this.bagLevel;
       this.pickaxeLevel = saved.pickaxeLevel ?? this.pickaxeLevel;
-      this.pickaxeDurability = saved.pickaxeDurability ?? this.pickaxeDurability;
       this.inventory.rock = saved.inventory?.rock ?? 0;
       this.inventory.iron = saved.inventory?.iron ?? 0;
       this.inventory.mithril = saved.inventory?.mithril ?? 0;
@@ -1974,14 +1967,10 @@ class MineScene extends Phaser.Scene {
     this.shopSprite.on("pointerdown", () => this.onShopClicked());
     this.lampSpots.push([portalPos.x, portalPos.y - 30]);
 
+    // 포탈 양옆에 랜턴 기둥 구조물을 따로 세우면 새로 세운 벽과 겹쳐 어색해 보여서,
+    // 조형물은 빼고 그 자리를 밝히는 안개 제거 지점만 남겨둔다.
     [[1, 0], [0, 1]].forEach(([lcol, lrow]) => {
       const { x, y } = this.gridToScreen(lcol, lrow);
-      this.add.image(x, y, "glow").setBlendMode(Phaser.BlendModes.ADD).setDepth(y + 1).setAlpha(0.85).setScale(1.1);
-      const lamp = this.add.image(x, y, "lamp")
-        .setOrigin(0.5, LAMP_ORIGIN_Y)
-        .setDisplaySize(LAMP_DISPLAY, LAMP_DISPLAY)
-        .setDepth(y + 2);
-      this.tweens.add({ targets: lamp, alpha: 0.65, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
       this.lampSpots.push([x, y - 40]);
     });
 
@@ -2138,6 +2127,8 @@ class MineScene extends Phaser.Scene {
     this.cleanupCombatWorld();
     (this.ambientLanterns ?? []).forEach((obj) => obj.destroy());
     this.ambientLanterns = [];
+    (this.boundaryWalls ?? []).forEach((obj) => obj.destroy());
+    this.boundaryWalls = [];
     this.chest = null;
     this.chestGuardians = [];
     this.dragon = null;
@@ -2220,6 +2211,7 @@ class MineScene extends Phaser.Scene {
     }
     if (this.floorNumber === DRAGON_LAIR_FLOOR && !this.infiniteMode) this.spawnDragonLair();
     this.spawnAmbientLanterns();
+    this.spawnBoundaryWalls();
 
     this.buildSectorGroups();
     this.ladderDefenseCleared = false;
@@ -2243,6 +2235,30 @@ class MineScene extends Phaser.Scene {
       this.tweens.add({ targets: glow, alpha: 0.32, duration: 1000, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
       this.ambientLanterns.push(glow, sprite);
     });
+  }
+
+  /**
+   * 맵이 허공에 떠 있는 것처럼 보이지 않도록, 포탈에서 이어지는 두 뒤쪽 모서리
+   * (북서 = col 0 변, 북동 = row 0 변)를 따라 벽 이미지를 세워 갱도를 감싼다.
+   * 층이 얕을수록/깊을수록 다른 벽 텍스처를 써서 한눈에 깊이감이 느껴지게 한다.
+   */
+  spawnBoundaryWalls() {
+    const displayH = WALL_DISPLAY_W * (WALL_SIZE.h / WALL_SIZE.w);
+    // 벽을 실제 타일(0,row)/(col,0) 자리에 그대로 놓으면 그 자리의 광석 스프라이트에 가려지므로,
+    // 모서리 바깥쪽으로 반 칸 정도 밀어낸 가상 좌표에 세운다. 원본 그림은 왼쪽 아래 -> 오른쪽 위로
+    // 올라가는 방향(북동쪽 변)으로 그려져 있어, 북서쪽 변에는 좌우로 뒤집어서 맞춘다.
+    const OUTWARD_OFFSET = -0.5;
+    const placeWall = (col, row, flip) => {
+      const { x, y } = this.gridToScreen(col, row);
+      const wall = this.add.image(x, y, "wall_support")
+        .setOrigin(0.5, WALL_ORIGIN_Y)
+        .setDisplaySize(WALL_DISPLAY_W, displayH)
+        .setFlipX(flip)
+        .setDepth(y);
+      this.boundaryWalls.push(wall);
+    };
+    for (let row = 0; row < GRID_ROWS; row++) placeWall(OUTWARD_OFFSET, row, true);   // 북서쪽 변
+    for (let col = 1; col < GRID_COLS; col++) placeWall(col, OUTWARD_OFFSET, false);  // 북동쪽 변 (포탈 자리인 col 0은 위에서 이미 세움)
   }
 
   /** 지표면(1F) 전용: 밝은 바닥 + 맵 중앙의 거대한 바위 하나만 배치한다 (엔딩 트리거). */
@@ -2978,10 +2994,6 @@ class MineScene extends Phaser.Scene {
 
   beginChannel(cluster) {
     if (cluster.broken) return;
-    if (this.pickaxeDurability <= 0) {
-      this.addLog("곡괭이가 망가졌습니다! 임시 은신처에서 수리하세요.", "#ff9a76");
-      return;
-    }
     this.miningTarget = cluster;
     this.mineProgress = 0;
     this.gaugeBg.setVisible(true);
@@ -3124,7 +3136,6 @@ class MineScene extends Phaser.Scene {
   }
 
   resolveMiningTick(cluster) {
-    this.pickaxeDurability = Math.max(0, this.pickaxeDurability - 1);
     this.sp = Math.max(0, this.sp - SP_COST_PER_CYCLE);
     sfx.playPickSound(cluster.isLavaRock);
 
@@ -4025,8 +4036,7 @@ class MineScene extends Phaser.Scene {
     const total = this.inventory.rock + this.inventory.iron + this.inventory.mithril + this.inventory.flame_ore + this.inventory.batwing;
     document.getElementById("shop-gold").textContent = `${this.gold}G`;
     document.getElementById("shop-bag").textContent = `${total}/${this.bagCapacity}`;
-    document.getElementById("shop-pickaxe").textContent =
-      `Lv.${this.pickaxeLevel} (${this.pickaxeDurability}/${this.pickaxeMaxDurability})`;
+    document.getElementById("shop-pickaxe").textContent = `Lv.${this.pickaxeLevel}`;
 
     const sellValue = Math.round((this.inventory.rock * ORE_TYPES.rock.sell
       + this.inventory.iron * ORE_TYPES.iron.sell
@@ -4035,11 +4045,6 @@ class MineScene extends Phaser.Scene {
       + this.inventory.batwing * BATWING_SELL_PRICE) * this.oreValueMultiplier());
     document.getElementById("cost-sell").textContent = total > 0 ? `+${sellValue}G` : "-";
     document.getElementById("btn-sell").disabled = total <= 0;
-
-    const missing = this.pickaxeMaxDurability - this.pickaxeDurability;
-    const repairCost = missing * 2;
-    document.getElementById("cost-repair").textContent = missing > 0 ? `${repairCost}G` : "완료";
-    document.getElementById("btn-repair").disabled = missing <= 0 || this.gold < repairCost;
 
     const nextTier = this.upgradeTiers.find((t) => t.level === this.pickaxeLevel + 1);
     const upgradeBtn = document.getElementById("btn-upgrade");
@@ -4168,17 +4173,6 @@ class MineScene extends Phaser.Scene {
     sfx.playCoinSound();
     this.questProgress.recruit_or_reroll += 1;
     this.checkQuestCompletion("recruit_or_reroll");
-    this.updateUI();
-    this.saveGame();
-  }
-
-  repairPickaxe() {
-    const missing = this.pickaxeMaxDurability - this.pickaxeDurability;
-    const cost = missing * 2;
-    if (missing <= 0 || this.gold < cost) return;
-    this.gold -= cost;
-    this.pickaxeDurability = this.pickaxeMaxDurability;
-    document.getElementById("shop-msg").textContent = "곡괭이를 수리했습니다!";
     this.updateUI();
     this.saveGame();
   }
@@ -4398,9 +4392,7 @@ class MineScene extends Phaser.Scene {
       }
     }
 
-    // 퀵슬롯 곡괭이 내구도 + 장비 등급(색상/툴팁) 반영
-    document.getElementById("pickaxe-durability").textContent =
-      `${this.pickaxeDurability}/${this.pickaxeMaxDurability}`;
+    // 퀵슬롯 곡괭이 장비 등급(색상/툴팁) 반영
     const tier = PICKAXE_TIERS[this.pickaxeTier];
     const pickaxeSlot = document.getElementById("quickslot-pickaxe");
     pickaxeSlot.title = tier.name;
@@ -4637,7 +4629,6 @@ class MineScene extends Phaser.Scene {
         gold: this.gold,
         bagLevel: this.bagLevel,
         pickaxeLevel: this.pickaxeLevel,
-        pickaxeDurability: this.pickaxeDurability,
         inventory: { ...this.inventory },
         level: this.level,
         expPercent: this.expPercent,
@@ -5620,10 +5611,7 @@ class MineScene extends Phaser.Scene {
     if (this.miningTarget) {
       const cluster = this.miningTarget;
 
-      if (this.pickaxeDurability <= 0) {
-        this.addLog("곡괭이가 망가졌습니다! 임시 은신처에서 수리하세요.", "#ff9a76");
-        this.cancelMining();
-      } else if (this.sp < SP_COST_PER_CYCLE) {
+      if (this.sp < SP_COST_PER_CYCLE) {
         this.addLog("기력이 부족합니다. 잠시 휴식하세요.", "#ff9a76");
         this.cancelMining();
       } else {
@@ -5784,7 +5772,6 @@ document.getElementById("chat-toggle").addEventListener("click", () => {
 document.getElementById("btn-sell").addEventListener("click", () => window.gameScene?.sellAll());
 document.getElementById("btn-rest").addEventListener("click", () => window.gameScene?.restAtSpa());
 document.getElementById("btn-reroll-trait").addEventListener("click", () => window.gameScene?.rerollTrait());
-document.getElementById("btn-repair").addEventListener("click", () => window.gameScene?.repairPickaxe());
 document.getElementById("btn-upgrade").addEventListener("click", () => window.gameScene?.upgradePickaxe());
 document.getElementById("btn-expand").addEventListener("click", () => window.gameScene?.expandBag());
 document.getElementById("btn-toggle-auto-return").addEventListener("click", () => window.gameScene?.toggleAutoReturnSell());
