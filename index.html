@@ -243,8 +243,27 @@
     color: #ff9a76; font-size: 11px; font-weight: bold; cursor: pointer; z-index: 15;
   }
   #btn-dev:hover { border-color: #ff9a76; }
-  #dev-panel { top: 60px; right: 244px; width: 250px; display: none; }
+  #dev-panel {
+    top: 60px; right: 244px; width: 250px; display: none;
+    max-height: 70vh;
+    z-index: 99999; /* 항상 최상위에서 열리도록 고정 */
+    pointer-events: auto; /* 패널 영역만 클릭 판정, 화면 전체를 가리지 않음 */
+  }
+  #dev-panel .rpg-window-header {
+    position: sticky; top: 0; z-index: 1; /* 내용 스크롤 시에도 닫기 버튼이 항상 보이도록 고정 */
+  }
+  #dev-panel .rpg-window-body { max-height: calc(70vh - 34px); overflow-y: auto; }
   #dev-panel .shop-btn { font-size: 12px; padding: 6px 8px; }
+  #dev-panel-close {
+    background: #b8281e;
+    color: #fff;
+    border: 1px solid #7a1610;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 12px;
+    padding: 5px 10px;
+  }
+  #dev-panel-close:hover { background: #e03b2c; color: #fff; }
   .dev-jump-row { display: flex; gap: 4px; margin: 6px 0; }
   .dev-jump-btn { flex: 1; text-align: center; padding: 6px 2px !important; font-size: 11px !important; }
   #minimap-window .rpg-window-header span { font-size: 12px; }
@@ -672,7 +691,7 @@
   <!-- 우측 상단: 개발자(DEV) 디버그 패널 토글 (F1) -->
   <button id="btn-dev" title="개발자 디버그 패널 (F1)">DEV</button>
   <div id="dev-panel" class="rpg-window">
-    <div class="rpg-window-header"><span>🛠️ DEV 디버그 패널</span><button id="dev-panel-close" class="win-close">×</button></div>
+    <div class="rpg-window-header"><span>🛠️ DEV 디버그 패널</span><button id="dev-panel-close" class="win-close">[X] 닫기</button></div>
     <div class="rpg-window-body">
       <button id="dev-btn-resources" class="shop-btn">💰 자원 치트 (골드+100,000 · 철/미스릴+500)</button>
       <div class="shop-note" style="margin:8px 2px 2px;">🪜 층 점프</div>
@@ -1389,9 +1408,9 @@ const GRID_MAX_Y = GRID_ORIGIN_Y + (GRID_COLS - 1 + GRID_ROWS - 1) * (TILE_H / 2
    ------------------------------------------------------------------------- */
 const DEPTH_PER_STEP = 3; // col+row 한 칸당 깊이(m)
 const DEPTH_TIERS = [
-  { max: 10,       label: "일반 암석층",     hp: 2, tint: 0xffffff, ironBonus: 0,  mithrilBonus: 0  },
-  { max: 30,       label: "단단한 암반층",   hp: 4, tint: 0xd8d8e8, ironBonus: 26, mithrilBonus: 0  },
-  { max: Infinity, label: "심층 고밀도 암반", hp: 6, tint: 0xb0b0ff, ironBonus: 12, mithrilBonus: 22 },
+  { max: 10,       label: "일반 암석층",     hp: 2, tint: 0xffffff, ironBonus: 0,  mithrilBonus: 0,  oreFrame: "ore_coal"    },
+  { max: 30,       label: "단단한 암반층",   hp: 4, tint: 0xd8d8e8, ironBonus: 26, mithrilBonus: 0,  oreFrame: "ore_iron"    },
+  { max: Infinity, label: "심층 고밀도 암반", hp: 6, tint: 0xb0b0ff, ironBonus: 12, mithrilBonus: 22, oreFrame: "ore_mithril" },
 ];
 
 function depthMetersOf(col, row) {
@@ -1404,6 +1423,9 @@ function depthTierOf(depthM) {
 // 스프라이트별 표시 크기(px)와 origin(0~1). 전부 정사각 캔버스 이미지라 크기는 한 변 길이로 표현한다.
 const FLOOR_DISPLAY  = 101; const FLOOR_ORIGIN_Y  = 0.48;
 const ROCK_DISPLAY   = 110; const ROCK_ORIGIN_Y   = 0.84;
+// 일반 채굴 암반은 밋밋한 사각 벽(rock.png) 대신 ores.png의 둥근 광석 덩어리를 쓴다 - 벽이 작고 둥글어져
+// 뒤에 있는 캐릭터가 가려지지 않는다. (지표면 엔딩용 거대 바위 등 특수 오브젝트는 기존 rock.png를 그대로 쓴다.)
+const ORE_ROCK_DISPLAY = 82; const ORE_ROCK_ORIGIN_Y = 0.78;
 const PORTAL_DISPLAY = 195; const PORTAL_ORIGIN_Y = 0.85;
 const LAMP_DISPLAY   = 120; const LAMP_ORIGIN_Y   = 0.825;
 const SLIME_DISPLAY  = 64; const SLIME_ORIGIN_Y  = 0.75;
@@ -1452,6 +1474,27 @@ function makeGlowTexture(scene, key, radius, color) {
   g.destroy();
 }
 
+/** assets/monsters.png(전투 몬스터 시트)가 알파 채널 없이 검정 배경으로 저장돼 있어, 크롭한 영역을
+    캔버스에 그린 뒤 순검정에 가까운 픽셀만 투명 처리해 몬스터 실루엣만 남는 새 텍스처를 만든다.
+    (이렇게 만들지 않으면 스프라이트마다 원본 배경이 그대로 네모난 검은 박스로 비쳐 보인다.) */
+function cutoutBlackBackground(scene, sourceKey, key, crop) {
+  const source = scene.textures.get(sourceKey).getSourceImage();
+  const canvas = document.createElement("canvas");
+  canvas.width = crop.w;
+  canvas.height = crop.h;
+  const ctx = canvas.getContext("2d");
+  ctx.globalCompositeOperation = "source-over"; // 알파 채널이 그대로 투과되도록 보장
+  ctx.drawImage(source, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+  const img = ctx.getImageData(0, 0, crop.w, crop.h);
+  const d = img.data;
+  const BLACK_THRESHOLD = 24; // 이 값 이하의 순검정 픽셀만 배경으로 간주해 투명 처리한다
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i] <= BLACK_THRESHOLD && d[i + 1] <= BLACK_THRESHOLD && d[i + 2] <= BLACK_THRESHOLD) d[i + 3] = 0;
+  }
+  ctx.putImageData(img, 0, 0);
+  scene.textures.addCanvas(key, canvas);
+}
+
 /* -------------------------------------------------------------------------
    2b. 타격감(Screen Juice) 상수
    ------------------------------------------------------------------------- */
@@ -1491,16 +1534,18 @@ const POTION_HASTE_MULT = 2; // 채굴 가속 물약: 지속시간 동안 채굴
      호출부는 아이콘 키와 원하는 폭(px)만 넘기면 된다.
    ------------------------------------------------------------------------- */
 const SPRITE_SHEETS = {
-  ores:      { src: "assets/ores.png",     w: 500, h: 500 },
+  ores:      { src: "assets/ores.png",     w: 677, h: 369 },
   pickaxes:  { src: "assets/pickaxes.png", w: 500, h: 500 },
   potions:   { src: "assets/potions.png",  w: 677, h: 369 },
   board:     { src: "assets/board.png",    w: 677, h: 369 },
   merchant:  { src: "assets/npc_merchant.png", w: 677, h: 369 },
 };
 const ICON_RECTS = {
-  ore_iron:     { sheet: "ores",     x: 10,  y: 174, w: 150, h: 151 },
-  ore_gold:     { sheet: "ores",     x: 174, y: 174, w: 152, h: 152 },
-  ore_mithril:  { sheet: "ores",     x: 344, y: 174, w: 136, h: 147 },
+  // ores.png가 3분할(철/금/미스릴)에서 4분할(석탄/철/금/미스릴)로 교체돼 좌표를 다시 측정했다.
+  ore_coal:     { sheet: "ores",     x: 25,  y: 121, w: 133, h: 127 },
+  ore_iron:     { sheet: "ores",     x: 186, y: 115, w: 139, h: 136 },
+  ore_gold:     { sheet: "ores",     x: 351, y: 94,  w: 139, h: 158 },
+  ore_mithril:  { sheet: "ores",     x: 518, y: 90,  w: 135, h: 167 },
   pick_iron:    { sheet: "pickaxes", x: 10,  y: 120, w: 163, h: 255 },
   pick_mithril: { sheet: "pickaxes", x: 161, y: 111, w: 178, h: 265 },
   pick_dragon:  { sheet: "pickaxes", x: 327, y: 111, w: 164, h: 266 },
@@ -1805,7 +1850,7 @@ class MineScene extends Phaser.Scene {
     makeGlowTexture(this, "glow", 46, 0xffcf6b);
 
     /* ---- 3-1b. 3분할 스프라이트 시트에서 ICON_RECTS에 측정해둔 실제 그림 영역만 프레임으로 등록 ---- */
-    ["ore_iron", "ore_gold", "ore_mithril", "pick_iron", "pick_mithril", "pick_dragon", "potion_heal", "potion_luck", "potion_haste"]
+    ["ore_coal", "ore_iron", "ore_gold", "ore_mithril", "pick_iron", "pick_mithril", "pick_dragon", "potion_heal", "potion_luck", "potion_haste"]
       .forEach((key) => {
         const rect = ICON_RECTS[key];
         const texKey = rect.sheet === "ores" ? "ore_icons" : rect.sheet === "pickaxes" ? "pickaxe_icons" : "potion_icons";
@@ -1822,7 +1867,7 @@ class MineScene extends Phaser.Scene {
     });
     COMBAT_MONSTER_CROPS.forEach((crop, idx) => {
       const key = ["cm_turtle", "cm_mole", "cm_spider"][idx];
-      this.textures.get("combat_monsters").add(key, 0, crop.x, crop.y, crop.w, crop.h);
+      cutoutBlackBackground(this, "combat_monsters", key, crop);
     });
     TOWER_CROPS.forEach((crop, idx) => {
       const key = ["tw_spike", "tw_ballista", "tw_lantern"][idx];
@@ -2155,9 +2200,15 @@ class MineScene extends Phaser.Scene {
           ironBonus: baseTier.ironBonus * oreMult,
           mithrilBonus: baseTier.mithrilBonus * oreMult,
         };
-        const sprite = this.add.image(x, y, isLavaRock ? "rock_lava" : "rock")
-          .setOrigin(0.5, ROCK_ORIGIN_Y)
-          .setDisplaySize(ROCK_DISPLAY, ROCK_DISPLAY)
+        // 일반 암반은 네모난 rock.png 대신 ores.png의 둥근 광석 덩어리(깊이 등급별로 다른 모양)를 쓴다.
+        // 용암 지대만 예외적으로 기존 rock_lava.png를 그대로 쓴다.
+        const oreCrop = ICON_RECTS[baseTier.oreFrame];
+        const sprite = isLavaRock
+          ? this.add.image(x, y, "rock_lava").setOrigin(0.5, ROCK_ORIGIN_Y).setDisplaySize(ROCK_DISPLAY, ROCK_DISPLAY)
+          : this.add.image(x, y, "ore_icons", baseTier.oreFrame)
+              .setOrigin(0.5, ORE_ROCK_ORIGIN_Y)
+              .setDisplaySize(ORE_ROCK_DISPLAY, ORE_ROCK_DISPLAY * (oreCrop.h / oreCrop.w));
+        sprite
           .setDepth(y)
           .setTint(theme.tint ?? baseTier.tint) // 테마 색이 있으면(중층/용암 등) 깊이별 색보다 우선한다 (한눈에 구역이 구분되도록)
           .setInteractive({ useHandCursor: true, pixelPerfect: true }); // 이웃 타일과 사각 히트박스가 겹치지 않도록 픽셀 단위 판정
@@ -4068,7 +4119,7 @@ class MineScene extends Phaser.Scene {
         tier.speedMult !== 1 ? `공속 +${Math.round((tier.speedMult - 1) * 100)}%` : null,
         tier.critBonus ? `크리티컬 +${Math.round(tier.critBonus * 100)}%` : null,
       ].filter(Boolean).join(" · ");
-      const costText = `철${tier.cost.iron} · 미스릴${tier.cost.mithril} · ${tier.cost.gold}G`;
+      const costText = `철광석${tier.cost.iron} · 미스릴${tier.cost.mithril} · ${tier.cost.gold}G`;
       const icon = iconHtml(PICKAXE_ICON_MAP[tier.id], 22, "icon-inline");
       return `
         <button class="shop-btn" data-craft-tier="${idx}" ${owned || !affordable ? "disabled" : ""}>
@@ -4976,6 +5027,7 @@ class MineScene extends Phaser.Scene {
     this.spawnSparkle(unit.sprite.x, unit.sprite.y, 0xff9a76);
     sfx.playCoinSound();
     unit.sprite.destroy();
+    unit.shadow?.destroy();
     unit.label?.destroy();
     unit.hpBarBg?.destroy();
     unit.hpBarFill?.destroy();
@@ -5218,7 +5270,9 @@ class MineScene extends Phaser.Scene {
     const { x, y } = this.gridToScreen(col, row);
     const spawnX = side === "left" ? 40 : ROOM_W - 40;
     const crop = COMBAT_MONSTER_CROPS[type.crop];
-    const sprite = this.add.image(spawnX, y, "combat_monsters", type.frame)
+    // 발밑 반투명 타원 그림자 - 몬스터 스프라이트보다 먼저 그려 항상 그 아래(depth - 1)에 깔린다.
+    const shadow = this.add.ellipse(spawnX, y, type.display * 0.7, type.display * 0.24, 0x000000, 0.3).setDepth(y - 1);
+    const sprite = this.add.image(spawnX, y, type.frame)
       .setOrigin(0.5, type.originY)
       .setDisplaySize(type.display, type.display * (crop.h / crop.w))
       .setDepth(y)
@@ -5231,7 +5285,7 @@ class MineScene extends Phaser.Scene {
     const hpBarFill = this.add.rectangle(spawnX - 18, y - type.display - 8, 36, 5, 0xff6b5a).setOrigin(0, 0.5).setDepth(y + 3);
     const hp = Math.round(type.hp * (1 + this.floorsClimbed * 0.08));
     const unit = {
-      kind: "wave", typeId, name: type.name, sprite, label, hpBarBg, hpBarFill,
+      kind: "wave", typeId, name: type.name, sprite, label, hpBarBg, hpBarFill, shadow,
       hp, maxHp: hp, speed: type.speed, hasShield: !!type.hasShield, role: type.role,
       attackMs: type.attackMs, melee: type.melee, atkAcc: 0, broken: false, pinged: false,
       rootUntil: 0, slowUntil: 0, fireDotUntil: 0,
@@ -5283,7 +5337,7 @@ class MineScene extends Phaser.Scene {
       const t = TOWER_TYPES[id];
       const ok = this.canAffordTower(t);
       const cost = [
-        t.cost.iron ? `철${t.cost.iron}` : null,
+        t.cost.iron ? `철광석${t.cost.iron}` : null,
         t.cost.gold ? `${t.cost.gold}G` : null,
         t.cost.mithril ? `미스릴${t.cost.mithril}` : null,
       ].filter(Boolean).join(" · ");
@@ -5406,6 +5460,7 @@ class MineScene extends Phaser.Scene {
           const ny = unit.sprite.y + ((destY - unit.sprite.y) / dist) * Math.min(step, dist);
           unit.sprite.setPosition(nx, ny).setDepth(ny);
           unit.sprite.setFlipX(destX < nx);
+          unit.shadow?.setPosition(nx, ny).setDepth(ny - 1);
           unit.label?.setPosition(nx, ny - (type.display)).setDepth(ny + 1);
           unit.hpBarBg?.setPosition(nx, ny - type.display - 8);
           unit.hpBarFill?.setPosition(nx - 18, ny - type.display - 8);
@@ -5502,7 +5557,7 @@ class MineScene extends Phaser.Scene {
   endDefense(success, silent) {
     this.clearDefenseTimers();
     this.combatUnits.forEach((u) => {
-      u.sprite?.destroy(); u.label?.destroy(); u.hpBarBg?.destroy(); u.hpBarFill?.destroy();
+      u.sprite?.destroy(); u.shadow?.destroy(); u.label?.destroy(); u.hpBarBg?.destroy(); u.hpBarFill?.destroy();
     });
     this.combatUnits = [];
     this.clearTowerSlots();
@@ -5771,6 +5826,11 @@ document.addEventListener("keydown", (e) => {
 // 개발자(DEV) 디버그 패널 - F1 또는 [DEV] 버튼으로 토글, 배포 전 내부 밸런스 검증용.
 document.getElementById("btn-dev").addEventListener("click", () => window.gameScene?.toggleDevPanel());
 document.getElementById("dev-panel-close").addEventListener("click", () => { document.getElementById("dev-panel").style.display = "none"; });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.getElementById("dev-panel").style.display === "block") {
+    document.getElementById("dev-panel").style.display = "none";
+  }
+});
 document.getElementById("dev-btn-resources").addEventListener("click", () => window.gameScene?.devCheatResources());
 document.querySelectorAll(".dev-jump-btn").forEach((btn) => {
   btn.addEventListener("click", () => window.gameScene?.devJumpToFloor(Number(btn.dataset.devfloor)));
