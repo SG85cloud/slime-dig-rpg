@@ -1272,7 +1272,7 @@ const EVOLUTION_LEVELS = [5];
 const EVOLUTION_TYPES = {
   ironclad: { name: "철갑 슬라임", emoji: "🛡️", desc: "채굴 공격력 +30% (바위가 더 적은 타격으로 깨짐)" },
   luminous: { name: "발광 슬라임", emoji: "💡", desc: "희귀 광물/미스릴 드랍 확률 +20%" },
-  giant:    { name: "거대 슬라임", emoji: "🐌", desc: "가방 기본 슬롯 +15칸 증가" },
+  giant:    { name: "거대 슬라임", emoji: "🐌", desc: "가방 기본 슬롯 +200칸 증가" },
 };
 
 // 슬라임 개인 특성(Trait) - 플레이어는 최초 생성 시, 일꾼은 고용될 때마다 5종 중 1개를 무작위로 받는다.
@@ -1451,7 +1451,6 @@ const LANTERN_MIN_FLOOR = 15; // 이 층수 이상(B30~B15)일 때만 벽면 랜
 // 이원화 수문장 골렘 중 golem_ancient.png(677x369 캔버스)는 실제 그림 영역만 잘라 정사각 비율로 쓴다.
 const GOLEM_ANCIENT_CROP = { x: 185, y: 27, w: 300, h: 342 };
 
-const PLAYER_LIGHT_SCALE = 3.4;       // 슬라임 랜턴 발광 이미지 배율
 const PLAYER_LIGHT_STAMP_SCALE = 3.6; // 안개를 지우는 반경 배율
 
 /* -------------------------------------------------------------------------
@@ -1806,8 +1805,9 @@ class MineScene extends Phaser.Scene {
       { level: 4, cost: 320 },
       { level: 5, cost: 600 },
     ];
-    // 가방 확장 단계표
-    this.bagTiers = [15, 25, 40, 60];
+    // 가방 확장 단계표 - 슬롯이 아니라 광물 종류별로 쌓이는 "총 무게" 한도라, 기본 채굴 속도로
+    // 대략 5시간 정도는 판매하러 오가지 않고 캘 수 있을 만큼 넉넉하게 잡았다.
+    this.bagTiers = [200, 500, 900, 1500];
     this.bagCosts = [0, 80, 200, 400];
   }
 
@@ -2017,14 +2017,10 @@ class MineScene extends Phaser.Scene {
     this.gaugeFill = this.add.rectangle(0, 0, 40, 6, 0xffd166).setOrigin(0, 0).setDepth(1000).setVisible(false);
 
     /* ---- 3-7b. 동적 조명 + 암흑 시야(Fog of War) ----
-       슬라임 안전모 랜턴을 중심으로 한 원형 빛만 밝게 보이고, 나머지는 짙은 어둠으로
-       덮어 미지의 갱도를 탐험하는 분위기를 낸다. 안개는 매 프레임 다시 그리는
-       RenderTexture이며, ERASE 블렌드로 빛이 닿는 자리에만 구멍을 뚫는다. */
-    this.playerLight = this.add.image(this.player.x, this.player.y, "glow")
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setAlpha(0.85)
-      .setScale(PLAYER_LIGHT_SCALE * this.visionMultiplier())
-      .setDepth(890);
+       슬라임 주변만 밝게 보이고 나머지는 어둠으로 덮어 미지의 갱도를 탐험하는 분위기를 낸다.
+       (예전에는 이 안개 erase 반경과 별도로 슬라임 위에 겹쳐 그리는 발광 이미지도 있었으나,
+       ADD 블렌드로 캐릭터 자체가 하얗게 번져 보여 시인성을 해쳐 제거했다.) 안개는 매 프레임
+       다시 그리는 RenderTexture이며, ERASE 블렌드로 빛이 닿는 자리에만 구멍을 뚫는다. */
 
     // 안개에 구멍을 뚫을 때 쓰는 스탬프 (화면에는 직접 그려지지 않는다)
     this.lightStampPlayer = this.make.image({ x: 0, y: 0, key: "glow" }, false);
@@ -3112,7 +3108,7 @@ class MineScene extends Phaser.Scene {
 
   /** 가방 기본 용량(강화 단계) + 거대 슬라임 진화 보너스(+15칸)를 합산해 최신화한다. */
   recalcBagCapacity() {
-    this.bagCapacity = this.bagTiers[this.bagLevel] + 15 * this.evolutionCounts.giant;
+    this.bagCapacity = this.bagTiers[this.bagLevel] + 200 * this.evolutionCounts.giant;
   }
 
   /**
@@ -3345,14 +3341,14 @@ class MineScene extends Phaser.Scene {
     let sprite;
     if (iconKey) {
       const rect = ICON_RECTS[iconKey];
-      const w = ORE_ITEM_DISPLAY * 0.5;
+      const w = ORE_ITEM_DISPLAY * 0.25; // 캐릭터를 가리지 않도록 기존 크기의 절반으로 축소
       sprite = this.add.image(ox, oy, "ore_icons", iconKey)
         .setDisplaySize(w, w * (rect.h / rect.w))
         .setOrigin(0.5, 0.6)
         .setDepth(oy);
     } else {
       sprite = this.add.image(ox, oy, "ore_item")
-        .setDisplaySize(ORE_ITEM_DISPLAY * 0.55, ORE_ITEM_DISPLAY * 0.55)
+        .setDisplaySize(ORE_ITEM_DISPLAY * 0.275, ORE_ITEM_DISPLAY * 0.275) // 캐릭터를 가리지 않도록 기존 크기의 절반으로 축소
         .setOrigin(0.5, ORE_ITEM_ORIGIN_Y)
         .setDepth(oy)
         .setTint(ore.color);
@@ -3716,7 +3712,6 @@ class MineScene extends Phaser.Scene {
       equipped.push(relicId);
       this.addLog(`${RELIC_TYPES[relicId].name}을(를) 장착했습니다!`, "#c9a6ff");
     }
-    if (relicId === "lantern") this.playerLight.setScale(PLAYER_LIGHT_SCALE * this.visionMultiplier());
     this.recalcBagCapacity();
     this.updateUI();
     this.saveGame();
@@ -5653,10 +5648,9 @@ class MineScene extends Phaser.Scene {
     this.updateSkillUI();
 
     // 조명 + 안개(Fog of War) 갱신 - 수호전/봉인전 중에는 전장을 가리지 않는다.
-    this.playerLight.setPosition(this.player.x, this.player.y);
     this.fog.clear();
     if (!this.isDefenseActive()) {
-      this.fog.fill(0x05030a, 0.86);
+      this.fog.fill(0x05030a, 0.6); // 전반적으로 더 밝게 보이도록 어둠 농도를 낮췄다.
       this.lampSpots.forEach(([lx, ly]) => {
         this.lightStampLamp.setPosition(lx, ly).setScale(2.0);
         this.fog.erase(this.lightStampLamp);
