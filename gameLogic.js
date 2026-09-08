@@ -108,8 +108,11 @@ export class Game {
 
         this.attackPower = 10;
         // Forged equipment: the currently wielded item plus every recipe the
-        // player has personally invented.
+        // player has personally invented. `equipped` stays the weapon slot for
+        // backward-compatible saves; armor/accessory are separate slots.
         this.equipped = null;
+        this.equippedArmor = null;
+        this.equippedAccessory = null;
         this.recipeBook = [];
         this.craftLog = null;
         this.squadCommand = 'mine';
@@ -142,6 +145,13 @@ export class Game {
             strength: 1,
             speed: 1,
             luck: 1
+        };
+
+        // Base-camp facility upgrades: a permanent, ore-sink alternative to the
+        // forge — mining speed and squad size that never need re-equipping.
+        this.facilities = {
+            miningRig: 0,
+            barracks: 0
         };
 
         // Each ore vein keeps yielding items; rarer ore needs far more swings.
@@ -196,7 +206,7 @@ export class Game {
         }
 
         // Equipment HP is part of the max, so recompute once state is loaded.
-        this.maxPlayerHp = this.baseMaxHp + this.traitEffects.maxHpBonus + (this.equipped?.stats.hp || 0);
+        this.maxPlayerHp = this.baseMaxHp + this.traitEffects.maxHpBonus + this.getGearHpBonus();
 
         this.playerData = {
             id: this.app.multiplayer.playerId,
@@ -279,7 +289,9 @@ export class Game {
         if (Number.isFinite(coalGoal) && coalGoal > 0) this.quest.coalGoal = Math.floor(coalGoal);
 
         const workerCount = Number(saved.workerCount);
-        if (Number.isFinite(workerCount)) this.pendingWorkerCount = Math.max(0, Math.min(6, Math.floor(workerCount)));
+        // Sanity bound only; addWorker() enforces the real cap once facilities
+        // are restored (base 6 + up to 4 barracks levels).
+        if (Number.isFinite(workerCount)) this.pendingWorkerCount = Math.max(0, Math.min(10, Math.floor(workerCount)));
 
         if (['mine', 'attack', 'defend'].includes(saved.squadCommand)) {
             this.savedCommand = saved.squadCommand;
@@ -287,6 +299,8 @@ export class Game {
 
         // Restore the forged loadout and every recipe the player invented.
         if (saved.equipped && saved.equipped.stats) this.equipped = saved.equipped;
+        if (saved.equippedArmor && saved.equippedArmor.stats) this.equippedArmor = saved.equippedArmor;
+        if (saved.equippedAccessory && saved.equippedAccessory.stats) this.equippedAccessory = saved.equippedAccessory;
         if (Array.isArray(saved.recipeBook)) {
             this.recipeBook = saved.recipeBook.filter((entry) => entry && entry.key && entry.mix);
         }
@@ -309,6 +323,13 @@ export class Game {
         Object.keys(this.boons).forEach((key) => {
             const value = Number(saved.boons?.[key]);
             if (Number.isFinite(value)) this.boons[key] = value;
+        });
+
+        // Permanent base-camp facility levels.
+        Object.keys(this.facilities).forEach((key) => {
+            const level = Number(saved.facilities?.[key]);
+            const max = Game.FACILITY_CONFIG[key]?.maxLevel ?? 0;
+            if (Number.isFinite(level) && level >= 0) this.facilities[key] = Math.min(max, Math.floor(level));
         });
 
         // A reward the player never got around to choosing is still owed.
@@ -337,6 +358,8 @@ export class Game {
             squadCommand: this.squadCommand,
             totalOreMined: this.totalOreMined || 0,
             equipped: this.equipped,
+            equippedArmor: this.equippedArmor,
+            equippedAccessory: this.equippedAccessory,
             recipeBook: this.recipeBook,
             totalCrafted: this.totalCrafted || 0,
             wave: this.wave,
@@ -345,6 +368,7 @@ export class Game {
             floorNodesCleared: this.floorNodesCleared,
             deepestReached: this.deepestReached,
             boons: { ...this.boons },
+            facilities: { ...this.facilities },
             // An unclaimed reward survives a reload so a win is never lost.
             rewardPending: this.rewardPending
         };
@@ -387,9 +411,9 @@ export class Game {
         window.location.reload();
     }
 
-    // Luck used by ore rolls already includes trait bonuses.
+    // Luck used by ore rolls already includes trait and accessory bonuses.
     getEffectiveLuck() {
-        return this.stats.luck + this.traitEffects.luckBonus;
+        return this.stats.luck + this.traitEffects.luckBonus + (this.equippedAccessory?.stats.luck || 0);
     }
 
     getTraitData() {
@@ -653,9 +677,10 @@ export class Game {
     }
 
     // Speed shortens the interval between pickaxe swings, with a sane minimum.
+    // The mining-rig facility stacks a further permanent multiplier on top.
     getSwingInterval() {
         const base = 0.46 - (this.stats.speed - 1) * 0.03;
-        return Math.max(0.1, base / this.traitEffects.swingSpeedMult);
+        return Math.max(0.1, (base * this.getMiningSpeedFacilityMult()) / this.traitEffects.swingSpeedMult);
     }
 
     spawnNode(type, options = {}) {
@@ -932,11 +957,11 @@ export class Game {
     }
 
     addWorker() {
-        if (this.workers.length >= 6) return false;
+        if (this.workers.length >= this.getWorkerCap()) return false;
 
         const index = this.workers.length;
         const worker = this.assets.worker.clone();
-        const angle = (index / 6) * Math.PI * 2;
+        const angle = (index / this.getWorkerCap()) * Math.PI * 2;
         worker.userData.baseY = computeGroundOffset(this.assets.worker, 0.9);
         worker.position.set(
             this.player.position.x + Math.cos(angle) * 1.4,
@@ -965,6 +990,7 @@ export class Game {
         this.canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
         this.app.ui.setCommandHandler((command) => this.setSquadCommand(command));
         this.app.ui.setStatHandler((stat) => this.upgradeStat(stat));
+        this.app.ui.setFacilityHandler((key) => this.upgradeFacility(key));
         this.app.ui.setAutoCombatHandler(() => this.toggleAutoCombat());
         // Mine defence waves are launched by the player from the combat menu.
         this.app.ui.setWaveStartHandler(() => {
@@ -976,14 +1002,14 @@ export class Game {
         this.app.ui.setWaveRewardHandler((choiceId) => this.claimWaveReward(choiceId));
         // Crafting workshop: the UI owns the mix, gameLogic owns the forge.
         this.app.ui.setCraftHandlers({
-            preview: (mix) => this.getCraftData(mix),
-            craft: (mix) => {
-                const result = this.craft(mix);
-                return { result, data: this.getCraftData(mix) };
+            preview: (mix, slot) => this.getCraftData(mix, slot),
+            craft: (mix, slot) => {
+                const result = this.craft(mix, slot);
+                return { result, data: this.getCraftData(mix, slot) };
             },
-            equip: (item) => {
-                this.equipItem(item);
-                return this.getCraftData(this.app.ui.craftMix);
+            equip: (item, slot) => {
+                this.equipItem(item, slot);
+                return this.getCraftData(this.app.ui.craftMix, slot || item?.slot);
             }
         });
     }
@@ -1289,7 +1315,7 @@ export class Game {
         const dealt = this.damageEnemy(target, damage, { crit: isCrit, from: this.player.position });
         this.playSound('mining-hit');
 
-        if (dealt > 0 && Math.random() < this.traitEffects.lifestealChance) {
+        if (dealt > 0 && Math.random() < this.traitEffects.lifestealChance + this.getEquipmentLifesteal()) {
             const healed = Math.max(1, Math.round(dealt * 0.3));
             this.playerData.hp = Math.min(this.maxPlayerHp, this.playerData.hp + healed);
             this.combatFX.spawnDamageNumber(this.player.position, healed, { color: '#8fd9a8', text: `+${healed}` });
@@ -1326,7 +1352,9 @@ export class Game {
     /** Damage applied to the leader, with hit feedback and death handling. */
     damagePlayer(amount, source) {
         if (this.isDown) return;
-        const damage = Math.max(1, Math.round(amount * this.traitEffects.damageTakenMult));
+        const damage = Math.max(1, Math.round(
+            amount * this.traitEffects.damageTakenMult * this.getDamageReductionMult()
+        ));
         this.playerData.hp = Math.max(0, this.playerData.hp - damage);
 
         this.combatFX.spawnDamageNumber(this.player.position, damage, { color: '#ff7d6b', text: `-${damage}` });
@@ -1659,6 +1687,18 @@ export class Game {
                 summary: `워커 공격력 +${Math.round(workerAtk * 100)}% · 채굴 속도 +${Math.round(workerMine * 100)}% (영구)`,
                 benefit: `워커 ${this.workers.length}명이 더 세게 때리고 더 빨리 캡니다. 방어 명령으로 두고 채굴하면 다음 전투가 훨씬 안전해집니다.`,
                 payload: { attack: workerAtk, mine: workerMine }
+            },
+            // 4) Trait reroll — a way back into the wider trait catalogue when a
+            // run's starting draw feels underwhelming, since traits are
+            // otherwise fixed for the leader's whole lifetime.
+            {
+                id: 'trait_reroll',
+                icon: '🎲',
+                color: '#9ff3e0',
+                title: '특성 변경권',
+                summary: `보유한 특성 ${this.traits.length}종을 모두 새로 뽑습니다`,
+                benefit: '지금 특성 조합이 아쉽다면, 완전히 새로운 태생 특성 세트에 도전할 기회입니다. 무엇이 나올지는 뽑아봐야 압니다.',
+                payload: {}
             }
         ];
     }
@@ -1710,6 +1750,13 @@ export class Game {
             this.boons.workerAttackMult += choice.payload.attack;
             this.boons.workerSwingMult += choice.payload.mine;
             this.pushCombatFeed(`보상 획득: ${choice.summary}`, '#c7a3ef');
+        } else if (choice.id === 'trait_reroll') {
+            this.traits = rollTraits(this.traits.length || 3);
+            this.traitEffects = buildTraitEffects(this.traits);
+            this.playerData.traits = this.traits.map((trait) => trait.name);
+            this.refreshMaxHp();
+            const names = this.traits.map((trait) => trait.name).join(', ');
+            this.pushCombatFeed(`특성을 새로 뽑았습니다: ${names}`, '#9ff3e0');
         }
 
         this.persist();
@@ -1800,27 +1847,69 @@ export class Game {
         return this.attackPower + (this.equipped?.stats.attack || 0);
     }
 
+    // Weapon crit and accessory crit stack the same way trait crit does.
     getEquipmentCrit() {
-        return this.equipped?.stats.crit || 0;
+        return (this.equipped?.stats.crit || 0) + (this.equippedAccessory?.stats.crit || 0);
+    }
+
+    // Extra lifesteal chance granted by an accessory, additive with traits.
+    getEquipmentLifesteal() {
+        return this.equippedAccessory?.stats.lifesteal || 0;
+    }
+
+    // Max HP bonus from every equipped slot combined.
+    getGearHpBonus() {
+        return (this.equipped?.stats.hp || 0)
+            + (this.equippedArmor?.stats.hp || 0)
+            + (this.equippedAccessory?.stats.hp || 0);
+    }
+
+    // Armor's defense stat converts to a diminishing-returns damage multiplier
+    // (defense / (defense + K)), so there is no hard cap to itemize around.
+    getDamageReductionMult() {
+        const defense = this.equippedArmor?.stats.defense || 0;
+        if (defense <= 0) return 1;
+        const K = 120;
+        return 1 - defense / (defense + K);
     }
 
     // Recompute max HP from base + traits + equipment so re-equipping is safe.
     refreshMaxHp() {
         const previousMax = this.maxPlayerHp;
-        this.maxPlayerHp = this.baseMaxHp + this.traitEffects.maxHpBonus + (this.equipped?.stats.hp || 0);
+        this.maxPlayerHp = this.baseMaxHp + this.traitEffects.maxHpBonus + this.getGearHpBonus();
         if (this.playerData) {
             const delta = this.maxPlayerHp - previousMax;
             this.playerData.hp = Math.max(1, Math.min(this.maxPlayerHp, this.playerData.hp + Math.max(0, delta)));
         }
     }
 
+    // Recipes are keyed by slot+mix since the same blend forges a different
+    // item depending on which slot the player was aiming for.
+    recipeKeyFor(mix, slot) {
+        return `${slot}:${recipeKey(mix)}`;
+    }
+
+    // The equipped item currently sitting in a given slot.
+    getEquippedForSlot(slot) {
+        if (slot === 'armor') return this.equippedArmor;
+        if (slot === 'accessory') return this.equippedAccessory;
+        return this.equipped;
+    }
+
+    setEquippedForSlot(slot, item) {
+        if (slot === 'armor') this.equippedArmor = item;
+        else if (slot === 'accessory') this.equippedAccessory = item;
+        else this.equipped = item;
+    }
+
     // Every distinct ore ratio the player has ever forged is remembered.
-    recordRecipe(mix, result) {
-        const key = recipeKey(mix);
+    recordRecipe(mix, result, slot) {
+        const key = this.recipeKeyFor(mix, slot);
         let entry = this.recipeBook.find((recipe) => recipe.key === key);
         if (!entry) {
             entry = {
                 key,
+                slot,
                 mix: { ...result.item.mix },
                 archetypeId: result.item.archetypeId,
                 name: result.item.name,
@@ -1850,7 +1939,7 @@ export class Game {
         return entry;
     }
 
-    craft(mix) {
+    craft(mix, slot = 'weapon') {
         const cost = this.getCraftCost(mix);
         const total = ORE_KEYS.reduce((sum, ore) => sum + cost[ore], 0);
         if (total <= 0) {
@@ -1866,22 +1955,24 @@ export class Game {
             this.inventory[ore] -= cost[ore];
         });
 
-        const result = forgeItem(mix, this.getEffectiveLuck());
-        // Craft-power traits add a flat bonus to whatever comes out of the forge.
-        if (this.traitEffects.craftPowerBonus > 0) {
+        const result = forgeItem(mix, this.getEffectiveLuck(), slot);
+        // Craft-power traits add a flat bonus to whatever comes out of the forge
+        // (only meaningful for weapons, which is the only archetype with attack).
+        if (this.traitEffects.craftPowerBonus > 0 && result.item.stats.attack) {
             result.item.stats.attack += Math.round(this.traitEffects.craftPowerBonus);
         }
 
-        const entry = this.recordRecipe(mix, result);
+        const entry = this.recordRecipe(mix, result, slot);
         this.totalCrafted = (this.totalCrafted || 0) + 1;
 
-        // Auto-equip only when the new piece is genuinely better.
-        const upgraded = getItemPower(result.item) > getItemPower(this.equipped);
+        // Auto-equip only when the new piece is genuinely better than what's
+        // currently in that same slot.
+        const upgraded = getItemPower(result.item) > getItemPower(this.getEquippedForSlot(slot));
         if (upgraded) {
-            this.equipped = result.item;
+            this.setEquippedForSlot(slot, result.item);
             this.refreshMaxHp();
             // The held weapon mesh must match the newly equipped item.
-            this.refreshWeaponMesh();
+            if (slot === 'weapon') this.refreshWeaponMesh();
         }
 
         const tier = getTierById(result.item.tierId);
@@ -1912,26 +2003,28 @@ export class Game {
         return this.craftLog;
     }
 
-    equipItem(item) {
+    equipItem(item, slot = item?.slot || 'weapon') {
         if (!item || !item.stats) return false;
-        this.equipped = item;
+        this.setEquippedForSlot(slot, item);
         this.refreshMaxHp();
-        this.refreshWeaponMesh();
+        if (slot === 'weapon') this.refreshWeaponMesh();
         this.persist();
         return true;
     }
 
-    // Everything the crafting workshop UI needs to render.
-    getCraftData(mix) {
+    // Everything the crafting workshop UI needs to render for one slot tab.
+    getCraftData(mix, slot = 'weapon') {
         const safeMix = {};
         ORE_KEYS.forEach((ore) => {
             safeMix[ore] = Math.max(0, Math.floor(mix?.[ore] || 0));
         });
 
-        const preview = previewCraft(safeMix, this.getEffectiveLuck());
+        const preview = previewCraft(safeMix, this.getEffectiveLuck(), slot);
         const cost = this.getCraftCost(safeMix);
+        const equippedInSlot = this.getEquippedForSlot(slot);
 
         return {
+            slot,
             ores: ORE_KEYS.map((ore) => ({
                 key: ore,
                 label: ORE_INFO[ore].label,
@@ -1942,14 +2035,18 @@ export class Game {
             tiers: QUALITY_TIERS.filter((tier) => Number.isFinite(tier.min) || tier.id === 'crude'),
             preview,
             affordable: this.canAffordMix(safeMix) && preview.mass > 0,
-            equipped: this.equipped,
+            equipped: equippedInSlot,
             baseAttack: this.attackPower,
             totalAttack: this.getTotalAttack(),
+            // Recipes saved before armor/accessory existed have no `slot` field
+            // and were always weapons, so default missing slots to 'weapon'.
             recipes: this.recipeBook
+                .filter((entry) => (entry.slot || 'weapon') === slot)
                 .slice()
                 .sort((a, b) => getItemPower({ stats: b.bestStats }) - getItemPower({ stats: a.bestStats }))
                 .map((entry) => ({
                     key: entry.key,
+                    slot: entry.slot || 'weapon',
                     mix: entry.mix,
                     name: entry.name,
                     icon: entry.icon,
@@ -2010,6 +2107,86 @@ export class Game {
             });
         }
 
+        this.playSound('mining-hit');
+        this.persist();
+        return true;
+    }
+
+    // ------------------------------------------------------- base facilities
+    // A second, permanent ore sink alongside the forge: upgrades that never
+    // need re-equipping and use the full coal/iron/gold/mithril spread rather
+    // than just the coal+iron the leader-stat shop already drains.
+    static FACILITY_CONFIG = {
+        // Each level shaves 4% off the mining swing interval.
+        miningRig: { maxLevel: 8, speedBonusPerLevel: 0.04 },
+        // Each level opens one more worker slot beyond the base cap of 6.
+        barracks: { maxLevel: 4, workerCapPerLevel: 1 }
+    };
+
+    getFacilityCost(key) {
+        const level = this.facilities[key] || 0;
+        if (key === 'miningRig') {
+            return {
+                coal: 20 + level * 22,
+                iron: 10 + level * 16,
+                gold: level >= 2 ? (level - 1) * 4 : 0,
+                mithril: 0
+            };
+        }
+        if (key === 'barracks') {
+            return {
+                coal: 40 + level * 34,
+                iron: 24 + level * 22,
+                gold: 6 + level * 8,
+                mithril: level >= 2 ? (level - 1) * 3 : 0
+            };
+        }
+        return { coal: 0, iron: 0, gold: 0, mithril: 0 };
+    }
+
+    canAffordFacility(key) {
+        const config = Game.FACILITY_CONFIG[key];
+        if (!config || (this.facilities[key] || 0) >= config.maxLevel) return false;
+        const cost = this.getFacilityCost(key);
+        return ORE_KEYS.every((ore) => this.inventory[ore] >= (cost[ore] || 0));
+    }
+
+    getMiningSpeedFacilityMult() {
+        return 1 - this.facilities.miningRig * Game.FACILITY_CONFIG.miningRig.speedBonusPerLevel;
+    }
+
+    getWorkerCap() {
+        return 6 + this.facilities.barracks * Game.FACILITY_CONFIG.barracks.workerCapPerLevel;
+    }
+
+    getFacilitiesData() {
+        const describe = (key, label, hint) => {
+            const config = Game.FACILITY_CONFIG[key];
+            const level = this.facilities[key] || 0;
+            return {
+                key,
+                label,
+                hint,
+                level,
+                maxLevel: config.maxLevel,
+                maxed: level >= config.maxLevel,
+                cost: this.getFacilityCost(key),
+                affordable: this.canAffordFacility(key)
+            };
+        };
+        return [
+            describe('miningRig', '채굴 설비 강화', `채굴 속도 영구 +${Math.round(Game.FACILITY_CONFIG.miningRig.speedBonusPerLevel * 100)}%/레벨`),
+            describe('barracks', '막사 증축', `워커 정원 +${Game.FACILITY_CONFIG.barracks.workerCapPerLevel}명/레벨 (현재 ${this.getWorkerCap()}명)`)
+        ];
+    }
+
+    upgradeFacility(key) {
+        if (!this.canAffordFacility(key)) return false;
+        const cost = this.getFacilityCost(key);
+        ORE_KEYS.forEach((ore) => {
+            this.inventory[ore] -= (cost[ore] || 0);
+        });
+        this.facilities[key] = (this.facilities[key] || 0) + 1;
         this.playSound('mining-hit');
         this.persist();
         return true;
@@ -2351,7 +2528,8 @@ export class Game {
             this.getTraitData(),
             this.getEquipmentData(),
             this.getCombatData(),
-            this.getDepthData()
+            this.getDepthData(),
+            this.getFacilitiesData()
         );
     }
 
@@ -2359,6 +2537,8 @@ export class Game {
     getEquipmentData() {
         return {
             equipped: this.equipped,
+            equippedArmor: this.equippedArmor,
+            equippedAccessory: this.equippedAccessory,
             tier: this.equipped ? getTierById(this.equipped.tierId) : null,
             baseAttack: Math.round(this.attackPower),
             totalAttack: Math.round(this.getTotalAttack()),

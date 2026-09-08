@@ -21,12 +21,14 @@ export class UI {
         this.battleOpen = false;
         this.battleResult = null;
         this.statHandler = null;
+        this.facilityHandler = null;
         this.traitData = null;
         this.traitFilter = 'all';
         this.resetHandler = null;
         this.craftHandlers = null;
         this.craftOpen = false;
         this.craftMix = { coal: 0, iron: 0, gold: 0, mithril: 0 };
+        this.craftSlot = 'weapon';
         this.equipmentData = null;
         this.statusOpen = false;
         this.rewardOpen = false;
@@ -164,7 +166,9 @@ export class UI {
             ['체력', `${Math.ceil(this.lastPlayerHp ?? 0)} / ${this.lastMaxPlayerHp ?? 0}`, '#9fe8ff'],
             ['공격력', `${Math.round(equip?.totalAttack ?? 10)}`, '#ff9c9c'],
             ['워커 슬라임', `${this.lastWorkerCount ?? 0}명`, '#d7c4ed'],
-            ['장착 무기', equip?.equipped ? equip.equipped.name : '맨손', equip?.tier?.color || '#8d80a0']
+            ['장착 무기', equip?.equipped ? equip.equipped.name : '맨손', equip?.tier?.color || '#8d80a0'],
+            ['장착 방어구', equip?.equippedArmor ? equip.equippedArmor.name : '없음', equip?.equippedArmor ? '#8fc4ff' : '#8d80a0'],
+            ['장착 장신구', equip?.equippedAccessory ? equip.equippedAccessory.name : '없음', equip?.equippedAccessory ? '#c7a3ef' : '#8d80a0']
         ];
         this.statusOverlay.querySelector('.status-vitals').innerHTML = vitals
             .map(([label, value, color]) => `
@@ -230,6 +234,8 @@ export class UI {
                             font:700 12px Inter, sans-serif;">닫기 (ESC)</button>
                 </div>
 
+                <div class="craft-slot-tabs" style="margin-top:14px; display:flex; gap:8px;"></div>
+
                 <div class="craft-body" style="margin-top:16px; display:grid; gap:16px; grid-template-columns:1.05fr .95fr;
                             overflow:auto; padding-right:4px;">
                     <div>
@@ -287,6 +293,42 @@ export class UI {
         this.craftOverlay.querySelector('.craft-forge').addEventListener('click', () => this.submitCraft());
 
         this.buildCraftOreRows();
+        this.buildCraftSlotTabs();
+    }
+
+    buildCraftSlotTabs() {
+        const bar = this.craftOverlay.querySelector('.craft-slot-tabs');
+        const tabs = [
+            { key: 'weapon', label: '🗡️ 무기' },
+            { key: 'armor', label: '🛡️ 방어구' },
+            { key: 'accessory', label: '💍 장신구' }
+        ];
+        tabs.forEach((tab) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.slot = tab.key;
+            button.textContent = tab.label;
+            button.style.cssText = `flex:1; cursor:pointer; border-radius:8px; padding:9px 6px;
+                    font:700 12.5px Inter, sans-serif; border:1px solid #6a5480; background:rgba(255,255,255,.05); color:#cfc3dd;`;
+            button.addEventListener('click', () => {
+                if (this.craftSlot === tab.key) return;
+                this.craftSlot = tab.key;
+                this.refreshCraftWorkshop(null);
+            });
+            bar.appendChild(button);
+        });
+        this.updateCraftSlotTabs();
+    }
+
+    updateCraftSlotTabs() {
+        const bar = this.craftOverlay?.querySelector('.craft-slot-tabs');
+        if (!bar) return;
+        bar.querySelectorAll('button').forEach((button) => {
+            const active = button.dataset.slot === this.craftSlot;
+            button.style.background = active ? 'linear-gradient(180deg,#8a4f2a,#5c3018)' : 'rgba(255,255,255,.05)';
+            button.style.color = active ? '#ffe6c4' : '#cfc3dd';
+            button.style.borderColor = active ? '#d19a5f' : '#6a5480';
+        });
     }
 
     buildCraftOreRows() {
@@ -367,7 +409,7 @@ export class UI {
 
     submitCraft() {
         if (!this.craftHandlers?.craft) return;
-        const outcome = this.craftHandlers.craft({ ...this.craftMix });
+        const outcome = this.craftHandlers.craft({ ...this.craftMix }, this.craftSlot);
         this.craftData = outcome.data;
         // A successful craft consumes the ore, so reset the dials to what is
         // still affordable rather than leaving impossible numbers on screen.
@@ -375,16 +417,39 @@ export class UI {
             this.craftMix[ore.key] = Math.min(this.craftMix[ore.key] || 0, ore.owned);
         });
         this.craftLastLog = outcome.result;
-        this.renderCraftWorkshop(this.craftHandlers.preview({ ...this.craftMix }), outcome.result);
+        this.renderCraftWorkshop(this.craftHandlers.preview({ ...this.craftMix }, this.craftSlot), outcome.result);
     }
 
     refreshCraftWorkshop(log) {
         if (!this.craftHandlers?.preview || !this.craftOverlay) return;
-        const data = this.craftHandlers.preview({ ...this.craftMix });
+        const data = this.craftHandlers.preview({ ...this.craftMix }, this.craftSlot);
         this.craftData = data;
         if (log === null) this.craftLastLog = null;
         else if (log !== undefined) this.craftLastLog = log;
+        this.updateCraftSlotTabs();
         this.renderCraftWorkshop(data, this.craftLastLog);
+    }
+
+    // Equipment stat objects vary by slot (weapon: attack/crit/hp, armor:
+    // defense/hp, accessory: luck/crit/lifesteal/hp) — render whichever keys
+    // the item actually has rather than assuming a weapon's shape.
+    describeStats(stats) {
+        const chips = [];
+        if (stats.attack) chips.push({ label: `공격 +${stats.attack}`, color: '#ff9c9c' });
+        if (stats.defense) chips.push({ label: `방어 +${stats.defense}`, color: '#8fc4ff' });
+        if (stats.crit) chips.push({ label: `치명 +${Math.round(stats.crit * 100)}%`, color: '#ffe39a' });
+        if (stats.luck) chips.push({ label: `행운 +${Math.round(stats.luck * 10) / 10}`, color: '#c7a3ef' });
+        if (stats.lifesteal) chips.push({ label: `흡혈 +${Math.round(stats.lifesteal * 100)}%`, color: '#ff8fae' });
+        if (stats.hp) chips.push({ label: `체력 +${stats.hp}`, color: '#8fd9a8' });
+        return chips;
+    }
+
+    formatStatChips(stats) {
+        return this.describeStats(stats).map((chip) => `<div style="color:${chip.color};">${chip.label}</div>`).join('');
+    }
+
+    formatStatSummary(stats) {
+        return this.describeStats(stats).map((chip) => chip.label).join(' · ');
     }
 
     renderCraftWorkshop(data, log) {
@@ -487,12 +552,20 @@ export class UI {
             logEl.textContent = '';
         }
 
-        // Equipped loadout
+        // Equipped loadout (per-slot: weapon shows total attack, others don't)
         const equippedEl = this.craftOverlay.querySelector('.craft-equipped');
+        const slotLabel = { weapon: '무기', armor: '방어구', accessory: '장신구' }[data.slot] || '장비';
+        const slotEmptyHint = { weapon: '첫 무기를', armor: '첫 방어구를', accessory: '첫 장신구를' }[data.slot] || '첫 장비를';
         if (data.equipped) {
             const tier = tierOf(data.equipped.tierId);
+            const attackFooter = data.slot === 'weapon'
+                ? `<div style="margin-top:9px; font-size:12px; color:#cfc3dd;">
+                        총 공격력 <b style="color:#fff1d1;">${Math.round(data.totalAttack)}</b>
+                        <span style="color:#8d80a0;">(기본 ${Math.round(data.baseAttack)})</span>
+                   </div>`
+                : '';
             equippedEl.innerHTML = `
-                <div style="font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#cbb8e8;">장착 중인 장비</div>
+                <div style="font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#cbb8e8;">장착 중인 ${slotLabel}</div>
                 <div style="margin-top:9px; display:flex; align-items:center; gap:10px;">
                     <div style="font-size:26px;">${data.equipped.icon}</div>
                     <div>
@@ -501,21 +574,16 @@ export class UI {
                     </div>
                 </div>
                 <div style="margin-top:9px; display:grid; grid-template-columns:repeat(3,1fr); gap:6px; font-size:12px;">
-                    <div style="color:#ff9c9c;">공격 +${data.equipped.stats.attack}</div>
-                    <div style="color:#ffe39a;">치명 +${Math.round(data.equipped.stats.crit * 100)}%</div>
-                    <div style="color:#8fd9a8;">체력 +${data.equipped.stats.hp}</div>
+                    ${this.formatStatChips(data.equipped.stats)}
                 </div>
-                <div style="margin-top:9px; font-size:12px; color:#cfc3dd;">
-                    총 공격력 <b style="color:#fff1d1;">${Math.round(data.totalAttack)}</b>
-                    <span style="color:#8d80a0;">(기본 ${Math.round(data.baseAttack)})</span>
-                </div>
+                ${attackFooter}
             `;
         } else {
             equippedEl.innerHTML = `
-                <div style="font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#cbb8e8;">장착 중인 장비</div>
+                <div style="font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#cbb8e8;">장착 중인 ${slotLabel}</div>
                 <div style="margin-top:9px; color:#a99bb8; font-size:12.5px; line-height:1.6;">
-                    아직 장비가 없습니다. 첫 무기를 벼려 보세요.<br>
-                    총 공격력 <b style="color:#fff1d1;">${Math.round(data.totalAttack)}</b>
+                    아직 장비가 없습니다. ${slotEmptyHint} 벼려 보세요.
+                    ${data.slot === 'weapon' ? `<br>총 공격력 <b style="color:#fff1d1;">${Math.round(data.totalAttack)}</b>` : ''}
                 </div>
             `;
         }
@@ -557,7 +625,7 @@ export class UI {
                 </div>
                 <div style="margin-top:7px; font-size:11px; color:#8d80a0;">
                     최고 등급 <span style="color:${tier.color}; font-weight:700;">${tier.label}</span>
-                    · 공격 +${recipe.bestStats.attack}
+                    · ${this.formatStatSummary(recipe.bestStats)}
                     · ${recipe.crafts}회 제작 (성공 ${recipe.successes})
                 </div>
             `;
@@ -565,6 +633,7 @@ export class UI {
                 Object.keys(this.craftMix).forEach((ore) => {
                     this.craftMix[ore] = recipe.mix[ore] || 0;
                 });
+                if (recipe.slot) this.craftSlot = recipe.slot;
                 this.refreshCraftWorkshop(null);
             });
             recipesEl.appendChild(card);
@@ -1182,6 +1251,9 @@ export class UI {
             </div>
             <div class="mining-progress" style="margin-top: 9px; padding: 8px 10px; border-radius: 7px; background: rgba(0,0,0,.32); border: 1px solid #4b3a5d; color: #b7f3ff; font-size: 12px;">채굴할 광석을 클릭하세요</div>
             <div class="stat-rows" style="margin-top: 10px; display: grid; gap: 7px;"></div>
+            <div style="margin-top:14px; padding-top:10px; border-top:1px solid #3b3048;
+                        font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#cbb8e8;">🏕 기지 시설</div>
+            <div class="facility-rows" style="margin-top: 9px; display: grid; gap: 7px;"></div>
         `;
         this.popoverLayer.appendChild(this.statPanel);
 
@@ -1244,10 +1316,97 @@ export class UI {
                 if (this.statHandler) this.statHandler(definition.key);
             });
         });
+
+        this.buildFacilityRows();
     }
 
     setStatHandler(handler) {
         this.statHandler = handler;
+    }
+
+    setFacilityHandler(handler) {
+        this.facilityHandler = handler;
+    }
+
+    // A second, independent upgrade shop for permanent base-camp facilities
+    // (mining speed, worker cap) — separate from the leader-stat rows above
+    // since its costs can span all four ore types, not just coal/iron.
+    buildFacilityRows() {
+        const rows = this.statPanel.querySelector('.facility-rows');
+        const definitions = [
+            { key: 'miningRig', label: '채굴 설비 강화', hint: '채굴 속도 영구 증가', color: '#8fd9a8' },
+            { key: 'barracks', label: '막사 증축', hint: '워커 정원 영구 확장', color: '#ffcf8a' }
+        ];
+
+        definitions.forEach((definition) => {
+            const row = document.createElement('div');
+            row.dataset.facility = definition.key;
+            row.style.cssText = 'display:flex; align-items:center; gap:9px;';
+            row.innerHTML = `
+                <div style="flex:1;">
+                    <div style="font-size:13px; font-weight:700; color:${definition.color};">
+                        ${definition.label} <span class="facility-value" style="color:#fff1d1;">Lv.0</span>
+                    </div>
+                    <div class="facility-hint" style="font-size:11px; color:#a99bb8;">${definition.hint}</div>
+                    <div class="facility-cost" style="font-size:11px; color:#8fd9a8; margin-top:2px;"></div>
+                </div>
+                <button class="facility-up" type="button">＋</button>
+            `;
+            rows.appendChild(row);
+
+            const button = row.querySelector('.facility-up');
+            button.style.cssText = `
+                width: 38px; height: 38px; border: 1px solid #6c568d; border-radius: 7px;
+                background: #2a203a; color: #fff; font: 700 16px Inter, sans-serif; cursor: pointer;
+            `;
+            button.addEventListener('mousedown', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+            });
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (this.facilityHandler) this.facilityHandler(definition.key);
+            });
+        });
+    }
+
+    updateFacilities(facilities) {
+        if (!this.statPanel || !Array.isArray(facilities)) return;
+        const oreLabels = { coal: '석탄', iron: '철', gold: '금', mithril: '미스릴' };
+
+        this.statPanel.querySelectorAll('.facility-rows > div').forEach((row) => {
+            const entry = facilities.find((item) => item.key === row.dataset.facility);
+            if (!entry) return;
+
+            row.querySelector('.facility-value').textContent = `Lv.${entry.level}`;
+            const costLabel = row.querySelector('.facility-cost');
+            const hintLabel = row.querySelector('.facility-hint');
+            const button = row.querySelector('.facility-up');
+
+            if (entry.maxed) {
+                costLabel.textContent = '최대 레벨';
+                costLabel.style.color = '#a99bb8';
+                hintLabel.textContent = entry.hint;
+                button.disabled = true;
+                button.style.opacity = '0.35';
+                button.style.cursor = 'not-allowed';
+                return;
+            }
+
+            const costText = ['coal', 'iron', 'gold', 'mithril']
+                .filter((ore) => entry.cost[ore] > 0)
+                .map((ore) => `${oreLabels[ore]} ${entry.cost[ore]}`)
+                .join(' · ');
+            costLabel.textContent = `비용: ${costText}`;
+            costLabel.style.color = entry.affordable ? '#8fd9a8' : '#9b8ba8';
+            hintLabel.textContent = entry.hint;
+
+            button.disabled = !entry.affordable;
+            button.style.opacity = entry.affordable ? '1' : '0.42';
+            button.style.cursor = entry.affordable ? 'pointer' : 'not-allowed';
+            button.style.borderColor = entry.affordable ? '#9ad9b0' : '#6c568d';
+        });
     }
 
     updateStats(stats, inventory, miningProgress) {
@@ -2024,9 +2183,10 @@ export class UI {
         music.play().catch(() => {});
     }
 
-    update(inventory, traits, command = this.activeCommand, workerCount = 0, playerHp = 100, maxPlayerHp = 100, quest = null, stats = null, miningProgress = null, traitData = null, equipment = null, combat = null, depth = null) {
+    update(inventory, traits, command = this.activeCommand, workerCount = 0, playerHp = 100, maxPlayerHp = 100, quest = null, stats = null, miningProgress = null, traitData = null, equipment = null, combat = null, depth = null, facilities = null) {
         this.equipmentData = equipment || this.equipmentData;
         this.updateDepth(depth);
+        this.updateFacilities(facilities);
         // Cached so the status window can render current vitals on demand.
         this.lastPlayerHp = playerHp;
         this.lastMaxPlayerHp = maxPlayerHp;

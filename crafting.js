@@ -89,6 +89,112 @@ export const ITEM_ARCHETYPES = [
         blurb: '미스릴을 아낌없이 쏟아부은 절대 병기.',
         dominant: 'mithril', minMass: 120,
         stats: { attack: 1.85, crit: 0.12, hp: 12 }
+    },
+
+    // ---------------------------------------------------------------- armor
+    // Damage reduction (stats.defense) plus a little max HP. Defense converts
+    // to a diminishing-returns damage multiplier in gameLogic, so there is no
+    // hard cap to itemize around — heavier armor always helps a bit more.
+    {
+        id: 'rags', name: '누더기 갑옷', icon: '🧥', slot: 'armor',
+        blurb: '겨우 몸을 가리는 수준의 넝마.',
+        dominant: 'coal', minMass: 0,
+        stats: { defense: 0.5, hp: 6 }
+    },
+    {
+        id: 'padded_coat', name: '누빔 갑옷', icon: '🧵', slot: 'armor',
+        blurb: '두툼하게 누빈 천 갑옷. 가볍고 은근히 튼튼합니다.',
+        dominant: 'coal', minMass: 26,
+        stats: { defense: 0.75, hp: 10 }
+    },
+    {
+        id: 'chainmail', name: '사슬 갑옷', icon: '⛓️', slot: 'armor',
+        blurb: '철을 엮어 짠 사슬 갑옷.',
+        dominant: 'iron', minMass: 0,
+        stats: { defense: 0.9, hp: 8 }
+    },
+    {
+        id: 'plate_armor', name: '판금 갑옷', icon: '🛡️', slot: 'armor',
+        blurb: '두꺼운 철판을 덧댄 중갑.',
+        dominant: 'iron', minMass: 30,
+        stats: { defense: 1.2, hp: 14 }
+    },
+    {
+        id: 'gilded_mail', name: '황금 갑주', icon: '✨', slot: 'armor',
+        blurb: '금박을 입힌 화려한 갑주. 보기와 달리 제법 단단합니다.',
+        dominant: 'gold', minMass: 0,
+        stats: { defense: 0.85, hp: 10 }
+    },
+    {
+        id: 'radiant_plate', name: '찬란한 갑주', icon: '👑', slot: 'armor',
+        blurb: '순금에 가까운 광채가 흐르는 갑주.',
+        dominant: 'gold', minMass: 70,
+        stats: { defense: 1.05, hp: 16 }
+    },
+    {
+        id: 'mithril_mail', name: '미스릴 갑옷', icon: '💠', slot: 'armor',
+        blurb: '가볍지만 강철보다 단단한 미스릴 갑옷.',
+        dominant: 'mithril', minMass: 0,
+        stats: { defense: 1.3, hp: 12 }
+    },
+    {
+        id: 'abyssal_bulwark', name: '심연 방벽 갑주', icon: '🌌', slot: 'armor',
+        blurb: '미스릴을 아낌없이 두른 최상급 방벽.',
+        dominant: 'mithril', minMass: 120,
+        stats: { defense: 1.7, hp: 22 }
+    },
+
+    // ------------------------------------------------------------ accessory
+    // Small utility bonuses layered on top of traits: luck feeds the same
+    // rare-ore roll as traits' luckBonus, crit/lifesteal combine additively
+    // with the weapon/trait versions in gameLogic.
+    {
+        id: 'lucky_charm', name: '행운의 목각 부적', icon: '🍀', slot: 'accessory',
+        blurb: '소박하지만 은근히 운이 따르는 부적.',
+        dominant: 'coal', minMass: 0,
+        stats: { luck: 1.0, hp: 2 }
+    },
+    {
+        id: 'gleaming_charm', name: '빛나는 행운의 부적', icon: '🌟', slot: 'accessory',
+        blurb: '반들반들 윤이 나는 부적. 운이 한층 더 따릅니다.',
+        dominant: 'coal', minMass: 26,
+        stats: { luck: 1.6, hp: 3 }
+    },
+    {
+        id: 'iron_leech_ring', name: '흡혈의 철 반지', icon: '🩸', slot: 'accessory',
+        blurb: '차가운 철에 새겨진 갈증의 문양.',
+        dominant: 'iron', minMass: 0,
+        stats: { lifesteal: 0.06, hp: 3 }
+    },
+    {
+        id: 'steel_thirst_ring', name: '갈증의 강철 반지', icon: '🩸', slot: 'accessory',
+        blurb: '더 깊이 새겨진 갈증의 문양.',
+        dominant: 'iron', minMass: 30,
+        stats: { lifesteal: 0.1, hp: 5 }
+    },
+    {
+        id: 'gold_earring', name: '황금 귀걸이', icon: '👂', slot: 'accessory',
+        blurb: '치명적인 순간을 노리는 화려한 장신구.',
+        dominant: 'gold', minMass: 0,
+        stats: { crit: 0.05, hp: 2 }
+    },
+    {
+        id: 'radiant_necklace', name: '찬란한 황금 목걸이', icon: '📿', slot: 'accessory',
+        blurb: '보는 순간 빈틈을 파고들게 만드는 목걸이.',
+        dominant: 'gold', minMass: 70,
+        stats: { crit: 0.08, hp: 3 }
+    },
+    {
+        id: 'mithril_talisman', name: '미스릴 부적', icon: '💠', slot: 'accessory',
+        blurb: '운과 정밀함을 함께 벼려낸 미스릴 세공품.',
+        dominant: 'mithril', minMass: 0,
+        stats: { luck: 0.8, crit: 0.03, hp: 4 }
+    },
+    {
+        id: 'abyssal_seal', name: '심연의 인장', icon: '🔮', slot: 'accessory',
+        blurb: '운·치명타·흡혈을 한데 두른 최상급 인장.',
+        dominant: 'mithril', minMass: 120,
+        stats: { luck: 1.2, crit: 0.04, lifesteal: 0.05, hp: 6 }
     }
 ];
 
@@ -122,13 +228,16 @@ export function getDominantOre(mix) {
     return best;
 }
 
-/** Which item this blend forges, before quality is rolled. */
-export function resolveArchetype(mix) {
+export const EQUIP_SLOTS = ['weapon', 'armor', 'accessory'];
+
+/** Which item this blend forges for the chosen slot, before quality is rolled. */
+export function resolveArchetype(mix, slot = 'weapon') {
     const dominant = getDominantOre(mix);
     const score = getMixScore(mix);
-    const candidates = ITEM_ARCHETYPES.filter((item) => item.dominant === dominant && score >= item.minMass);
+    const pool = ITEM_ARCHETYPES.filter((item) => item.slot === slot);
+    const candidates = pool.filter((item) => item.dominant === dominant && score >= item.minMass);
     if (candidates.length === 0) {
-        return ITEM_ARCHETYPES.find((item) => item.dominant === dominant) || ITEM_ARCHETYPES[0];
+        return pool.find((item) => item.dominant === dominant) || pool[0] || ITEM_ARCHETYPES[0];
     }
     return candidates[candidates.length - 1];
 }
@@ -198,10 +307,10 @@ export function getSuccessChance(mix, luck = 1) {
 }
 
 /** Preview shown in the workshop before the player commits the ore. */
-export function previewCraft(mix, luck = 1) {
+export function previewCraft(mix, luck = 1, slot = 'weapon') {
     const mass = getMixMass(mix);
     const score = getMixScore(mix);
-    const archetype = resolveArchetype(mix);
+    const archetype = resolveArchetype(mix, slot);
     const tier = getTierForScore(score);
     const blend = getBlendQuality(mix);
     const chance = getSuccessChance(mix, luck);
@@ -223,22 +332,34 @@ export function buildItemName(archetype, tier) {
     return tier.prefix ? `${tier.prefix} ${archetype.name}` : archetype.name;
 }
 
+// Stat keys that scale with the mix's raw material score, the same way a
+// weapon's attack does. Everything else (crit/luck/lifesteal) is a gentler,
+// mostly tier-driven percentage-style bonus.
+const SCALED_STAT_KEYS = new Set(['attack', 'defense']);
+
 export function buildItemStats(archetype, tier, score) {
     const scale = Math.pow(Math.max(1, score), 0.62);
-    return {
-        attack: Math.max(1, Math.round(scale * archetype.stats.attack * tier.powerMult)),
-        crit: Math.round(archetype.stats.crit * tier.powerMult * 1000) / 1000,
-        hp: Math.round(archetype.stats.hp * tier.powerMult)
-    };
+    const stats = {};
+    Object.entries(archetype.stats).forEach(([key, base]) => {
+        if (key === 'hp') {
+            stats.hp = Math.round(base * tier.powerMult);
+        } else if (SCALED_STAT_KEYS.has(key)) {
+            stats[key] = Math.max(1, Math.round(scale * base * tier.powerMult));
+        } else {
+            // crit / luck / lifesteal etc: gentle, tier-driven percentages.
+            stats[key] = Math.round(base * tier.powerMult * 1000) / 1000;
+        }
+    });
+    return stats;
 }
 
 /**
  * Perform the craft. Returns the forged item plus whether the roll succeeded.
  * A failure drops the result one or two tiers but never returns nothing.
  */
-export function forgeItem(mix, luck = 1) {
+export function forgeItem(mix, luck = 1, slot = 'weapon') {
     const score = getMixScore(mix);
-    const archetype = resolveArchetype(mix);
+    const archetype = resolveArchetype(mix, slot);
     const naturalTier = getTierForScore(score);
     const chance = getSuccessChance(mix, luck);
     const roll = Math.random();
@@ -264,6 +385,7 @@ export function forgeItem(mix, luck = 1) {
     const item = {
         id: `${archetype.id}-${tier.id}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
         archetypeId: archetype.id,
+        slot: archetype.slot,
         name: buildItemName(archetype, tier),
         icon: archetype.icon,
         blurb: archetype.blurb,
@@ -285,8 +407,14 @@ export function forgeItem(mix, luck = 1) {
     };
 }
 
-/** Total combat value used to compare two pieces of equipment. */
+/** Total combat value used to compare two pieces of equipment (same-slot only). */
 export function getItemPower(item) {
-    if (!item) return 0;
-    return item.stats.attack + item.stats.crit * 120 + item.stats.hp * 0.6;
+    if (!item || !item.stats) return 0;
+    const s = item.stats;
+    return (s.attack || 0)
+        + (s.defense || 0) * 1.4
+        + (s.crit || 0) * 120
+        + (s.hp || 0) * 0.6
+        + (s.luck || 0) * 15
+        + (s.lifesteal || 0) * 100;
 }
