@@ -15,6 +15,7 @@ import {
     ENEMY_TYPES,
     getWaveComposition,
     scaleEnemyStats,
+    isEliteWave,
     createWeaponMesh,
     createFistMesh,
     CombatFX
@@ -46,6 +47,15 @@ const FLOOR_THEMES = {
         lightColor: new THREE.Color(0xff7a4a),
         floorColor: new THREE.Color(0xffcaa8),
         oreBonus: { gold: 2.2 }
+    },
+    // No ore here at all — see spawnTreasureRoom()/openChest(). The leader's
+    // one innate trait is only ever awakened by opening a chest on this floor.
+    25: {
+        name: '드래곤의 둥지',
+        desc: '흩어진 황금 상자 10개 중 하나를 선택해 여세요. 그 안에 태생 특성이 잠들어 있습니다.',
+        lightColor: new THREE.Color(0xffd166),
+        floorColor: new THREE.Color(0xe8c988),
+        oreBonus: {}
     }
 };
 
@@ -121,6 +131,8 @@ export class Game {
         this.nodes = [];
         this.workers = [];
         this.enemies = [];
+        // B25F's dragon hoard: ten golden chests replacing the usual veins.
+        this.chests = [];
         // Other leaders sharing this room: id -> visual mesh.
         this.peerMeshes = {};
         
@@ -161,7 +173,13 @@ export class Game {
         this.miningHitTimer = 0;
         this.quest = {
             stage: 'coal',
-            coalGoal: 10
+            coalGoal: 10,
+            // Some tutorial steps stop just short of the next stage once their
+            // condition is met, so the player claims the reward on purpose
+            // instead of it firing silently in the background.
+            rewardReady: false,
+            // Craft count toward the 'craft3' step specifically.
+            craftCount: 0
         };
 
         // Leader stats: strength lowers the swings needed per ore, speed shortens
@@ -198,6 +216,17 @@ export class Game {
         this.ascending = false;
         this.floorTheme = FLOOR_THEMES[this.depth] || null;
 
+        // ------------------------------------------------------ surface loop
+        // Reaching daylight is a decisive battle, not a quiet stop: the mine's
+        // surface garrison must be beaten before the shaft can reopen for a
+        // fresh, slightly harder descent (a light NG+, on top of legacy points).
+        this.finalBossActive = false;
+        this.surfaceConquered = false;
+        this.cycle = 0;
+
+        // Spent on rerollTrait() to swap the one innate trait for a fresh roll.
+        this.traitRerollTickets = 0;
+
         // ----------------------------------------------------- wave rewards
         // Clearing a defence wave hands the player a choice rather than a
         // handout, so victory rolls straight into the next operational call:
@@ -220,6 +249,7 @@ export class Game {
         };
         this.saveTimer = 0;
         this.pendingWorkerCount = 0;
+        this.pendingWorkerXp = [];
         this.hasSavedRun = false;
 
         // Innate traits are rolled once per leader and drive real gameplay
@@ -236,6 +266,10 @@ export class Game {
             });
             this.applyMetaStartingBonuses();
         }
+
+        // Covers a save that had already climbed past B25F before this trait
+        // gate existed; a fresh run simply stays trait-less until it gets there.
+        this.checkTraitUnlock();
 
         // Equipment HP is part of the max, so recompute once state is loaded.
         this.maxPlayerHp = this.baseMaxHp + this.traitEffects.maxHpBonus + this.getGearHpBonus();
@@ -257,9 +291,10 @@ export class Game {
         this.initPlayer();
         this.initControls();
 
-        // Re-recruit the workers that were part of the squad on the last visit.
+        // Re-recruit the workers that were part of the squad on the last visit,
+        // each rejoining at the individual level it had earned.
         for (let i = 0; i < this.pendingWorkerCount; i++) {
-            this.addWorker();
+            this.addWorker(this.pendingWorkerXp[i] || 0);
         }
         this.setSquadCommand(this.savedCommand || this.squadCommand);
 
@@ -268,6 +303,10 @@ export class Game {
         // A reward left unclaimed at the last save is offered again on return.
         if (this.rewardPending) {
             setTimeout(() => this.offerWaveReward(this.rewardPending.wave), 800);
+        }
+        // A leader who reloads mid-surface, boss not yet beaten, faces it again.
+        if (this.depth <= 0 && !this.surfaceConquered) {
+            setTimeout(() => this.startFinalBossWave(), 1200);
         }
         this.persist();
 
@@ -283,20 +322,68 @@ export class Game {
     }
 
     // Innate traits are stored by id, so a returning leader is exactly the same
-    // slime. Unknown ids (from an older catalog) are simply skipped.
+    // slime. Unknown ids (from an older catalog) are simply skipped. A leader
+    // is otherwise born without a trait; it awakens exactly one at B25F's
+    // dragon hoard (see checkTraitUnlock) — unless the "추가 태생 특성" legacy
+    // unlock grants one immediately at birth instead of requiring the climb.
     restoreTraits(saved) {
         const ids = Array.isArray(saved?.traitIds) ? saved.traitIds : null;
         if (ids && ids.length > 0) {
             const restored = ids.map((id) => getTraitById(id)).filter(Boolean);
             if (restored.length > 0) return restored;
         }
-        return rollTraits(this.getStartingTraitCount());
+        if (!saved && this.meta?.upgrades?.startingTraitBonus) return rollTraits(1);
+        return [];
     }
 
-    // The "추가 태생 특성" legacy unlock gives every future leader one more
-    // trait slot from birth.
-    getStartingTraitCount() {
-        return 3 + (this.meta?.upgrades?.startingTraitBonus ? 1 : 0);
+    // Grants the leader's single innate trait once B25F is reached (or the
+    // moment a returning save that already passed B25F loads with none yet).
+    checkTraitUnlock() {
+        if (this.traits.length > 0) return;
+        if (this.depth > 25) return;
+
+        const granted = rollTraits(1);
+        if (granted.length === 0) return;
+
+        this.traits = granted;
+        this.traitEffects = buildTraitEffects(this.traits);
+        this.maxPlayerHp = this.baseMaxHp + this.traitEffects.maxHpBonus + this.getGearHpBonus();
+        if (this.playerData) this.playerData.traits = this.traits.map((trait) => trait.name);
+
+        Object.entries(this.traitEffects.startingBonus).forEach(([ore, amount]) => {
+            if (amount > 0) this.inventory[ore] += amount;
+        });
+
+        const trait = this.traits[0];
+        this.app.ui.showBanner('◆ 태생 특성 각성', `${trait.name} · ${trait.description}`, '#d5b3ff');
+        this.pushCombatFeed(`태생 특성을 각성했습니다: ${trait.name}`, '#d5b3ff');
+        this.persist();
+    }
+
+    /** Spends one reroll ticket to swap the leader's single trait for a new one. */
+    rerollTrait() {
+        if ((this.traitRerollTickets || 0) <= 0) {
+            return { ok: false, reason: '특성 변경권이 없습니다.' };
+        }
+        if (this.traits.length === 0) {
+            return { ok: false, reason: '아직 각성한 태생 특성이 없습니다.' };
+        }
+
+        const currentId = this.traits[0]?.id;
+        const candidates = rollTraits(2).filter((trait) => trait.id !== currentId);
+        const next = candidates[0] || rollTraits(1)[0];
+        if (!next) return { ok: false, reason: '변경할 특성을 찾지 못했습니다.' };
+
+        this.traitRerollTickets -= 1;
+        this.traits = [next];
+        this.traitEffects = buildTraitEffects(this.traits);
+        this.refreshMaxHp();
+        this.playerData.traits = this.traits.map((trait) => trait.name);
+
+        this.app.ui.showBanner('◆ 태생 특성 변경', `${next.name} · ${next.description}`, '#d5b3ff');
+        this.pushCombatFeed(`태생 특성을 변경했습니다: ${next.name}`, '#d5b3ff');
+        this.persist();
+        return { ok: true, trait: next };
     }
 
     // Applied only to a brand-new leader (no save yet) — legacy unlocks bought
@@ -335,16 +422,31 @@ export class Game {
         const hp = Number(saved.hp);
         if (Number.isFinite(hp) && hp > 0) this.savedHp = hp;
 
-        if (['coal', 'recruit', 'complete'].includes(saved.quest?.stage)) {
+        if ([
+            'coal', 'recruit', 'reach29', 'iron20', 'craft', 'reach27',
+            'gold15', 'reach26', 'craft3', 'trait25', 'waveDefense', 'complete'
+        ].includes(saved.quest?.stage)) {
             this.quest.stage = saved.quest.stage;
         }
         const coalGoal = Number(saved.quest?.coalGoal);
         if (Number.isFinite(coalGoal) && coalGoal > 0) this.quest.coalGoal = Math.floor(coalGoal);
+        if (typeof saved.quest?.rewardReady === 'boolean') this.quest.rewardReady = saved.quest.rewardReady;
+        const craftCount = Number(saved.quest?.craftCount);
+        if (Number.isFinite(craftCount) && craftCount >= 0) this.quest.craftCount = Math.floor(craftCount);
+
+        const rerollTickets = Number(saved.traitRerollTickets);
+        if (Number.isFinite(rerollTickets) && rerollTickets >= 0) this.traitRerollTickets = Math.floor(rerollTickets);
+        const cycle = Number(saved.cycle);
+        if (Number.isFinite(cycle) && cycle >= 0) this.cycle = Math.floor(cycle);
+        if (typeof saved.surfaceConquered === 'boolean') this.surfaceConquered = saved.surfaceConquered;
 
         const workerCount = Number(saved.workerCount);
         // Sanity bound only; addWorker() enforces the real cap once facilities
         // are restored (base 6 + up to 4 barracks levels).
         if (Number.isFinite(workerCount)) this.pendingWorkerCount = Math.max(0, Math.min(10, Math.floor(workerCount)));
+        if (Array.isArray(saved.workerXp)) {
+            this.pendingWorkerXp = saved.workerXp.map((xp) => Math.max(0, Number(xp) || 0));
+        }
 
         if (['mine', 'attack', 'defend'].includes(saved.squadCommand)) {
             this.savedCommand = saved.squadCommand;
@@ -402,13 +504,22 @@ export class Game {
         return {
             profileId: this.profileId,
             traitIds: this.traits.map((trait) => trait.id),
+            traitRerollTickets: this.traitRerollTickets,
             inventory: { ...this.inventory },
             stats: { ...this.stats },
             attackPower: this.attackPower,
             maxPlayerHp: this.maxPlayerHp,
             hp: this.playerData ? this.playerData.hp : this.maxPlayerHp,
-            quest: { stage: this.quest.stage, coalGoal: this.quest.coalGoal },
+            quest: {
+                stage: this.quest.stage,
+                coalGoal: this.quest.coalGoal,
+                rewardReady: this.quest.rewardReady,
+                craftCount: this.quest.craftCount
+            },
+            cycle: this.cycle,
+            surfaceConquered: this.surfaceConquered,
             workerCount: this.workers.length,
+            workerXp: this.workers.map((worker) => worker.userData.workerXp || 0),
             squadCommand: this.squadCommand,
             totalOreMined: this.totalOreMined || 0,
             equipped: this.equipped,
@@ -438,7 +549,9 @@ export class Game {
                 fresh: true,
                 title: '새로운 광부의 탄생',
                 lines: [
-                    `태생 특성 ${this.traits.length}개를 가지고 광산에 들어섭니다.`,
+                    this.traits.length > 0
+                        ? `태생 특성 ${this.traits.length}개를 가지고 광산에 들어섭니다.`
+                        : '태생 특성 없이 광산에 들어섭니다. 지하 25층 드래곤의 둥지에서 황금 상자를 열면 하나를 얻습니다.',
                     '진행 상황은 자동으로 저장됩니다.'
                 ]
             };
@@ -477,7 +590,7 @@ export class Game {
         },
         startingTraitBonus: {
             maxLevel: 1, cost: [60],
-            label: '추가 태생 특성', hint: '새 광부가 특성을 3개 대신 4개 갖고 태어납니다.'
+            label: '각성한 채로 태어나기', hint: '새 광부가 지하 25층까지 가지 않아도 태생 특성을 갖고 태어납니다.'
         },
         startingOreTier: {
             maxLevel: 3, cost: [20, 35, 55],
@@ -556,7 +669,8 @@ export class Game {
             })),
             categories: TRAIT_CATEGORIES,
             rarities: RARITY_INFO,
-            total: TRAITS.length
+            total: TRAITS.length,
+            rerollTickets: this.traitRerollTickets || 0
         };
     }
 
@@ -606,16 +720,21 @@ export class Game {
         dirLight.shadow.camera.bottom = -25;
         this.scene.add(dirLight);
 
-        // 첫 퀘스트를 안정적으로 진행할 수 있도록 석탄 노드를 충분히 배치합니다.
-        // 이미 석탄 퀘스트를 마친 복귀 플레이어는 일반 광맥 위주로 배치합니다.
-        // 층이 올라갈수록 광맥 수도 함께 늘어납니다.
-        const totalNodes = this.getFloorNodeCount();
-        const coalNodes = this.quest.stage === 'coal' ? 6 : 2;
-        for (let i = 0; i < coalNodes; i++) {
-            this.spawnNode('coal', { minDistance: 5 });
-        }
-        for (let i = 0; i < Math.max(0, totalNodes - coalNodes); i++) {
-            this.spawnNode();
+        if (this.depth === 25) {
+            // The dragon's hoard: no ore here, just the ten chests to choose from.
+            this.spawnTreasureRoom();
+        } else {
+            // 첫 퀘스트를 안정적으로 진행할 수 있도록 석탄 노드를 충분히 배치합니다.
+            // 이미 석탄 퀘스트를 마친 복귀 플레이어는 일반 광맥 위주로 배치합니다.
+            // 층이 올라갈수록 광맥 수도 함께 늘어납니다.
+            const totalNodes = this.getFloorNodeCount();
+            const coalNodes = this.quest.stage === 'coal' ? 6 : 2;
+            for (let i = 0; i < coalNodes; i++) {
+                this.spawnNode('coal', { minDistance: 5 });
+            }
+            for (let i = 0; i < Math.max(0, totalNodes - coalNodes); i++) {
+                this.spawnNode();
+            }
         }
         this.applyDepthAtmosphere();
 
@@ -625,7 +744,7 @@ export class Game {
             this.waveEnemyTotal = 2;
             this.spawnEnemy('crawler', { distance: 13, isQuestEnemy: true });
             this.spawnEnemy('crawler', { distance: 15, isQuestEnemy: true });
-        } else if (this.quest.stage === 'complete') {
+        } else if (this.quest.stage === 'complete' || this.quest.stage === 'waveDefense') {
             // Waves are opt-in, so a returning player simply lands in peacetime
             // and starts the next defence run whenever they choose.
             this.waveActive = false;
@@ -700,12 +819,16 @@ export class Game {
 
     /** Deep rock is loose; the crust near the surface is compressed and old. */
     getDepthHardness() {
-        // 1.00x at B30F rising to about 3.9x just under the surface.
-        return 1 + this.getFloorsClimbed() * 0.1;
+        // 1.00x at B30F rising to about 3.9x just under the surface, plus a
+        // further 15% per surface conquest so each reopened shaft is a real
+        // step up rather than a cosmetic reset.
+        return (1 + this.getFloorsClimbed() * 0.1) * (1 + this.cycle * 0.15);
     }
 
     /** Veins to clear before the shaft up opens. Bigger the higher you climb. */
     getFloorQuota() {
+        // The hoard floor clears the instant one chest is chosen.
+        if (this.depth === 25) return 1;
         return 8 + Math.round(this.getFloorsClimbed() * 1.4);
     }
 
@@ -740,9 +863,16 @@ export class Game {
         // Clear the stripped floor.
         this.nodes.forEach((node) => this.scene.remove(node));
         this.nodes = [];
+        this.chests.forEach((chest) => this.scene.remove(chest));
+        this.chests = [];
         this.playerData.miningTarget = null;
 
-        if (this.depth > 0) {
+        if (this.depth === 25) {
+            this.spawnTreasureRoom();
+            this.app.ui.showBanner(`◆ ${this.floorTheme.name}`, this.floorTheme.desc, '#ffd166');
+            this.pushCombatFeed(`${this.getFloorLabel()} — ${this.floorTheme.name}에 진입했습니다.`, '#ffd166');
+            this.app.multiplayer.broadcastEvent?.('floor_ascend', { floor: this.depth });
+        } else if (this.depth > 0) {
             const count = this.getFloorNodeCount();
             for (let i = 0; i < count; i++) this.spawnNode();
             if (this.floorTheme) {
@@ -761,13 +891,16 @@ export class Game {
             }
             this.app.multiplayer.broadcastEvent?.('floor_ascend', { floor: this.depth });
         } else {
-            // Daylight. Nothing left above, so the mine stops generating.
-            this.app.ui.showBanner('☀ 지상 도달', '30개 층을 모두 뚫고 올라왔습니다', '#ffe39a');
-            this.pushCombatFeed('☀ 마침내 지상에 도달했습니다!', '#ffe39a');
+            // Daylight. The surface garrison still has to be beaten before a
+            // fresh (harder) shaft can reopen, but the climb itself already
+            // banks legacy points for whoever comes after this leader.
+            this.app.ui.showBanner('☀ 지상 도달', '광산 점령전이 곧 시작됩니다!', '#ffe39a');
+            this.pushCombatFeed('☀ 마침내 지상에 도달했습니다! 광산 점령전이 시작됩니다.', '#ffe39a');
             const bonus = this.awardLegacyRunPoints();
             if (bonus > 0) {
                 this.pushCombatFeed(`유산 포인트 +${bonus} 획득! 다음 광부에게 물려줄 수 있습니다.`, '#c9a6ff');
             }
+            if (!this.surfaceConquered) setTimeout(() => this.startFinalBossWave(), 1600);
         }
 
         this.applyDepthAtmosphere();
@@ -867,6 +1000,95 @@ export class Game {
         this.scene.add(model);
         this.nodes.push(model);
         return model;
+    }
+
+    // A simple procedural chest — the hoard room needs no ore-vein GLB, just
+    // something gold and clickable.
+    createTreasureChest() {
+        const group = new THREE.Group();
+        const woodMat = new THREE.MeshStandardMaterial({ color: 0x4a2f1c, roughness: 0.75 });
+        const goldMat = new THREE.MeshStandardMaterial({
+            color: 0xffd166, metalness: 0.85, roughness: 0.25,
+            emissive: 0x5a3a10, emissiveIntensity: 0.4
+        });
+
+        const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.55, 0.6), woodMat);
+        base.position.y = 0.28;
+        base.castShadow = true;
+        group.add(base);
+
+        const lid = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.3, 0.64), woodMat);
+        lid.position.y = 0.62;
+        lid.castShadow = true;
+        group.add(lid);
+
+        const trim = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.08, 0.68), goldMat);
+        trim.position.y = 0.47;
+        group.add(trim);
+
+        const lock = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 0.1), goldMat);
+        lock.position.set(0, 0.42, 0.33);
+        group.add(lock);
+
+        return group;
+    }
+
+    /**
+     * B25F is the dragon's hoard: ten golden chests scattered around the
+     * floor, and the leader picks exactly one to open (see openChest).
+     */
+    spawnTreasureRoom() {
+        this.chests.forEach((chest) => this.scene.remove(chest));
+        this.chests = [];
+
+        const count = 10;
+        for (let i = 0; i < count; i++) {
+            const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+            const distance = 6 + Math.random() * 10;
+            const chest = this.createTreasureChest();
+            chest.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
+            chest.rotation.y = Math.random() * Math.PI * 2;
+            chest.userData = { type: 'chest', opened: false };
+            chest.traverse((child) => { child.userData.type = 'chestPart'; });
+            this.scene.add(chest);
+            this.chests.push(chest);
+        }
+    }
+
+    /**
+     * Opening any one of the ten chests is the choice: it awakens the
+     * leader's innate trait (see checkTraitUnlock) and clears the floor. The
+     * other nine were never real, so they vanish the instant one is chosen.
+     */
+    openChest(chest) {
+        if (!chest || chest.userData.opened || this.depth !== 25) return;
+        chest.userData.opened = true;
+
+        const hadTrait = this.traits.length > 0;
+        this.checkTraitUnlock();
+
+        if (hadTrait) {
+            // An older leader already carries its one trait — the hoard still pays out.
+            const gold = 20 + Math.floor(Math.random() * 15);
+            const mithril = 2 + Math.floor(Math.random() * 3);
+            this.inventory.gold += gold;
+            this.inventory.mithril += mithril;
+            this.pushCombatFeed(`상자에서 금 ${gold} · 미스릴 ${mithril}을(를) 발견했습니다!`, '#ffd166');
+        }
+
+        this.combatFX.spawnBurst(chest.position, { color: 0xffd166, radius: 0.9, expand: 3.2, life: 0.6, height: 1 });
+        this.combatFX.spawnFlash(chest.position, 0xffd166, 40, 0.4);
+        this.app.addShake(0.4);
+        this.playSound('mining-hit');
+
+        // The chosen chest is removed too — the floor advances immediately,
+        // so there is no lingering "opened" pose to show off.
+        this.chests.forEach((entry) => this.scene.remove(entry));
+        this.chests = [];
+
+        this.floorNodesCleared = this.getFloorQuota();
+        if (this.isFloorCleared()) this.ascendFloor();
+        this.persist();
     }
 
     // Floating bar that hovers above a monster and always faces the camera.
@@ -1015,8 +1237,13 @@ export class Game {
             }
         });
 
-        this.pushCombatFeed(`웨이브 ${wave} 시작! 몬스터 ${total}마리가 몰려옵니다.`, '#ff9c9c');
-        this.app.ui.showWaveBanner(wave, total);
+        if (isEliteWave(wave)) {
+            this.pushCombatFeed(`⚠ 정예 웨이브 ${wave}! 광산의 군주가 나타납니다.`, '#ff7a4a');
+            this.app.ui.showBanner(`⚠ 정예 웨이브 ${wave}`, `강력한 적 ${total}마리가 몰려옵니다!`, '#ff7a4a');
+        } else {
+            this.pushCombatFeed(`웨이브 ${wave} 시작! 몬스터 ${total}마리가 몰려옵니다.`, '#ff9c9c');
+            this.app.ui.showWaveBanner(wave, total);
+        }
         this.persist();
     }
 
@@ -1102,7 +1329,7 @@ export class Game {
         this.weaponArm.rotation.set(-0.35, 0, -0.5);
     }
 
-    addWorker() {
+    addWorker(initialXp = 0) {
         if (this.workers.length >= this.getWorkerCap()) return false;
 
         const index = this.workers.length;
@@ -1120,6 +1347,9 @@ export class Game {
         worker.userData.isMining = false;
         worker.userData.squadRole = this.squadCommand;
         worker.userData.attackCooldown = 0;
+        // Individual growth: a worker gets a little sharper the more it mines
+        // and fights, on top of the global trait/boon/facility multipliers.
+        worker.userData.workerXp = Math.max(0, initialXp);
         worker.traverse((child) => {
             child.castShadow = true;
         });
@@ -1129,6 +1359,16 @@ export class Game {
         this.scene.add(worker);
         this.workers.push(worker);
         return true;
+    }
+
+    // Level 1 at 0 XP, +1 every 40 XP, capped at 10 so late-game squads don't
+    // dwarf the leader's own growth.
+    getWorkerLevel(worker) {
+        return Math.min(10, 1 + Math.floor((worker.userData.workerXp || 0) / 40));
+    }
+
+    getWorkerLevelMult(worker) {
+        return 1 + (this.getWorkerLevel(worker) - 1) * 0.05;
     }
 
     initControls() {
@@ -1147,6 +1387,10 @@ export class Game {
         });
         // Post-victory reward card selection.
         this.app.ui.setWaveRewardHandler((choiceId) => this.claimWaveReward(choiceId));
+        // Tutorial-quest "claim reward" button in the quest panel.
+        this.app.ui.setQuestRewardHandler(() => this.claimQuestReward());
+        // Status window: spend a ticket to reroll the leader's innate trait.
+        this.app.ui.setTraitRerollHandler(() => this.rerollTrait());
         // Crafting workshop: the UI owns the mix, gameLogic owns the forge.
         this.app.ui.setCraftHandlers({
             preview: (mix, slot) => this.getCraftData(mix, slot),
@@ -1197,6 +1441,17 @@ export class Game {
             return;
         }
 
+        // The dragon's hoard: clicking a chest is an instant, decisive choice.
+        const intersectsChests = this.raycaster.intersectObjects(this.chests, true);
+        if (intersectsChests.length > 0) {
+            let chest = intersectsChests[0].object;
+            while (chest.parent && !this.chests.includes(chest)) chest = chest.parent;
+            if (this.chests.includes(chest) && !chest.userData.opened) {
+                this.openChest(chest);
+            }
+            return;
+        }
+
         const intersectsNodes = this.raycaster.intersectObjects(this.nodes, true);
         if (intersectsNodes.length > 0) {
             let target = intersectsNodes[0].object;
@@ -1232,6 +1487,19 @@ export class Game {
     }
 
     getQuestData() {
+        // The dragon's hoard always takes priority: a leader standing on
+        // B25F sees the chest choice, whatever tutorial step it is nominally on.
+        if (this.depth === 25) {
+            return {
+                stage: 'climb',
+                title: '드래곤의 둥지',
+                description: '흩어진 황금 상자 10개 중 하나를 선택해 여세요. 그 안에 태생 특성이 잠들어 있습니다.',
+                progress: this.floorNodesCleared,
+                target: this.getFloorQuota(),
+                accent: '#ffd166'
+            };
+        }
+
         if (this.quest.stage === 'coal') {
             return {
                 stage: 'coal',
@@ -1252,6 +1520,193 @@ export class Game {
                 accent: '#ffcf8a'
             };
         }
+        if (this.quest.stage === 'reach29') {
+            return {
+                stage: 'reach29',
+                title: '더 깊은 곳으로',
+                description: this.quest.rewardReady
+                    ? '지하 29층에 도착했습니다! 보상을 받으세요.'
+                    : `지하 29층에 도착하세요. 현재 ${this.getFloorLabel()}`,
+                progress: this.depth <= 29 ? 1 : 0,
+                target: 1,
+                rewardReady: this.quest.rewardReady,
+                accent: this.quest.rewardReady ? '#8fd9a8' : '#8fe4ff'
+            };
+        }
+        if (this.quest.stage === 'iron20') {
+            return {
+                stage: 'iron20',
+                title: '철을 벼려서',
+                description: this.quest.rewardReady
+                    ? '철광석 20개를 모았습니다! 보상을 받으세요.'
+                    : '철광석을 20개 모으세요.',
+                progress: Math.min(this.inventory.iron, 20),
+                target: 20,
+                rewardReady: this.quest.rewardReady,
+                accent: this.quest.rewardReady ? '#8fd9a8' : '#cdd6e0'
+            };
+        }
+        if (this.quest.stage === 'craft') {
+            return {
+                stage: 'craft',
+                title: '첫 제작',
+                description: '대장간에서 아이템을 하나 제작해보세요. 단축키 I 또는 C.',
+                progress: 0,
+                target: 1,
+                accent: '#ffe39a'
+            };
+        }
+        if (this.quest.stage === 'reach27') {
+            return {
+                stage: 'reach27',
+                title: '더 깊은 곳으로',
+                description: this.quest.rewardReady
+                    ? '지하 27층에 도착했습니다! 보상을 받으세요.'
+                    : `지하 27층에 도착하세요. 현재 ${this.getFloorLabel()}`,
+                progress: this.depth <= 27 ? 1 : 0,
+                target: 1,
+                rewardReady: this.quest.rewardReady,
+                accent: this.quest.rewardReady ? '#8fd9a8' : '#8fe4ff'
+            };
+        }
+        if (this.quest.stage === 'gold15') {
+            return {
+                stage: 'gold15',
+                title: '금맥을 찾아서',
+                description: this.quest.rewardReady
+                    ? '금광석 15개를 모았습니다! 보상을 받으세요.'
+                    : '금광석을 15개 모으세요.',
+                progress: Math.min(this.inventory.gold, 15),
+                target: 15,
+                rewardReady: this.quest.rewardReady,
+                accent: this.quest.rewardReady ? '#8fd9a8' : '#ffd166'
+            };
+        }
+        if (this.quest.stage === 'reach26') {
+            return {
+                stage: 'reach26',
+                title: '더 깊은 곳으로',
+                description: this.quest.rewardReady
+                    ? '지하 26층에 도착했습니다! 보상을 받으세요.'
+                    : `지하 26층에 도착하세요. 현재 ${this.getFloorLabel()}`,
+                progress: this.depth <= 26 ? 1 : 0,
+                target: 1,
+                rewardReady: this.quest.rewardReady,
+                accent: this.quest.rewardReady ? '#8fd9a8' : '#8fe4ff'
+            };
+        }
+        if (this.quest.stage === 'craft3') {
+            const count = Math.min(3, this.quest.craftCount || 0);
+            return {
+                stage: 'craft3',
+                title: '대장장이 수련',
+                description: `무기를 3번 제작해보세요. 단축키 I 또는 C. (${count}/3)`,
+                progress: count,
+                target: 3,
+                accent: '#ffe39a'
+            };
+        }
+        if (this.quest.stage === 'trait25') {
+            if (this.quest.rewardReady) {
+                return {
+                    stage: 'trait25',
+                    title: '드래곤의 둥지로',
+                    description: '태생 특성을 얻었습니다! 보상을 받으세요.',
+                    progress: 1,
+                    target: 1,
+                    rewardReady: true,
+                    accent: '#8fd9a8'
+                };
+            }
+            return {
+                stage: 'trait25',
+                title: '드래곤의 둥지로',
+                description: this.depth > 25
+                    ? `지하 25층 드래곤의 둥지로 내려가 태생 특성을 얻으세요. 현재 ${this.getFloorLabel()}`
+                    : '황금 상자 하나를 열어 태생 특성을 얻으세요.',
+                progress: 0,
+                target: 1,
+                accent: '#ffd166'
+            };
+        }
+        if (this.quest.stage === 'waveDefense') {
+            if (this.quest.rewardReady) {
+                return {
+                    stage: 'waveDefense',
+                    title: '첫 방어전',
+                    description: '웨이브를 막아냈습니다! 보상을 받으세요.',
+                    progress: 1,
+                    target: 1,
+                    rewardReady: true,
+                    accent: '#8fd9a8'
+                };
+            }
+            if (this.depth > 24) {
+                return {
+                    stage: 'waveDefense',
+                    title: '방어선 구축',
+                    description: `지하 24층까지 내려가면 광산 방어를 시작할 수 있습니다. 현재 ${this.getFloorLabel()}`,
+                    progress: 0,
+                    target: 1,
+                    accent: '#8fe4ff'
+                };
+            }
+            return {
+                stage: 'waveDefense',
+                title: '첫 방어전',
+                description: '지하 24층에 도착했습니다! 메뉴에서 광산 방어를 시작해 웨이브를 막아내세요.',
+                progress: 0,
+                target: 1,
+                accent: '#ff9c9c'
+            };
+        }
+
+        // 'complete': the tutorial chain is done. Floors above B24F still
+        // climb one at a time; B24F and below unlock the defence waves.
+        if (this.depth > 0) {
+            const fromLabel = this.getFloorLabel(this.depth);
+            const toLabel = this.getFloorLabel(this.depth - 1);
+            return {
+                stage: 'climb',
+                title: `${fromLabel}에서 ${toLabel}으로`,
+                description: `이 층의 광맥을 ${this.getFloorQuota()}개 캐내 다음 층으로 올라가세요.`,
+                progress: this.floorNodesCleared,
+                target: this.getFloorQuota(),
+                accent: '#8fe4ff'
+            };
+        }
+
+        if (this.finalBossActive) {
+            return {
+                stage: 'complete',
+                title: '⚔ 광산 점령전',
+                description: `지상의 지배자를 물리치세요! 남은 적 ${this.enemies.length}마리`,
+                progress: Math.max(0, this.waveEnemyTotal - this.enemies.length),
+                target: Math.max(1, this.waveEnemyTotal || 1),
+                accent: '#ff7a4a'
+            };
+        }
+        if (!this.surfaceConquered) {
+            return {
+                stage: 'complete',
+                title: '☀ 지상 도달',
+                description: '광산 점령전이 곧 시작됩니다.',
+                progress: 0,
+                target: 1,
+                accent: '#ffe39a'
+            };
+        }
+        if (this.surfaceConquered) {
+            return {
+                stage: 'complete',
+                title: '★ 광산 점령 완료',
+                description: '더 단단해진 새 광산이 곧 지하 30층에 열립니다.',
+                progress: 1,
+                target: 1,
+                accent: '#ffe39a'
+            };
+        }
+
         return {
             stage: 'complete',
             title: `광산 방어 · 웨이브 ${Math.max(1, this.wave)}`,
@@ -1264,6 +1719,109 @@ export class Game {
             target: Math.max(1, this.waveEnemyTotal || 1),
             accent: this.waveActive ? '#ff9c9c' : '#b7f3ff'
         };
+    }
+
+    /** Announces a tutorial-chain transition with a banner and feed line. */
+    advanceTutorialQuest(nextStage, title, subtitle) {
+        this.quest.stage = nextStage;
+        this.app.ui.showBanner(title, subtitle, '#cbb8e8');
+        this.pushCombatFeed(subtitle, '#cbb8e8');
+        this.persist();
+    }
+
+    /**
+     * Runs every frame. Some tutorial steps are simple threshold checks
+     * against state that can already be true the moment the step becomes
+     * current (the player may have out-mined the floor quota while still on
+     * an earlier quest), so they are polled here instead of only reacting to
+     * the event that usually satisfies them.
+     */
+    updateQuestProgress() {
+        if (this.quest.stage === 'coal') {
+            this.completeCoalQuest();
+            return;
+        }
+        if (this.quest.rewardReady) return;
+        const done =
+            (this.quest.stage === 'reach29' && this.depth <= 29) ||
+            (this.quest.stage === 'iron20' && this.inventory.iron >= 20) ||
+            (this.quest.stage === 'reach27' && this.depth <= 27) ||
+            (this.quest.stage === 'gold15' && this.inventory.gold >= 15) ||
+            (this.quest.stage === 'reach26' && this.depth <= 26) ||
+            (this.quest.stage === 'trait25' && this.traits.length > 0);
+        if (!done) return;
+
+        // The condition is met, but the stage does not advance until the
+        // player actually presses the reward button in the quest panel.
+        this.quest.rewardReady = true;
+        this.pushCombatFeed('퀘스트 목표 달성! 보상을 받으세요.', '#8fd9a8');
+        this.persist();
+    }
+
+    /** Claims the current tutorial quest's reward and advances the chain. */
+    claimQuestReward() {
+        if (!this.quest.rewardReady) return { ok: false };
+        this.quest.rewardReady = false;
+
+        let message;
+        let nextStage;
+        let nextGoal;
+
+        if (this.quest.stage === 'reach29') {
+            if (this.addWorker()) {
+                message = '보상으로 워커를 영입하였습니다!';
+            } else {
+                this.inventory.gold += 5;
+                message = '보상으로 금광석 5개를 받았습니다!';
+            }
+            nextStage = 'iron20';
+            nextGoal = '철광석을 20개 모으세요.';
+        } else if (this.quest.stage === 'iron20') {
+            this.inventory.gold += 5;
+            this.inventory.coal += 10;
+            message = '보상으로 금광석 5 · 석탄 10을 받았습니다!';
+            nextStage = 'craft';
+            nextGoal = '대장간에서 아이템을 하나 제작해보세요.';
+        } else if (this.quest.stage === 'reach27') {
+            this.stats.strength += 1;
+            message = '보상으로 힘 +1을 얻었습니다!';
+            nextStage = 'gold15';
+            nextGoal = '금광석을 15개 모으세요.';
+        } else if (this.quest.stage === 'gold15') {
+            this.maxPlayerHp += 15;
+            this.playerData.hp = Math.min(this.maxPlayerHp, this.playerData.hp + 15);
+            message = '보상으로 최대 HP +15를 얻었습니다!';
+            nextStage = 'reach26';
+            nextGoal = '지하 26층에 도착하세요.';
+        } else if (this.quest.stage === 'reach26') {
+            this.inventory.coal += 15;
+            this.inventory.iron += 10;
+            message = '보상으로 석탄 15 · 철광석 10을 받았습니다!';
+            nextStage = 'craft3';
+            nextGoal = '무기를 3번 제작해보세요.';
+        } else if (this.quest.stage === 'trait25') {
+            this.traitRerollTickets = (this.traitRerollTickets || 0) + 1;
+            message = '보상으로 특성 변경권을 얻었습니다!';
+            nextStage = 'waveDefense';
+            nextGoal = '지하 24층에 도착해 첫 웨이브를 막아내세요.';
+        } else if (this.quest.stage === 'waveDefense') {
+            if (this.addWorker()) {
+                message = '보상으로 워커를 영입하였습니다!';
+            } else {
+                this.inventory.gold += 5;
+                message = '보상으로 금광석 5개를 받았습니다!';
+            }
+            nextStage = 'complete';
+            nextGoal = '자유롭게 채굴하고, 광산 방어를 계속하세요.';
+        } else {
+            return { ok: false };
+        }
+
+        this.quest.stage = nextStage;
+        this.pushCombatFeed(message, '#8fd9a8');
+        this.app.ui.showBanner('보상 획득', `${message} 다음 목표: ${nextGoal}`, '#8fd9a8');
+        this.persist();
+        return { ok: true };
     }
 
     completeCoalQuest() {
@@ -1416,14 +1974,12 @@ export class Game {
         this.pushCombatFeed(`${enemy.userData.name} 처치! ${reward} 획득`, '#8fd9a8');
 
         // Recruiting a worker is the reward for clearing the first quest fight.
+        // After that, new workers only come from wave-clear reward cards or
+        // tutorial-quest claims, so the squad never balloons on its own.
         if (this.quest.stage === 'recruit' && this.enemies.filter((e) => !e.userData.dying).length <= 1) {
             if (this.addWorker()) {
-                this.quest.stage = 'complete';
                 this.pushCombatFeed('워커 슬라임이 합류했습니다!', '#ffe39a');
-            }
-        } else if (this.quest.stage === 'complete' && Math.random() < 0.22) {
-            if (this.addWorker()) {
-                this.pushCombatFeed(`워커 슬라임 합류! 현재 ${this.workers.length}명`, '#ffe39a');
+                this.advanceTutorialQuest('reach29', '다음 목표', '지하 29층에 도착하세요.');
             }
         }
     }
@@ -1754,13 +2310,21 @@ export class Game {
      * by design: auto-combat should have something to react to.)
      */
     updateWaves(delta) {
-        if (this.quest.stage !== 'complete' && this.quest.stage !== 'recruit') return;
+        if (!this.canRunWaves()) return;
         if (!this.waveActive) return;
 
         const living = this.enemies.filter((enemy) => !enemy.userData.dying).length;
         if (living === 0) {
             if (this.quest.stage === 'recruit') return;
             this.waveActive = false;
+            if (this.finalBossActive) {
+                this.resolveFinalBossVictory();
+                return;
+            }
+            if (this.quest.stage === 'waveDefense' && !this.quest.rewardReady) {
+                this.quest.rewardReady = true;
+                this.pushCombatFeed('퀘스트 목표 달성! 웨이브를 막아냈습니다. 보상을 받으세요.', '#8fd9a8');
+            }
             this.pushCombatFeed(`웨이브 ${this.wave} 격퇴! 보상을 선택하세요.`, '#8fd9a8');
             this.app.multiplayer.broadcastEvent?.('wave_clear', { wave: this.wave });
             // Lock the next wave right away, then let the clear banner land
@@ -1773,13 +2337,89 @@ export class Game {
         }
     }
 
+    // --------------------------------------------------------- surface boss
+    // The garrison guarding the surface: one heavily scaled overlord plus a
+    // small escort. Beating it is what actually "finishes" a shaft — clearing
+    // it just opens the endless wave grind (and NG+ reopen) that follows.
+    startFinalBossWave() {
+        if (this.finalBossActive || this.surfaceConquered || this.depth > 0) return;
+        this.finalBossActive = true;
+        this.waveActive = true;
+        this.wave = Math.max(1, this.wave);
+
+        const boss = this.spawnEnemy('overlord', { distance: 16, angle: Math.PI / 2 });
+        if (boss) {
+            const scaled = scaleEnemyStats(ENEMY_TYPES.overlord, this.wave + 6);
+            boss.userData.hp = Math.round(scaled.hp * 1.6 * (1 + this.cycle * 0.25));
+            boss.userData.maxHp = boss.userData.hp;
+            boss.userData.damage = Math.round(scaled.damage * 1.3 * (1 + this.cycle * 0.15));
+            boss.userData.name = '광산 점령자';
+            boss.userData.isFinalBoss = true;
+        }
+        this.spawnEnemy('brute', { distance: 13, angle: Math.PI / 2 - 1.3 });
+        this.spawnEnemy('brute', { distance: 13, angle: Math.PI / 2 + 1.3 });
+
+        this.waveEnemyTotal = this.enemies.length;
+        this.app.ui.showBanner('⚔ 광산 점령전', '지상을 지키는 세력을 물리치세요!', '#ff7a4a');
+        this.pushCombatFeed('⚔ 광산 점령자가 나타났습니다!', '#ff7a4a');
+        this.persist();
+    }
+
+    /** The surface garrison is down: hand out a real reward and reopen the shaft. */
+    resolveFinalBossVictory() {
+        this.finalBossActive = false;
+        this.surfaceConquered = true;
+        this.cycle += 1;
+
+        const bonusGold = 40 + this.cycle * 10;
+        const bonusMithril = 6 + this.cycle * 2;
+        this.inventory.gold += bonusGold;
+        this.inventory.mithril += bonusMithril;
+        this.attackPower += 5;
+
+        this.app.ui.showBanner(
+            '★ 광산 점령 완료',
+            `지상을 정복했습니다! 금광석 ${bonusGold} · 미스릴 ${bonusMithril} · 공격력 +5`,
+            '#ffe39a'
+        );
+        this.pushCombatFeed(
+            `★ 광산을 점령했습니다! 보상: 금광석 ${bonusGold} · 미스릴 ${bonusMithril} · 공격력 +5`,
+            '#ffe39a'
+        );
+        this.persist();
+        setTimeout(() => this.startNextCycle(), 3200);
+    }
+
+    /** Reopens a fresh, harder shaft at B30F after a surface conquest. */
+    startNextCycle() {
+        this.depth = this.startDepth;
+        this.deepestReached = this.startDepth;
+        this.floorNodesCleared = 0;
+        this.surfaceConquered = false;
+        this.floorTheme = FLOOR_THEMES[this.depth] || null;
+
+        this.nodes.forEach((node) => this.scene.remove(node));
+        this.nodes = [];
+        this.chests.forEach((chest) => this.scene.remove(chest));
+        this.chests = [];
+        this.playerData.miningTarget = null;
+
+        const count = this.getFloorNodeCount();
+        for (let i = 0; i < count; i++) this.spawnNode();
+        this.applyDepthAtmosphere();
+
+        this.app.ui.showBanner('⛏ 새로운 광산', '더 단단해진 광산이 지하 30층에 다시 열립니다', '#8fe4ff');
+        this.pushCombatFeed('⛏ 정복을 마치고 새로운 광산으로 다시 내려갑니다.', '#8fe4ff');
+        this.persist();
+    }
+
     // -------------------------------------------------- ambient field mobs
     // While the leader is out mining free-form (no formal wave running), a
     // lone monster — or a small pack, deeper down — wanders in on a randomised
     // timer. Auto-combat (on by default) simply reacts to it like any other
     // enemy; nothing here touches the wave/reward flow above.
     updateFieldEncounters(delta) {
-        if (this.quest.stage !== 'complete') return;
+        if (this.quest.stage === 'coal' || this.quest.stage === 'recruit') return;
         if (this.waveActive || this.isDown) return;
 
         if (this.fieldEncounterTimer === undefined || this.fieldEncounterTimer === null) {
@@ -1833,15 +2473,24 @@ export class Game {
      * Builds the three reward cards, scaled to the wave that was just cleared
      * and to the floor the leader is currently working.
      */
+    // How large the squad is allowed to grow by a given cleared wave. Keeps
+    // the early game from being handed a full squad in a few clears; the
+    // player still has to choose the recruit card each time it appears.
+    getWorkerSoftCap(wave) {
+        return Math.min(this.getWorkerCap(), 1 + Math.floor(wave / 2));
+    }
+
     buildRewardChoices(wave) {
         const tier = Math.max(1, wave);
         const hardness = this.getDepthHardness();
+        // Mini-boss waves pay out noticeably better across the board.
+        const eliteMult = isEliteWave(wave) ? 1.6 : 1;
 
         // 1) Ore bundle — immediate crafting/upgrade fuel.
-        const coal = 14 + tier * 6;
-        const iron = 7 + tier * 4;
-        const gold = Math.max(1, Math.floor(tier * 1.6));
-        const mithril = tier >= 4 ? Math.max(1, Math.floor(tier / 4)) : 0;
+        const coal = Math.round((14 + tier * 6) * eliteMult);
+        const iron = Math.round((7 + tier * 4) * eliteMult);
+        const gold = Math.round(Math.max(1, Math.floor(tier * 1.6)) * eliteMult);
+        const mithril = Math.round((tier >= 4 ? Math.max(1, Math.floor(tier / 4)) : 0) * eliteMult);
         const oreParts = [`석탄 ${coal}`, `철 ${iron}`, `금 ${gold}`];
         if (mithril > 0) oreParts.push(`미스릴 ${mithril}`);
 
@@ -1853,13 +2502,13 @@ export class Game {
             speed: '곡괭이 간격이 짧아져 층 목표를 더 빨리 비웁니다.',
             luck: '고급 광석이 더 자주 나와 미스릴 확보가 쉬워집니다.'
         }[statKey];
-        const hpGain = 12 + tier * 3;
+        const hpGain = Math.round((12 + tier * 3) * eliteMult);
 
         // 3) Worker squad upgrade — pays off in the next defence run.
-        const workerAtk = 0.18;
-        const workerMine = 0.12;
+        const workerAtk = 0.18 * eliteMult;
+        const workerMine = 0.12 * eliteMult;
 
-        return [
+        const choices = [
             {
                 id: 'ore',
                 icon: '⛏',
@@ -1887,19 +2536,34 @@ export class Game {
                 benefit: `워커 ${this.workers.length}명이 더 세게 때리고 더 빨리 캡니다. 방어 명령으로 두고 채굴하면 다음 전투가 훨씬 안전해집니다.`,
                 payload: { attack: workerAtk, mine: workerMine }
             },
-            // 4) Trait reroll — a way back into the wider trait catalogue when a
-            // run's starting draw feels underwhelming, since traits are
-            // otherwise fixed for the leader's whole lifetime.
+            // 4) Trait reroll ticket — a stockpiled way back into the wider
+            // trait catalogue, since the leader only ever carries one trait.
             {
                 id: 'trait_reroll',
                 icon: '🎲',
                 color: '#9ff3e0',
                 title: '특성 변경권',
-                summary: `보유한 특성 ${this.traits.length}종을 모두 새로 뽑습니다`,
-                benefit: '지금 특성 조합이 아쉽다면, 완전히 새로운 태생 특성 세트에 도전할 기회입니다. 무엇이 나올지는 뽑아봐야 압니다.',
+                summary: `특성 변경권 +1 (보유 ${this.traitRerollTickets || 0}장)`,
+                benefit: '지금 태생 특성이 아쉽다면, 나중에 원할 때 다른 특성으로 바꿀 수 있는 티켓을 모아둡니다. 리더 상태 창에서 사용합니다.',
                 payload: {}
             }
         ];
+
+        // Only offered while the squad is under its wave-paced soft cap, so a
+        // new worker is always a deliberate pick rather than a random drop.
+        if (this.workers.length < this.getWorkerSoftCap(wave)) {
+            choices.push({
+                id: 'recruit',
+                icon: '🐌',
+                color: '#8fd9a8',
+                title: '워커 슬라임 영입',
+                summary: `워커 +1명 (현재 ${this.workers.length}명)`,
+                benefit: '새 워커 슬라임이 분대에 합류합니다. 채굴이든 방어든, 다음 명령에 바로 투입할 수 있습니다.',
+                payload: {}
+            });
+        }
+
+        return choices;
     }
 
     /**
@@ -1950,12 +2614,12 @@ export class Game {
             this.boons.workerSwingMult += choice.payload.mine;
             this.pushCombatFeed(`보상 획득: ${choice.summary}`, '#c7a3ef');
         } else if (choice.id === 'trait_reroll') {
-            this.traits = rollTraits(this.traits.length || 3);
-            this.traitEffects = buildTraitEffects(this.traits);
-            this.playerData.traits = this.traits.map((trait) => trait.name);
-            this.refreshMaxHp();
-            const names = this.traits.map((trait) => trait.name).join(', ');
-            this.pushCombatFeed(`특성을 새로 뽑았습니다: ${names}`, '#9ff3e0');
+            this.traitRerollTickets = (this.traitRerollTickets || 0) + 1;
+            this.pushCombatFeed(`보상 획득: 특성 변경권 +1 (보유 ${this.traitRerollTickets}장)`, '#9ff3e0');
+        } else if (choice.id === 'recruit') {
+            if (this.addWorker()) {
+                this.pushCombatFeed(`보상 획득: ${choice.summary}`, '#8fd9a8');
+            }
         }
 
         this.persist();
@@ -1966,9 +2630,21 @@ export class Game {
      * Player-initiated mine defence. Returns a result object so the UI can
      * explain why a run could not start.
      */
+    // The scripted recruit-quest skirmish runs through the same wave
+    // machinery, so it is always allowed; real defence waves (including the
+    // "defend a wave" tutorial quest) only open once the leader has climbed
+    // to B24F or below.
+    canRunWaves() {
+        return this.quest.stage === 'recruit'
+            || ((this.quest.stage === 'waveDefense' || this.quest.stage === 'complete') && this.depth <= 24);
+    }
+
     startDefenceWave(waveOverride = null) {
-        if (this.quest.stage !== 'complete' && this.quest.stage !== 'recruit') {
-            return { ok: false, reason: '아직 광산 방어를 시작할 수 없습니다. 퀘스트를 먼저 진행하세요.' };
+        if (!this.canRunWaves()) {
+            const reason = (this.quest.stage === 'waveDefense' || this.quest.stage === 'complete')
+                ? `지하 24층부터 광산 방어를 시작할 수 있습니다. 현재 ${this.getFloorLabel()}`
+                : '아직 광산 방어를 시작할 수 없습니다. 퀘스트를 먼저 진행하세요.';
+            return { ok: false, reason };
         }
         if (this.waveActive) {
             return { ok: false, reason: '이미 방어전이 진행 중입니다.' };
@@ -2004,10 +2680,9 @@ export class Game {
             waveActive: this.waveActive,
             // Menu state: waves are opt-in, so the UI needs to know whether a
             // defence run can be launched right now and which wave is next.
-            canStartWave: !this.waveActive && !this.isDown && !this.rewardPending
-                && (this.quest.stage === 'complete' || this.quest.stage === 'recruit'),
+            canStartWave: !this.waveActive && !this.isDown && !this.rewardPending && this.canRunWaves(),
             rewardPending: !!this.rewardPending,
-            waveUnlocked: this.quest.stage === 'complete' || this.quest.stage === 'recruit',
+            waveUnlocked: this.canRunWaves(),
             nextWave: Math.max(0, this.wave) + 1,
             maxSelectableWave: this.getMaxSelectableWave(),
             enemiesLeft: this.enemies.filter((enemy) => !enemy.userData.dying).length,
@@ -2164,6 +2839,17 @@ export class Game {
 
         const entry = this.recordRecipe(mix, result, slot);
         this.totalCrafted = (this.totalCrafted || 0) + 1;
+
+        if (this.quest.stage === 'craft') {
+            this.advanceTutorialQuest('reach27', '다음 목표', '지하 27층에 도착하세요.');
+        } else if (this.quest.stage === 'craft3' && slot === 'weapon') {
+            this.quest.craftCount = (this.quest.craftCount || 0) + 1;
+            if (this.quest.craftCount >= 3) {
+                this.advanceTutorialQuest('trait25', '다음 목표', '지하 25층 드래곤의 둥지에서 태생 특성을 얻으세요.');
+            } else {
+                this.persist();
+            }
+        }
 
         // Auto-equip only when the new piece is genuinely better than what's
         // currently in that same slot.
@@ -2529,8 +3215,9 @@ export class Game {
         }
 
         const damage = 4 * this.traitEffects.workerAttackMult * this.boons.workerAttackMult
-            * (1 + (this.stats.strength - 1) * 0.18);
+            * this.getWorkerLevelMult(worker) * (1 + (this.stats.strength - 1) * 0.18);
         this.damageEnemy(enemy, damage, { from: worker.position, color: '#b7f3ff', knockback: 0.16 });
+        worker.userData.workerXp = (worker.userData.workerXp || 0) + 2;
     }
 
     // Short weapon-swing flourish while a worker is fighting.
@@ -2570,8 +3257,9 @@ export class Game {
                     worker.userData.swingTimer = (worker.userData.swingTimer || 0) - delta;
                     if (worker.userData.swingTimer <= 0) {
                         this.swingAtNode(node);
-                        worker.userData.swingTimer = 0.72
-                            / (this.traitEffects.workerSwingMult * this.boons.workerSwingMult);
+                        worker.userData.workerXp = (worker.userData.workerXp || 0) + 1;
+                        worker.userData.swingTimer = 0.72 / (this.traitEffects.workerSwingMult
+                            * this.boons.workerSwingMult * this.getWorkerLevelMult(worker));
                     }
                 }
             }
@@ -2632,6 +3320,7 @@ export class Game {
             this.saveTimer = 5;
         }
 
+        this.updateQuestProgress();
         this.updateWaves(delta);
         this.updateFieldEncounters(delta);
         this.nodes.forEach((node) => {
@@ -2695,6 +3384,13 @@ export class Game {
         }
         this.animatePlayerMining(isPlayerMining, delta);
 
+        // Only one tool shows at a time: the pickaxe while heading to or
+        // working an ore node, the weapon the rest of the time (including
+        // combat and standing idle).
+        const showsPickaxe = !inCombat && !this.isDown && !!miningTarget && this.nodes.includes(miningTarget);
+        if (this.player.userData.pickaxe) this.player.userData.pickaxe.visible = showsPickaxe;
+        if (this.weaponArm) this.weaponArm.visible = !showsPickaxe;
+
         // Knocked-out leader slumps to the floor until the revive lands.
         if (this.isDown) {
             const baseScale = this.player.userData.baseScale || 1.25;
@@ -2736,8 +3432,18 @@ export class Game {
             this.getCombatData(),
             this.getDepthData(),
             this.getFacilitiesData(),
-            this.getMetaData()
+            this.getMetaData(),
+            this.getWorkerData()
         );
+    }
+
+    /** Individual worker growth for the status window's roster line. */
+    getWorkerData() {
+        const levels = this.workers.map((worker) => this.getWorkerLevel(worker));
+        const avgLevel = levels.length > 0
+            ? Math.round((levels.reduce((sum, lv) => sum + lv, 0) / levels.length) * 10) / 10
+            : 0;
+        return { count: this.workers.length, levels, avgLevel };
     }
 
     // Compact loadout summary for the HUD.

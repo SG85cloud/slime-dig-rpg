@@ -5,7 +5,8 @@
       "name": "slime-dig-rpg",
       "runtimeExecutable": "powershell",
       "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "run_local_server.ps1"],
-      "port": 8769
+      "port": 8769,
+      "autoPort": true
     }
   ]
 }

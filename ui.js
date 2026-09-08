@@ -121,9 +121,14 @@ export class UI {
                             font:700 12px Inter, sans-serif; flex:none;">닫기 (ESC)</button>
                 </div>
                 <div class="status-vitals" style="margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:9px;"></div>
-                <div style="margin-top:18px; display:flex; justify-content:space-between; align-items:baseline;">
+                <div style="margin-top:18px; display:flex; justify-content:space-between; align-items:baseline; gap:10px;">
                     <div style="font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#ffcc00;">태생 특성</div>
-                    <div class="status-trait-count" style="font-size:11.5px; color:#8d80a0;"></div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div class="status-trait-count" style="font-size:11.5px; color:#8d80a0;"></div>
+                        <button class="status-reroll" type="button" style="cursor:pointer; border:1px solid #a875ca;
+                                background:rgba(168,117,202,.14); color:#e8dcf5; border-radius:7px; padding:4px 9px;
+                                font:700 10.5px Inter, sans-serif; flex:none;">🎲 특성 변경 (0장)</button>
+                    </div>
                 </div>
                 <div class="status-traits" style="margin-top:10px; display:grid; gap:8px; overflow-y:auto;
                             padding-right:4px; min-height:0;"></div>
@@ -147,6 +152,9 @@ export class UI {
                 this.closeStatusWindow();
                 this.openTraitCodex();
             });
+        this.statusOverlay.querySelector('.status-reroll').addEventListener('click', () => {
+            if (this.traitRerollHandler) this.traitRerollHandler();
+        });
         // Clicking the dimmed backdrop closes, clicking the card itself does not.
         this.statusOverlay.addEventListener('click', (event) => {
             if (event.target === this.statusOverlay) this.closeStatusWindow();
@@ -173,7 +181,9 @@ export class UI {
         const vitals = [
             ['체력', `${Math.ceil(this.lastPlayerHp ?? 0)} / ${this.lastMaxPlayerHp ?? 0}`, '#9fe8ff'],
             ['공격력', `${Math.round(equip?.totalAttack ?? 10)}`, '#ff9c9c'],
-            ['워커 슬라임', `${this.lastWorkerCount ?? 0}명`, '#d7c4ed'],
+            ['워커 슬라임', this.workerData?.count
+                ? `${this.workerData.count}명 · 평균 Lv.${this.workerData.avgLevel}`
+                : `${this.lastWorkerCount ?? 0}명`, '#d7c4ed'],
             ['장착 무기', equip?.equipped ? equip.equipped.name : '맨손', equip?.tier?.color || '#8d80a0'],
             ['장착 방어구', equip?.equippedArmor ? equip.equippedArmor.name : '없음', equip?.equippedArmor ? '#8fc4ff' : '#8d80a0'],
             ['장착 장신구', equip?.equippedAccessory ? equip.equippedAccessory.name : '없음', equip?.equippedAccessory ? '#c7a3ef' : '#8d80a0']
@@ -190,6 +200,14 @@ export class UI {
 
         const owned = this.traitData?.owned || [];
         this.statusOverlay.querySelector('.status-trait-count').textContent = `${owned.length}개 보유`;
+
+        const tickets = this.traitData?.rerollTickets || 0;
+        const rerollBtn = this.statusOverlay.querySelector('.status-reroll');
+        rerollBtn.textContent = `🎲 특성 변경 (${tickets}장)`;
+        const canReroll = tickets > 0 && owned.length > 0;
+        rerollBtn.disabled = !canReroll;
+        rerollBtn.style.opacity = canReroll ? '1' : '0.45';
+        rerollBtn.style.cursor = canReroll ? 'pointer' : 'not-allowed';
 
         const traitsEl = this.statusOverlay.querySelector('.status-traits');
         if (owned.length === 0) {
@@ -786,7 +804,68 @@ export class UI {
             box-sizing: border-box;
             overflow-y: auto;
         `;
+        // Built once. `update()` only patches text/colors on these nodes from
+        // here on — replacing the whole subtree every frame used to tear out
+        // and recreate these buttons constantly, which drops any real click
+        // that doesn't complete within a single frame (mousedown fires on a
+        // node that's already gone by the time mouseup/click resolves).
+        this.hud.innerHTML = `
+            <button class="status-open" type="button" style="
+                display:block; width:100%; text-align:left; margin-bottom:12px;
+                padding:9px 11px; border:1px solid #2f6f80; border-radius:8px;
+                background:rgba(0,210,255,.07); color:inherit; font:inherit;
+                cursor:pointer;
+            ">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-size:19px;">🧬</span>
+                    <span style="flex:1; min-width:0; display:flex; gap:10px; font-size:12.5px;">
+                        <span class="hud-hp" style="color:#9fe8ff;"></span>
+                        <span class="hud-attack" style="color:#ff9c9c;">공<span class="hud-attack-value"></span></span>
+                        <span class="hud-workers" style="color:#d7c4ed;"></span>
+                    </span>
+                    <span class="hud-traits" style="color:#8d80a0; font-size:10.5px; font-weight:700;"></span>
+                </div>
+            </button>
+            <div style="margin-bottom: 15px;">
+                <h3 style="margin: 0; color: #ffd08a;">🎒 아이템 · 장비</h3>
+                <div class="equip-slot" style="margin-top:8px; display:flex; align-items:center; gap:9px;
+                            padding:9px 10px; border-radius:8px; border:1px solid #8d80a0;
+                            background:rgba(255,255,255,.04);">
+                    <div class="equip-icon" style="font-size:22px;"></div>
+                    <div style="min-width:0;">
+                        <div style="font-size:10px; letter-spacing:1px; color:#a99bb8;">장착 중인 무기</div>
+                        <div class="equip-name" style="font-size:12.5px; font-weight:800;"></div>
+                    </div>
+                </div>
+                <button class="craft-open" type="button" style="
+                    margin-top:10px; width:100%; padding:11px 9px; border:1px solid #f0b268;
+                    border-radius:7px; background:linear-gradient(180deg,#8a4c26,#4d2711); color:#ffe6c4;
+                    font:800 12.5px Inter, sans-serif; cursor:pointer;
+                    box-shadow:0 0 14px rgba(224,150,74,.34);
+                "></button>
+                <div style="margin-top:5px; text-align:center; font-size:10.5px; color:#8d80a0;">단축키 <b style="color:#cbb8e8;">I</b> 또는 <b style="color:#cbb8e8;">C</b></div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <h3 style="margin: 0; color: #00d2ff;">광석 보관함</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-size: 0.9em;">
+                    <span class="inv-coal"></span>
+                    <span class="inv-iron"></span>
+                    <span class="inv-gold"></span>
+                    <span class="inv-mithril"></span>
+                </div>
+            </div>
+        `;
         this.leftRail.appendChild(this.hud);
+
+        this.hud.querySelector('.status-open').addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.closeDockPanels();
+            this.openStatusWindow();
+        });
+        this.hud.querySelector('.craft-open').addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.openCraftWorkshop();
+        });
     }
 
     /**
@@ -916,6 +995,14 @@ export class UI {
         this.waveRewardHandler = handler;
     }
 
+    setQuestRewardHandler(handler) {
+        this.questRewardHandler = handler;
+    }
+
+    setTraitRerollHandler(handler) {
+        this.traitRerollHandler = handler;
+    }
+
     showWaveReward(data) {
         if (!this.rewardOverlay || !data) return;
         this.rewardOpen = true;
@@ -1005,9 +1092,20 @@ export class UI {
             <div class="quest-description" style="margin-top: 6px; color: #d7cbe1; font-size: 13px; line-height: 1.4;"></div>
             <div class="quest-progress-text" style="margin-top: 12px; color: #b7f3ff; font-size: 12px; font-weight: 700;"></div>
             <div style="height: 7px; margin-top: 6px; overflow: hidden; border-radius: 999px; background: #1c1726; border: 1px solid #4e3d5e;"><div class="quest-progress-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#8c63b5,#c7a3ef); transition:width .25s;"></div></div>
+            <button class="quest-reward-claim" type="button" style="
+                display:none; margin-top:12px; width:100%; padding:10px 9px; border:1px solid #6be3a8;
+                border-radius:7px; background:linear-gradient(180deg,#2f8a5c,#175236); color:#e8fff2;
+                font:800 12.5px Inter, sans-serif; cursor:pointer;
+                box-shadow:0 0 14px rgba(107,227,168,.35);
+            ">🎁 보상받기</button>
         `;
         // Insert above the HUD, which was appended to the rail first.
         this.leftRail.insertBefore(this.questPanel, this.hud || null);
+
+        this.questPanel.querySelector('.quest-reward-claim').addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.questRewardHandler) this.questRewardHandler();
+        });
     }
 
     updateQuest(quest) {
@@ -1025,6 +1123,7 @@ export class UI {
         this.questPanel.querySelector('.quest-progress-bar').style.background = completed
             ? 'linear-gradient(90deg,#54d6aa,#b7f3ff)'
             : `linear-gradient(90deg, ${quest.accent || '#8c63b5'}, #c7a3ef)`;
+        this.questPanel.querySelector('.quest-reward-claim').style.display = quest.rewardReady ? 'block' : 'none';
     }
 
     initTraitCodex() {
@@ -2231,7 +2330,7 @@ export class UI {
         music.play().catch(() => {});
     }
 
-    update(inventory, traits, command = this.activeCommand, workerCount = 0, playerHp = 100, maxPlayerHp = 100, quest = null, stats = null, miningProgress = null, traitData = null, equipment = null, combat = null, depth = null, facilities = null, meta = null) {
+    update(inventory, traits, command = this.activeCommand, workerCount = 0, playerHp = 100, maxPlayerHp = 100, quest = null, stats = null, miningProgress = null, traitData = null, equipment = null, combat = null, depth = null, facilities = null, meta = null, workerData = null) {
         this.equipmentData = equipment || this.equipmentData;
         this.updateDepth(depth);
         this.updateFacilities(facilities);
@@ -2241,6 +2340,7 @@ export class UI {
         this.lastPlayerHp = playerHp;
         this.lastMaxPlayerHp = maxPlayerHp;
         this.lastWorkerCount = workerCount;
+        this.workerData = workerData;
         this.updateCombatHUD(combat);
         // Keep the open workshop in sync with the stockpile without re-rendering
         // (and killing interaction) on every single frame.
@@ -2279,7 +2379,6 @@ export class UI {
         const equipInfo = equip?.equipped
             ? {
                 attackText: `${equip.totalAttack} <span style="color:#8d80a0; font-size:0.85em;">(기본 ${equip.baseAttack})</span>`,
-                label: `${equip.equipped.icon} ${equip.equipped.name}`,
                 slotIcon: equip.equipped.icon,
                 slotName: equip.equipped.name,
                 color: equip.tier?.color || '#d8d2e2',
@@ -2287,7 +2386,6 @@ export class UI {
             }
             : {
                 attackText: `${equip?.totalAttack ?? 10}`,
-                label: '없음 — 무기를 제작하세요',
                 slotIcon: '✊',
                 slotName: '맨손 — 무기를 제작하세요',
                 color: '#8d80a0',
@@ -2296,72 +2394,26 @@ export class UI {
 
         const traitCount = (this.traitData?.owned || []).length;
 
-        this.hud.innerHTML = `
-            <button class="status-open" type="button">
-                <div style="display:flex; align-items:center; gap:10px;">
-                    <span style="font-size:19px;">🧬</span>
-                    <span style="flex:1; min-width:0; display:flex; gap:10px; font-size:12.5px;">
-                        <span style="color:#9fe8ff;">HP ${Math.ceil(playerHp)}/${maxPlayerHp}</span>
-                        <span style="color:#ff9c9c;">공${equipInfo.attackText}</span>
-                        <span style="color:#d7c4ed;">워커 ${workerCount}</span>
-                    </span>
-                    <span style="color:#8d80a0; font-size:10.5px; font-weight:700;">특성 ${traitCount} ▸</span>
-                </div>
-            </button>
-            <div style="margin-bottom: 15px;">
-                <h3 style="margin: 0; color: #ffd08a;">🎒 아이템 · 장비</h3>
-                <div class="equip-slot" style="margin-top:8px; display:flex; align-items:center; gap:9px;
-                            padding:9px 10px; border-radius:8px; border:1px solid ${equipInfo.color};
-                            background:rgba(255,255,255,.04);">
-                    <div style="font-size:22px;">${equipInfo.slotIcon}</div>
-                    <div style="min-width:0;">
-                        <div style="font-size:10px; letter-spacing:1px; color:#a99bb8;">장착 중인 무기</div>
-                        <div style="font-size:12.5px; font-weight:800; color:${equipInfo.color};">${equipInfo.slotName}</div>
-                    </div>
-                </div>
-                <button class="craft-open" type="button">🔨 아이템 제작 · 장비창 열기${equipInfo.recipeSuffix}</button>
-                <div style="margin-top:5px; text-align:center; font-size:10.5px; color:#8d80a0;">단축키 <b style="color:#cbb8e8;">I</b> 또는 <b style="color:#cbb8e8;">C</b></div>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <h3 style="margin: 0; color: #00d2ff;">광석 보관함</h3>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-size: 0.9em;">
-                    <span>석탄: ${inventory.coal}</span>
-                    <span>철광석: ${inventory.iron}</span>
-                    <span>금광석: ${inventory.gold}</span>
-                    <span>미스릴: ${inventory.mithril}</span>
-                </div>
-            </div>
-        `;
+        // Patch the existing nodes in place — see initHUD for why this must
+        // never go through innerHTML on every frame.
+        this.hud.querySelector('.hud-hp').textContent = `HP ${Math.ceil(playerHp)}/${maxPlayerHp}`;
+        this.hud.querySelector('.hud-attack-value').innerHTML = equipInfo.attackText;
+        this.hud.querySelector('.hud-workers').textContent = `워커 ${workerCount}`;
+        this.hud.querySelector('.hud-traits').textContent = `특성 ${traitCount} ▸`;
 
-        // The status card is a button so the whole block is clickable.
-        const statusButton = this.hud.querySelector('.status-open');
-        if (statusButton) {
-            statusButton.style.cssText = `
-                display:block; width:100%; text-align:left; margin-bottom:12px;
-                padding:9px 11px; border:1px solid #2f6f80; border-radius:8px;
-                background:rgba(0,210,255,.07); color:inherit; font:inherit;
-                cursor:pointer;
-            `;
-            statusButton.addEventListener('click', (event) => {
-                event.stopPropagation();
-                this.closeDockPanels();
-                this.openStatusWindow();
-            });
-        }
+        const equipSlot = this.hud.querySelector('.equip-slot');
+        equipSlot.style.borderColor = equipInfo.color;
+        this.hud.querySelector('.equip-icon').textContent = equipInfo.slotIcon;
+        const equipName = this.hud.querySelector('.equip-name');
+        equipName.textContent = equipInfo.slotName;
+        equipName.style.color = equipInfo.color;
 
-        const craftButton = this.hud.querySelector('.craft-open');
-        if (craftButton) {
-            craftButton.style.cssText = `
-                margin-top:10px; width:100%; padding:11px 9px; border:1px solid #f0b268;
-                border-radius:7px; background:linear-gradient(180deg,#8a4c26,#4d2711); color:#ffe6c4;
-                font:800 12.5px Inter, sans-serif; cursor:pointer;
-                box-shadow:0 0 14px rgba(224,150,74,.34);
-            `;
-            craftButton.addEventListener('click', (event) => {
-                event.stopPropagation();
-                this.openCraftWorkshop();
-            });
-        }
+        this.hud.querySelector('.craft-open').textContent = `🔨 아이템 제작 · 장비창 열기${equipInfo.recipeSuffix}`;
+
+        this.hud.querySelector('.inv-coal').textContent = `석탄: ${inventory.coal}`;
+        this.hud.querySelector('.inv-iron').textContent = `철광석: ${inventory.iron}`;
+        this.hud.querySelector('.inv-gold').textContent = `금광석: ${inventory.gold}`;
+        this.hud.querySelector('.inv-mithril').textContent = `미스릴: ${inventory.mithril}`;
 
         // Keep the status window live while it is open.
         if (this.statusOpen) this.renderStatusWindow();

@@ -2,7 +2,7 @@
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$port = 8769
+$port = if ($env:PORT) { [int]$env:PORT } else { 8769 }
 $appDir = $PSScriptRoot
 
 $listener = New-Object System.Net.HttpListener
@@ -46,6 +46,9 @@ while ($listener.IsListening) {
             $ext = [System.IO.Path]::GetExtension($filePath).ToLower()
             $contentType = if ($mimeTypes.ContainsKey($ext)) { $mimeTypes[$ext] } else { "application/octet-stream" }
             $response.ContentType = $contentType
+            # This server sends no Last-Modified/ETag, so without this the browser
+            # can cache a .js module indefinitely and silently serve a stale edit.
+            $response.Headers.Add("Cache-Control", "no-store")
 
             $bytes = [System.IO.File]::ReadAllBytes($filePath)
             $response.ContentLength64 = $bytes.Length

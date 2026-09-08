@@ -92,6 +92,11 @@ export const WAVE_TABLE = [
     { wave: 8, spawns: [['overlord', 1], ['crawler', 3]] }
 ];
 
+/** Every 5th wave past the hand-authored table is a named mini-boss wave. */
+export function isEliteWave(wave) {
+    return wave > WAVE_TABLE.length && wave % 5 === 0;
+}
+
 export function getWaveComposition(wave) {
     if (wave <= 0) return [];
     const entry = WAVE_TABLE[Math.min(wave, WAVE_TABLE.length) - 1];
@@ -100,7 +105,7 @@ export function getWaveComposition(wave) {
     entry.spawns.forEach(([type, count]) => {
         spawns.push([type, count + Math.floor(scaling / 2)]);
     });
-    if (scaling > 0 && wave % 4 === 0) spawns.push(['overlord', 1]);
+    if (isEliteWave(wave)) spawns.push(['overlord', 1 + Math.floor(scaling / 15)]);
     return spawns;
 }
 
