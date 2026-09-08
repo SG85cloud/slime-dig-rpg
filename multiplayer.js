@@ -15,6 +15,7 @@ export async function initMultiplayer() {
 
     return {
         playerId,
+        roomId,
         updatePlayer: (data) => {
             room.publishPresence({ id: playerId, ...data });
         },
@@ -22,6 +23,15 @@ export async function initMultiplayer() {
             room.subscribePresence({}, (data) => {
                 callback(data.peers);
             });
+        },
+        // Fire-and-forget social events (wave starts/clears, floor climbs) —
+        // a light "we're in this together" layer that doesn't require syncing
+        // actual world state (veins/waves stay per-client for now).
+        broadcastEvent: (type, payload = {}) => {
+            room.publishTopic('event', { type, ...payload });
+        },
+        onEvent: (callback) => {
+            room.subscribeTopic('event', (event) => callback(event));
         }
     };
 }

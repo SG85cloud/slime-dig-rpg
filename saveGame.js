@@ -10,6 +10,9 @@
 const SAVE_VERSION = 3;
 const STORAGE_PREFIX = 'gothic-slime-mine:save';
 const PROFILE_KEY = 'gothic-slime-mine:profile';
+// Meta progression lives under its own key so it survives clearProgress() —
+// a fresh leader still carries forward whatever the lineage has earned.
+const META_PREFIX = 'gothic-slime-mine:meta';
 
 // A stable per-browser player id. The multiplayer session id changes on every
 // reload, so progression is keyed to this persistent profile id instead.
@@ -63,6 +66,40 @@ export function clearProgress(profileId) {
         window.localStorage.removeItem(storageKey(profileId));
         return true;
     } catch (error) {
+        return false;
+    }
+}
+
+// --------------------------------------------------------------- meta
+// A separate, permanent ledger: legacy points earned by past leaders and the
+// one-time starting-bonus unlocks bought with them. Deliberately untouched by
+// clearProgress() / resetProgress() so a fresh run still benefits from it.
+export function loadMeta(profileId) {
+    try {
+        const raw = window.localStorage.getItem(`${META_PREFIX}:${profileId}`);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        if (!data || typeof data !== 'object') return null;
+        return {
+            legacyPoints: Math.max(0, Number(data.legacyPoints) || 0),
+            upgrades: {
+                startingWorker: Math.max(0, Math.floor(Number(data.upgrades?.startingWorker) || 0)),
+                startingTraitBonus: Math.max(0, Math.floor(Number(data.upgrades?.startingTraitBonus) || 0)),
+                startingOreTier: Math.max(0, Math.floor(Number(data.upgrades?.startingOreTier) || 0))
+            }
+        };
+    } catch (error) {
+        console.warn('[save] 유산 정보를 불러오지 못했습니다.', error);
+        return null;
+    }
+}
+
+export function saveMeta(profileId, meta) {
+    try {
+        window.localStorage.setItem(`${META_PREFIX}:${profileId}`, JSON.stringify(meta));
+        return true;
+    } catch (error) {
+        console.warn('[save] 유산 정보를 저장하지 못했습니다.', error);
         return false;
     }
 }

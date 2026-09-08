@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { TRAITS, TRAIT_CATEGORIES, RARITY_INFO, rollTraits, buildTraitEffects, getTraitById } from './traits.js';
-import { getProfileId, loadProgress, saveProgress, clearProgress } from './saveGame.js';
+import { getProfileId, loadProgress, saveProgress, clearProgress, loadMeta, saveMeta } from './saveGame.js';
 import {
     ORE_KEYS,
     ORE_INFO,
@@ -25,6 +25,29 @@ const GROUND_Y = 0;
 
 /** Scratch box reused by the contact pass so no per-frame garbage is created. */
 const _contactBox = new THREE.Box3();
+
+/**
+ * Special floor concepts along the otherwise-continuous B30F -> surface climb.
+ * Keyed by depth (the B-number). Picked to read as genuinely different without
+ * new art assets: a distinct light/floor tint that overrides the usual smooth
+ * gradient, plus an ore-weight nudge that matches the flavor.
+ */
+const FLOOR_THEMES = {
+    20: {
+        name: '얼음 갱도',
+        desc: '서리 낀 벽면 사이로 광맥이 파랗게 빛납니다. 미스릴이 유독 잘 보입니다.',
+        lightColor: new THREE.Color(0x8fd9ff),
+        floorColor: new THREE.Color(0xcfeeff),
+        oreBonus: { mithril: 2.4 }
+    },
+    10: {
+        name: '용암 지대',
+        desc: '뜨거운 열기 속에서 황금빛 광맥이 유독 많이 보입니다.',
+        lightColor: new THREE.Color(0xff7a4a),
+        floorColor: new THREE.Color(0xffcaa8),
+        oreBonus: { gold: 2.2 }
+    }
+};
 
 /**
  * Measures a model's real bounding box at a given scale and returns the Y offset
@@ -98,6 +121,8 @@ export class Game {
         this.nodes = [];
         this.workers = [];
         this.enemies = [];
+        // Other leaders sharing this room: id -> visual mesh.
+        this.peerMeshes = {};
         
         this.inventory = {
             coal: 0,
@@ -171,6 +196,7 @@ export class Game {
         this.floorNodesCleared = 0;
         this.deepestReached = this.startDepth;
         this.ascending = false;
+        this.floorTheme = FLOOR_THEMES[this.depth] || null;
 
         // ----------------------------------------------------- wave rewards
         // Clearing a defence wave hands the player a choice rather than a
@@ -187,6 +213,11 @@ export class Game {
         // traits, ore, stat levels, attack power, HP, quest stage and workers.
         this.profileId = getProfileId();
         this.saved = loadProgress(this.profileId);
+        // Legacy points/unlocks earned by past leaders — survives a reset.
+        this.meta = loadMeta(this.profileId) || {
+            legacyPoints: 0,
+            upgrades: { startingWorker: 0, startingTraitBonus: 0, startingOreTier: 0 }
+        };
         this.saveTimer = 0;
         this.pendingWorkerCount = 0;
         this.hasSavedRun = false;
@@ -203,6 +234,7 @@ export class Game {
             Object.entries(this.traitEffects.startingBonus).forEach(([ore, amount]) => {
                 if (amount > 0) this.inventory[ore] += amount;
             });
+            this.applyMetaStartingBonuses();
         }
 
         // Equipment HP is part of the max, so recompute once state is loaded.
@@ -247,6 +279,7 @@ export class Game {
 
         // Multiplayer sync
         this.app.multiplayer.subscribeToPlayers((peers) => this.syncPlayers(peers));
+        this.app.multiplayer.onEvent?.((event) => this.handlePeerEvent(event));
     }
 
     // Innate traits are stored by id, so a returning leader is exactly the same
@@ -257,7 +290,27 @@ export class Game {
             const restored = ids.map((id) => getTraitById(id)).filter(Boolean);
             if (restored.length > 0) return restored;
         }
-        return rollTraits(3);
+        return rollTraits(this.getStartingTraitCount());
+    }
+
+    // The "추가 태생 특성" legacy unlock gives every future leader one more
+    // trait slot from birth.
+    getStartingTraitCount() {
+        return 3 + (this.meta?.upgrades?.startingTraitBonus ? 1 : 0);
+    }
+
+    // Applied only to a brand-new leader (no save yet) — legacy unlocks bought
+    // with a past leader's points.
+    applyMetaStartingBonuses() {
+        const upgrades = this.meta?.upgrades || {};
+        if (upgrades.startingWorker) {
+            this.pendingWorkerCount = Math.max(this.pendingWorkerCount, 1);
+        }
+        const oreTier = upgrades.startingOreTier || 0;
+        if (oreTier > 0) {
+            this.inventory.coal += oreTier * 20;
+            this.inventory.iron += oreTier * 10;
+        }
     }
 
     applySavedProgress(saved) {
@@ -313,6 +366,7 @@ export class Game {
         const depth = Number(saved.depth);
         if (Number.isFinite(depth) && depth >= 0 && depth <= this.startDepth) {
             this.depth = Math.floor(depth);
+            this.floorTheme = FLOOR_THEMES[this.depth] || null;
         }
         const cleared = Number(saved.floorNodesCleared);
         if (Number.isFinite(cleared) && cleared >= 0) this.floorNodesCleared = Math.floor(cleared);
@@ -407,8 +461,75 @@ export class Game {
     }
 
     resetProgress() {
+        this.awardLegacyRunPoints();
         clearProgress(this.profileId);
         window.location.reload();
+    }
+
+    // ------------------------------------------------------- meta progression
+    // A roguelite-style ledger: retiring a leader (or reaching daylight) banks
+    // legacy points from that run's depth and haul, spendable on permanent
+    // starting bonuses for every leader born after.
+    static META_UPGRADES = {
+        startingWorker: {
+            maxLevel: 1, cost: [40],
+            label: '견습 일꾼 계약', hint: '새 광부가 워커 1명과 함께 시작합니다.'
+        },
+        startingTraitBonus: {
+            maxLevel: 1, cost: [60],
+            label: '추가 태생 특성', hint: '새 광부가 특성을 3개 대신 4개 갖고 태어납니다.'
+        },
+        startingOreTier: {
+            maxLevel: 3, cost: [20, 35, 55],
+            label: '비상 물자 지원', hint: '레벨당 시작 석탄 +20 · 철 +10.'
+        }
+    };
+
+    // Depth climbed and ore hauled convert to points; a run that never left
+    // B30F still earns something for the ore it banked.
+    getLegacyPointsForRun() {
+        return Math.round(this.getFloorsClimbed() * 3 + (this.totalOreMined || 0) / 20);
+    }
+
+    awardLegacyRunPoints() {
+        const gained = this.getLegacyPointsForRun();
+        if (gained <= 0) return 0;
+        this.meta.legacyPoints = (this.meta.legacyPoints || 0) + gained;
+        saveMeta(this.profileId, this.meta);
+        return gained;
+    }
+
+    getMetaData() {
+        const upgrades = Object.entries(Game.META_UPGRADES).map(([key, config]) => {
+            const level = this.meta.upgrades[key] || 0;
+            const maxed = level >= config.maxLevel;
+            const cost = maxed ? null : config.cost[level];
+            return {
+                key,
+                label: config.label,
+                hint: config.hint,
+                level,
+                maxLevel: config.maxLevel,
+                maxed,
+                cost,
+                affordable: !maxed && (this.meta.legacyPoints || 0) >= cost
+            };
+        });
+        return { points: this.meta.legacyPoints || 0, upgrades };
+    }
+
+    buyMetaUpgrade(key) {
+        const config = Game.META_UPGRADES[key];
+        if (!config) return false;
+        const level = this.meta.upgrades[key] || 0;
+        if (level >= config.maxLevel) return false;
+        const cost = config.cost[level];
+        if ((this.meta.legacyPoints || 0) < cost) return false;
+
+        this.meta.legacyPoints -= cost;
+        this.meta.upgrades[key] = level + 1;
+        saveMeta(this.profileId, this.meta);
+        return true;
     }
 
     // Luck used by ore rolls already includes trait and accessory bonuses.
@@ -523,6 +644,12 @@ export class Game {
             gold: 6 + luck * 1.8 + rareBonus * 1.2,
             mithril: 0.5 + luck * 0.55 + rareBonus * 0.6
         };
+        // A themed floor (ice/lava) nudges its signature ore's weight up.
+        if (this.floorTheme?.oreBonus) {
+            Object.entries(this.floorTheme.oreBonus).forEach(([ore, mult]) => {
+                if (weights[ore] !== undefined) weights[ore] *= mult;
+            });
+        }
         return this.pickWeighted(weights, 'coal');
     }
 
@@ -608,6 +735,7 @@ export class Game {
         const from = this.depth;
         this.depth = Math.max(0, this.depth - 1);
         this.floorNodesCleared = 0;
+        this.floorTheme = FLOOR_THEMES[this.depth] || null;
 
         // Clear the stripped floor.
         this.nodes.forEach((node) => this.scene.remove(node));
@@ -617,19 +745,29 @@ export class Game {
         if (this.depth > 0) {
             const count = this.getFloorNodeCount();
             for (let i = 0; i < count; i++) this.spawnNode();
-            this.app.ui.showBanner(
-                `▲ ${this.getFloorLabel()}`,
-                `광맥이 더 단단해집니다 · 목표 ${this.getFloorQuota()}광맥`,
-                '#8fe4ff'
-            );
-            this.pushCombatFeed(
-                `${this.getFloorLabel(from)}의 광맥을 모두 캐냈습니다. ${this.getFloorLabel()}으로 올라갑니다.`,
-                '#8fe4ff'
-            );
+            if (this.floorTheme) {
+                this.app.ui.showBanner(`❄ ${this.floorTheme.name}`, this.floorTheme.desc, '#8fe4ff');
+                this.pushCombatFeed(`${this.getFloorLabel()} — ${this.floorTheme.name}에 진입했습니다.`, '#8fe4ff');
+            } else {
+                this.app.ui.showBanner(
+                    `▲ ${this.getFloorLabel()}`,
+                    `광맥이 더 단단해집니다 · 목표 ${this.getFloorQuota()}광맥`,
+                    '#8fe4ff'
+                );
+                this.pushCombatFeed(
+                    `${this.getFloorLabel(from)}의 광맥을 모두 캐냈습니다. ${this.getFloorLabel()}으로 올라갑니다.`,
+                    '#8fe4ff'
+                );
+            }
+            this.app.multiplayer.broadcastEvent?.('floor_ascend', { floor: this.depth });
         } else {
             // Daylight. Nothing left above, so the mine stops generating.
             this.app.ui.showBanner('☀ 지상 도달', '30개 층을 모두 뚫고 올라왔습니다', '#ffe39a');
             this.pushCombatFeed('☀ 마침내 지상에 도달했습니다!', '#ffe39a');
+            const bonus = this.awardLegacyRunPoints();
+            if (bonus > 0) {
+                this.pushCombatFeed(`유산 포인트 +${bonus} 획득! 다음 광부에게 물려줄 수 있습니다.`, '#c9a6ff');
+            }
         }
 
         this.applyDepthAtmosphere();
@@ -643,15 +781,19 @@ export class Game {
      */
     applyDepthAtmosphere() {
         const t = Math.min(1, this.getFloorsClimbed() / this.startDepth);
+        const theme = this.floorTheme;
         if (this.ambientLight) {
             this.ambientLight.intensity = 4.5 + t * 3.5;
-            this.ambientLight.color.setHSL(0.72 - t * 0.62, 0.28 - t * 0.14, 0.55 + t * 0.18);
+            if (theme) this.ambientLight.color.copy(theme.lightColor);
+            else this.ambientLight.color.setHSL(0.72 - t * 0.62, 0.28 - t * 0.14, 0.55 + t * 0.18);
         }
         if (this.caveLight) {
-            this.caveLight.color.setHSL(0.74 - t * 0.62, 0.5 - t * 0.22, 0.55 + t * 0.15);
+            if (theme) this.caveLight.color.copy(theme.lightColor);
+            else this.caveLight.color.setHSL(0.74 - t * 0.62, 0.5 - t * 0.22, 0.55 + t * 0.15);
         }
         if (this.floor?.material) {
-            this.floor.material.color.setHSL(0.78 - t * 0.68, 0.16 + t * 0.06, 0.66 + t * 0.06);
+            if (theme) this.floor.material.color.copy(theme.floorColor);
+            else this.floor.material.color.setHSL(0.78 - t * 0.68, 0.16 + t * 0.06, 0.66 + t * 0.06);
         }
     }
 
@@ -991,6 +1133,7 @@ export class Game {
         this.app.ui.setCommandHandler((command) => this.setSquadCommand(command));
         this.app.ui.setStatHandler((stat) => this.upgradeStat(stat));
         this.app.ui.setFacilityHandler((key) => this.upgradeFacility(key));
+        this.app.ui.setMetaHandler((key) => this.buyMetaUpgrade(key));
         this.app.ui.setAutoCombatHandler(() => this.toggleAutoCombat());
         // Mine defence waves are launched by the player from the combat menu.
         this.app.ui.setWaveStartHandler(() => {
@@ -1614,6 +1757,7 @@ export class Game {
             if (this.quest.stage === 'recruit') return;
             this.waveActive = false;
             this.pushCombatFeed(`웨이브 ${this.wave} 격퇴! 보상을 선택하세요.`, '#8fd9a8');
+            this.app.multiplayer.broadcastEvent?.('wave_clear', { wave: this.wave });
             // Lock the next wave right away, then let the clear banner land
             // before the reward cards slide in.
             const clearedWave = this.wave;
@@ -1784,6 +1928,7 @@ export class Game {
         const nextWave = waveOverride ?? (Math.max(0, this.wave) + 1);
         this.waveEnemyTotal = getWaveComposition(nextWave).reduce((sum, [, count]) => sum + count, 0);
         this.startWave(nextWave);
+        this.app.multiplayer.broadcastEvent?.('wave_start', { wave: nextWave });
         return { ok: true, wave: nextWave };
     }
 
@@ -2529,7 +2674,8 @@ export class Game {
             this.getEquipmentData(),
             this.getCombatData(),
             this.getDepthData(),
-            this.getFacilitiesData()
+            this.getFacilitiesData(),
+            this.getMetaData()
         );
     }
 
@@ -2639,7 +2785,52 @@ export class Game {
         audio.play().catch(() => {});
     }
 
+    // Shows every other leader sharing this room as a translucent, tinted
+    // ghost of the player's own model. Real co-op play (shared veins/waves)
+    // is a bigger architecture change — see instant_db.md — but at least the
+    // "same room" is no longer invisible.
     syncPlayers(peers) {
-        // Simple visualization of other players would go here
+        const seen = new Set();
+        Object.entries(peers || {}).forEach(([peerId, peer]) => {
+            if (!peer?.pos) return;
+            seen.add(peerId);
+
+            let mesh = this.peerMeshes[peerId];
+            if (!mesh) {
+                mesh = this.assets.leader.clone();
+                mesh.scale.setScalar(1.25);
+                mesh.traverse((child) => {
+                    if (child.material) {
+                        child.material = child.material.clone();
+                        child.material.transparent = true;
+                        child.material.opacity = 0.72;
+                        child.material.color = new THREE.Color(0x7fd4e8);
+                    }
+                });
+                this.scene.add(mesh);
+                this.peerMeshes[peerId] = mesh;
+            }
+            mesh.position.set(peer.pos.x ?? 0, peer.pos.y ?? 0, peer.pos.z ?? 0);
+        });
+
+        // Peers who left the room (or whose presence expired) are removed.
+        Object.keys(this.peerMeshes).forEach((peerId) => {
+            if (seen.has(peerId)) return;
+            this.scene.remove(this.peerMeshes[peerId]);
+            delete this.peerMeshes[peerId];
+        });
+    }
+
+    // Fire-and-forget social pings from other rooms' leaders — a light layer
+    // of "we're in this together" without syncing actual world/combat state.
+    handlePeerEvent(event) {
+        if (!event || typeof event !== 'object') return;
+        if (event.type === 'wave_start') {
+            this.pushCombatFeed(`🔔 다른 광부가 웨이브 ${event.wave} 방어를 시작했습니다.`, '#9fc4d8');
+        } else if (event.type === 'wave_clear') {
+            this.pushCombatFeed(`🔔 다른 광부가 웨이브 ${event.wave}을(를) 격퇴했습니다!`, '#8fd9a8');
+        } else if (event.type === 'floor_ascend') {
+            this.pushCombatFeed(`🔔 다른 광부가 ${this.getFloorLabel(event.floor)}(으)로 올라갔습니다.`, '#8fe4ff');
+        }
     }
 }

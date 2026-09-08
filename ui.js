@@ -22,6 +22,8 @@ export class UI {
         this.battleResult = null;
         this.statHandler = null;
         this.facilityHandler = null;
+        this.metaHandler = null;
+        this.metaData = null;
         this.traitData = null;
         this.traitFilter = 'all';
         this.resetHandler = null;
@@ -125,6 +127,12 @@ export class UI {
                 </div>
                 <div class="status-traits" style="margin-top:10px; display:grid; gap:8px; overflow-y:auto;
                             padding-right:4px; min-height:0;"></div>
+                <div style="margin-top:18px; display:flex; justify-content:space-between; align-items:baseline;">
+                    <div style="font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#c9a6ff;">🏛 유산</div>
+                    <div class="legacy-points" style="font-size:11.5px; color:#8d80a0;"></div>
+                </div>
+                <div style="font-size:11px; color:#8d80a0; margin-top:3px;">과거 광부들이 남긴 포인트로, 새로 태어날 광부에게 영구 혜택을 물려줍니다.</div>
+                <div class="legacy-rows" style="margin-top:9px; display:grid; gap:7px;"></div>
                 <button class="status-codex" type="button" style="margin-top:14px; width:100%; padding:9px;
                         border:1px solid #6c568d; border-radius:7px; background:#2a203a; color:#e8dcf5;
                         font:700 12px Inter, sans-serif; cursor:pointer; flex:none;">특성 도감 보기</button>
@@ -178,6 +186,8 @@ export class UI {
                 </div>
             `).join('');
 
+        this.renderLegacyShop();
+
         const owned = this.traitData?.owned || [];
         this.statusOverlay.querySelector('.status-trait-count').textContent = `${owned.length}개 보유`;
 
@@ -199,6 +209,44 @@ export class UI {
                 </div>
             `;
         }).join('');
+    }
+
+    setMetaHandler(handler) {
+        this.metaHandler = handler;
+    }
+
+    // Legacy shop: rows are (re)built every render since the upgrade list is
+    // short and this only runs while the status window is open, not per frame.
+    renderLegacyShop() {
+        if (!this.statusOverlay || !this.metaData) return;
+        this.statusOverlay.querySelector('.legacy-points').textContent = `보유 ${this.metaData.points} 포인트`;
+
+        const rows = this.statusOverlay.querySelector('.legacy-rows');
+        rows.innerHTML = this.metaData.upgrades.map((upgrade) => `
+            <div style="display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:9px;
+                        border:1px solid #4b3a5d; background:rgba(255,255,255,.03);">
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:12.5px; font-weight:700; color:#e8d8ff;">
+                        ${upgrade.label} <span style="color:#a99bb8; font-weight:400;">Lv.${upgrade.level}/${upgrade.maxLevel}</span>
+                    </div>
+                    <div style="font-size:11px; color:#a99bb8; margin-top:2px;">${upgrade.hint}</div>
+                </div>
+                <button class="legacy-buy" data-upgrade="${upgrade.key}" type="button"
+                        style="flex:none; cursor:pointer; border:1px solid ${upgrade.affordable ? '#9ad9b0' : '#6c568d'};
+                        border-radius:7px; background:#2a203a; color:#fff1d1; font:700 11.5px Inter, sans-serif;
+                        padding:7px 10px; opacity:${upgrade.maxed || upgrade.affordable ? '1' : '.42'};
+                        cursor:${upgrade.maxed ? 'default' : upgrade.affordable ? 'pointer' : 'not-allowed'};"
+                        ${upgrade.maxed || !upgrade.affordable ? 'disabled' : ''}>
+                    ${upgrade.maxed ? '완료' : `${upgrade.cost}P`}
+                </button>
+            </div>
+        `).join('');
+
+        rows.querySelectorAll('.legacy-buy').forEach((button) => {
+            button.addEventListener('click', () => {
+                if (this.metaHandler) this.metaHandler(button.dataset.upgrade);
+            });
+        });
     }
 
     // ------------------------------------------------------------- workshop
@@ -2183,10 +2231,12 @@ export class UI {
         music.play().catch(() => {});
     }
 
-    update(inventory, traits, command = this.activeCommand, workerCount = 0, playerHp = 100, maxPlayerHp = 100, quest = null, stats = null, miningProgress = null, traitData = null, equipment = null, combat = null, depth = null, facilities = null) {
+    update(inventory, traits, command = this.activeCommand, workerCount = 0, playerHp = 100, maxPlayerHp = 100, quest = null, stats = null, miningProgress = null, traitData = null, equipment = null, combat = null, depth = null, facilities = null, meta = null) {
         this.equipmentData = equipment || this.equipmentData;
         this.updateDepth(depth);
         this.updateFacilities(facilities);
+        this.metaData = meta || this.metaData;
+        if (this.statusOpen) this.renderLegacyShop();
         // Cached so the status window can render current vitals on demand.
         this.lastPlayerHp = playerHp;
         this.lastMaxPlayerHp = maxPlayerHp;
