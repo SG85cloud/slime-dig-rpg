@@ -921,7 +921,10 @@ export class Game {
         if (!source) return null;
 
         const enemy = source.clone();
-        const scaled = scaleEnemyStats(config, Math.max(1, this.wave));
+        // Field encounters (no formal wave running) scale off depth progress
+        // instead of the wave counter, which may still be 0 for a leader who
+        // hasn't started a defence run yet.
+        const scaled = scaleEnemyStats(config, Math.max(1, options.waveOverride ?? this.wave));
         const angle = options.angle !== undefined ? options.angle : Math.random() * Math.PI * 2;
         const distance = options.distance !== undefined ? options.distance : 17 + Math.random() * 7;
         const origin = options.origin || this.player.position;
@@ -980,6 +983,7 @@ export class Game {
             elite: config.elite,
             xp: config.xp,
             isQuestEnemy: !!options.isQuestEnemy,
+            isFieldEnemy: !!options.isFieldEnemy,
             healthBar: bar,
             bob: Math.random() * Math.PI * 2,
             windup: 0,
@@ -1744,9 +1748,10 @@ export class Game {
     }
 
     /**
-     * Waves are opt-in. Nothing spawns on a timer any more: the player chooses
-     * when to start a defence run from the menu, so mining time is never
-     * interrupted by an ambush they did not ask for.
+     * Formal defence waves stay opt-in: the player chooses when to start one
+     * from the menu. (Ambient field monsters are a separate, lighter system —
+     * see updateFieldEncounters — that does interrupt free mining on a timer,
+     * by design: auto-combat should have something to react to.)
      */
     updateWaves(delta) {
         if (this.quest.stage !== 'complete' && this.quest.stage !== 'recruit') return;
@@ -1766,6 +1771,56 @@ export class Game {
             this.app.ui.showWaveCleared(this.wave);
             this.persist();
         }
+    }
+
+    // -------------------------------------------------- ambient field mobs
+    // While the leader is out mining free-form (no formal wave running), a
+    // lone monster — or a small pack, deeper down — wanders in on a randomised
+    // timer. Auto-combat (on by default) simply reacts to it like any other
+    // enemy; nothing here touches the wave/reward flow above.
+    updateFieldEncounters(delta) {
+        if (this.quest.stage !== 'complete') return;
+        if (this.waveActive || this.isDown) return;
+
+        if (this.fieldEncounterTimer === undefined || this.fieldEncounterTimer === null) {
+            this.fieldEncounterTimer = this.rollFieldEncounterDelay();
+        }
+        this.fieldEncounterTimer -= delta;
+        if (this.fieldEncounterTimer > 0) return;
+
+        const activeFieldEnemies = this.enemies.filter((enemy) => enemy.userData.isFieldEnemy && !enemy.userData.dying).length;
+        if (activeFieldEnemies >= 2) {
+            // Already busy; check back soon rather than piling more monsters on.
+            this.fieldEncounterTimer = 8;
+            return;
+        }
+
+        this.spawnFieldEncounter();
+        this.fieldEncounterTimer = this.rollFieldEncounterDelay();
+    }
+
+    // Roughly every 45-90s early on, tightening a little as the leader climbs.
+    rollFieldEncounterDelay() {
+        const tightening = Math.min(15, this.getFloorsClimbed() * 0.5);
+        return (45 - tightening) + Math.random() * 45;
+    }
+
+    spawnFieldEncounter() {
+        const climbed = this.getFloorsClimbed();
+        const pool = climbed < 6 ? ['crawler']
+            : climbed < 14 ? ['crawler', 'archer']
+            : ['crawler', 'archer', 'brute'];
+        const count = climbed >= 10 && Math.random() < 0.4 ? 2 : 1;
+        // Ties field difficulty to depth climbed rather than the wave counter,
+        // which can still be 0 for a leader who never started a defence run.
+        const waveOverride = Math.max(1, Math.round(climbed * 0.6));
+
+        for (let i = 0; i < count; i++) {
+            const typeId = pool[Math.floor(Math.random() * pool.length)];
+            const angle = Math.random() * Math.PI * 2;
+            this.spawnEnemy(typeId, { angle, distance: 13 + Math.random() * 5, isFieldEnemy: true, waveOverride });
+        }
+        this.pushCombatFeed('⚠ 몬스터가 접근합니다!', '#ff9c9c');
     }
 
     // ------------------------------------------------------- wave rewards
@@ -2563,6 +2618,11 @@ export class Game {
     }
 
     update(delta) {
+        // A stalled tab (backgrounded, GC pause, breakpoint) can hand back a
+        // huge delta on the next frame; every per-frame movement/timer below
+        // scales with it, so an unclamped spike sends enemies flying off to
+        // nowhere in one step. Cap it the same way the camera smoothing does.
+        delta = Math.min(delta, 0.1);
         this.elapsed += delta;
 
         // Periodic autosave keeps progression safe without hammering storage.
@@ -2573,6 +2633,7 @@ export class Game {
         }
 
         this.updateWaves(delta);
+        this.updateFieldEncounters(delta);
         this.nodes.forEach((node) => {
             const pulse = node.userData.hitPulse || 0;
             node.userData.hitPulse = Math.max(0, pulse - delta * 8);
