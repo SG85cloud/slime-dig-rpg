@@ -5,6 +5,7 @@ import {
     ORE_KEYS,
     ORE_INFO,
     QUALITY_TIERS,
+    DEFAULT_RECIPES,
     recipeKey,
     previewCraft,
     forgeItem,
@@ -162,6 +163,9 @@ export class Game {
         this.groundOffsets = {};
         this.waveActive = false;
         this.autoCombat = true;
+        // When free (no manual target, not fighting), the leader keeps
+        // heading for the nearest ore instead of standing idle.
+        this.autoMine = true;
         this.playerAttackTimer = 0;
         this.playerTarget = null;
         this.combatFeed = [];
@@ -215,6 +219,9 @@ export class Game {
         this.deepestReached = this.startDepth;
         this.ascending = false;
         this.floorTheme = FLOOR_THEMES[this.depth] || null;
+        // Floor quota met, but ascending is now a deliberate click rather
+        // than automatic — the player keeps mining leftovers until ready.
+        this.floorReadyToAscend = false;
 
         // ------------------------------------------------------ surface loop
         // Reaching daylight is a decisive battle, not a quiet stop: the mine's
@@ -423,7 +430,7 @@ export class Game {
         if (Number.isFinite(hp) && hp > 0) this.savedHp = hp;
 
         if ([
-            'coal', 'recruit', 'reach29', 'iron20', 'craft', 'reach27',
+            'coal', 'recruit', 'statUpgrade', 'reach29', 'iron20', 'craft', 'reach27',
             'gold15', 'reach26', 'craft3', 'trait25', 'waveDefense', 'complete'
         ].includes(saved.quest?.stage)) {
             this.quest.stage = saved.quest.stage;
@@ -439,6 +446,7 @@ export class Game {
         const cycle = Number(saved.cycle);
         if (Number.isFinite(cycle) && cycle >= 0) this.cycle = Math.floor(cycle);
         if (typeof saved.surfaceConquered === 'boolean') this.surfaceConquered = saved.surfaceConquered;
+        if (typeof saved.floorReadyToAscend === 'boolean') this.floorReadyToAscend = saved.floorReadyToAscend;
 
         const workerCount = Number(saved.workerCount);
         // Sanity bound only; addWorker() enforces the real cap once facilities
@@ -463,6 +471,7 @@ export class Game {
         const wave = Number(saved.wave);
         if (Number.isFinite(wave) && wave > 0) this.wave = Math.floor(wave);
         if (typeof saved.autoCombat === 'boolean') this.autoCombat = saved.autoCombat;
+        if (typeof saved.autoMine === 'boolean') this.autoMine = saved.autoMine;
 
         // Which floor of the shaft the leader had climbed to.
         const depth = Number(saved.depth);
@@ -518,6 +527,7 @@ export class Game {
             },
             cycle: this.cycle,
             surfaceConquered: this.surfaceConquered,
+            floorReadyToAscend: this.floorReadyToAscend,
             workerCount: this.workers.length,
             workerXp: this.workers.map((worker) => worker.userData.workerXp || 0),
             squadCommand: this.squadCommand,
@@ -529,6 +539,7 @@ export class Game {
             totalCrafted: this.totalCrafted || 0,
             wave: this.wave,
             autoCombat: this.autoCombat,
+            autoMine: this.autoMine,
             depth: this.depth,
             floorNodesCleared: this.floorNodesCleared,
             deepestReached: this.deepestReached,
@@ -846,6 +857,13 @@ export class Game {
         return this.floorNodesCleared >= this.getFloorQuota();
     }
 
+    /** Player-clicked confirmation once the floor quota is met. */
+    requestAscend() {
+        if (!this.floorReadyToAscend) return { ok: false };
+        this.ascendFloor();
+        return { ok: true };
+    }
+
     /**
      * The floor is stripped: collapse it and climb one level toward daylight.
      * Every remaining vein is removed and the next floor is seeded fresh with
@@ -858,6 +876,7 @@ export class Game {
         const from = this.depth;
         this.depth = Math.max(0, this.depth - 1);
         this.floorNodesCleared = 0;
+        this.floorReadyToAscend = false;
         this.floorTheme = FLOOR_THEMES[this.depth] || null;
 
         // Clear the stripped floor.
@@ -1379,6 +1398,7 @@ export class Game {
         this.app.ui.setFacilityHandler((key) => this.upgradeFacility(key));
         this.app.ui.setMetaHandler((key) => this.buyMetaUpgrade(key));
         this.app.ui.setAutoCombatHandler(() => this.toggleAutoCombat());
+        this.app.ui.setAutoMineHandler(() => this.toggleAutoMine());
         // Mine defence waves are launched by the player from the combat menu.
         this.app.ui.setWaveStartHandler(() => {
             const result = this.startDefenceWave();
@@ -1391,6 +1411,8 @@ export class Game {
         this.app.ui.setQuestRewardHandler(() => this.claimQuestReward());
         // Status window: spend a ticket to reroll the leader's innate trait.
         this.app.ui.setTraitRerollHandler(() => this.rerollTrait());
+        // Depth panel: climb to the next floor once its quota is met.
+        this.app.ui.setAscendHandler(() => this.requestAscend());
         // Crafting workshop: the UI owns the mix, gameLogic owns the forge.
         this.app.ui.setCraftHandlers({
             preview: (mix, slot) => this.getCraftData(mix, slot),
@@ -1518,6 +1540,20 @@ export class Game {
                 progress: Math.max(0, 1 - this.enemies.length),
                 target: 1,
                 accent: '#ffcf8a'
+            };
+        }
+        if (this.quest.stage === 'statUpgrade') {
+            const done = ['strength', 'speed', 'luck'].filter((stat) => this.stats[stat] >= 2).length;
+            return {
+                stage: 'statUpgrade',
+                title: '리더 강화',
+                description: this.quest.rewardReady
+                    ? '힘·속도·행운을 모두 강화했습니다! 보상을 받으세요.'
+                    : '리더 스탯 창에서 힘·속도·행운을 각각 한 번씩 강화하세요.',
+                progress: done,
+                target: 3,
+                rewardReady: this.quest.rewardReady,
+                accent: this.quest.rewardReady ? '#8fd9a8' : '#ffcf8a'
             };
         }
         if (this.quest.stage === 'reach29') {
@@ -1669,10 +1705,12 @@ export class Game {
             return {
                 stage: 'climb',
                 title: `${fromLabel}에서 ${toLabel}으로`,
-                description: `이 층의 광맥을 ${this.getFloorQuota()}개 캐내 다음 층으로 올라가세요.`,
+                description: this.floorReadyToAscend
+                    ? '광맥을 모두 캐냈습니다! 상단의 이동 버튼을 눌러 다음 층으로 올라가세요.'
+                    : `이 층의 광맥을 ${this.getFloorQuota()}개 캐내 다음 층으로 올라가세요.`,
                 progress: this.floorNodesCleared,
                 target: this.getFloorQuota(),
-                accent: '#8fe4ff'
+                accent: this.floorReadyToAscend ? '#8fd9a8' : '#8fe4ff'
             };
         }
 
@@ -1743,6 +1781,8 @@ export class Game {
         }
         if (this.quest.rewardReady) return;
         const done =
+            (this.quest.stage === 'statUpgrade'
+                && this.stats.strength >= 2 && this.stats.speed >= 2 && this.stats.luck >= 2) ||
             (this.quest.stage === 'reach29' && this.depth <= 29) ||
             (this.quest.stage === 'iron20' && this.inventory.iron >= 20) ||
             (this.quest.stage === 'reach27' && this.depth <= 27) ||
@@ -1767,7 +1807,13 @@ export class Game {
         let nextStage;
         let nextGoal;
 
-        if (this.quest.stage === 'reach29') {
+        if (this.quest.stage === 'statUpgrade') {
+            this.inventory.coal += 12;
+            this.inventory.iron += 6;
+            message = '보상으로 석탄 12 · 철광석 6을 받았습니다!';
+            nextStage = 'reach29';
+            nextGoal = '지하 29층에 도착하세요.';
+        } else if (this.quest.stage === 'reach29') {
             if (this.addWorker()) {
                 message = '보상으로 워커를 영입하였습니다!';
             } else {
@@ -1844,6 +1890,12 @@ export class Game {
     toggleAutoCombat() {
         this.autoCombat = !this.autoCombat;
         return this.autoCombat;
+    }
+
+    toggleAutoMine() {
+        this.autoMine = !this.autoMine;
+        this.persist();
+        return this.autoMine;
     }
 
     getPlayerAttackInterval() {
@@ -1979,7 +2031,7 @@ export class Game {
         if (this.quest.stage === 'recruit' && this.enemies.filter((e) => !e.userData.dying).length <= 1) {
             if (this.addWorker()) {
                 this.pushCombatFeed('워커 슬라임이 합류했습니다!', '#ffe39a');
-                this.advanceTutorialQuest('reach29', '다음 목표', '지하 29층에 도착하세요.');
+                this.advanceTutorialQuest('statUpgrade', '다음 목표', '리더 스탯 창에서 힘·속도·행운을 각각 강화하세요.');
             }
         }
     }
@@ -2023,6 +2075,15 @@ export class Game {
             this.playerData.hp = Math.min(this.maxPlayerHp, this.playerData.hp + healed);
             this.combatFX.spawnDamageNumber(this.player.position, healed, { color: '#8fd9a8', text: `+${healed}` });
         }
+
+        // Legendary weapon proc: a bonus magic burst on top of the normal hit.
+        if (Math.random() < this.getSpellProcChance() && target.userData && !target.userData.dying) {
+            const burstDamage = Math.max(1, Math.round(this.getTotalAttack() * 0.75));
+            this.combatFX.spawnFlash(target.position, 0x9f6bff, 46, 0.4);
+            this.combatFX.spawnBurst(target.position, { color: 0x9f6bff, radius: 0.7, expand: 3, height: target.userData.baseY });
+            this.damageEnemy(target, burstDamage, { from: this.player.position, color: '#c9a6ff' });
+            this.pushCombatFeed('✨ 마법 폭발이 터졌습니다!', '#c9a6ff');
+        }
     }
 
     /** Animates the weapon arm through its swing / idle guard poses. */
@@ -2055,6 +2116,14 @@ export class Game {
     /** Damage applied to the leader, with hit feedback and death handling. */
     damagePlayer(amount, source) {
         if (this.isDown) return;
+
+        // Legendary armor proc: shrug off the hit entirely.
+        if (Math.random() < this.getBlockChance()) {
+            this.combatFX.spawnFlash(this.player.position, 0x8fe4ff, 30, 0.3);
+            this.pushCombatFeed('🛡 방어구가 공격을 완전히 막아냈습니다!', '#8fe4ff');
+            return;
+        }
+
         const damage = Math.max(1, Math.round(
             amount * this.traitEffects.damageTakenMult * this.getDamageReductionMult()
         ));
@@ -2441,8 +2510,10 @@ export class Game {
 
     // Roughly every 45-90s early on, tightening a little as the leader climbs.
     rollFieldEncounterDelay() {
-        const tightening = Math.min(15, this.getFloorsClimbed() * 0.5);
-        return (45 - tightening) + Math.random() * 45;
+        // Encounters come noticeably faster the higher the leader has
+        // climbed, down to near-constant pressure right under the surface.
+        const tightening = Math.min(25, this.getFloorsClimbed() * 0.8);
+        return (35 - tightening) + Math.random() * 35;
     }
 
     spawnFieldEncounter() {
@@ -2450,10 +2521,10 @@ export class Game {
         const pool = climbed < 6 ? ['crawler']
             : climbed < 14 ? ['crawler', 'archer']
             : ['crawler', 'archer', 'brute'];
-        const count = climbed >= 10 && Math.random() < 0.4 ? 2 : 1;
+        const count = climbed >= 6 && Math.random() < 0.5 ? 2 : 1;
         // Ties field difficulty to depth climbed rather than the wave counter,
         // which can still be 0 for a leader who never started a defence run.
-        const waveOverride = Math.max(1, Math.round(climbed * 0.6));
+        const waveOverride = Math.max(1, Math.round(climbed * 0.9));
 
         for (let i = 0; i < count; i++) {
             const typeId = pool[Math.floor(Math.random() * pool.length)];
@@ -2674,6 +2745,7 @@ export class Game {
             : null;
         return {
             auto: this.autoCombat,
+            autoMine: this.autoMine,
             isDown: this.isDown,
             reviveIn: this.isDown ? Math.max(0, this.deathTimer) : 0,
             wave: Math.max(0, this.wave),
@@ -2729,7 +2801,18 @@ export class Game {
 
     // Extra lifesteal chance granted by an accessory, additive with traits.
     getEquipmentLifesteal() {
-        return this.equippedAccessory?.stats.lifesteal || 0;
+        return (this.equipped?.stats.lifesteal || 0) + (this.equippedAccessory?.stats.lifesteal || 0);
+    }
+
+    // A legendary-only weapon option: a flat chance per hit to also blast the
+    // target with a bonus magic burst, on top of the normal strike.
+    getSpellProcChance() {
+        return this.equipped?.stats.spellProcChance || 0;
+    }
+
+    // A legendary-only armor option: a flat chance to shrug off a hit entirely.
+    getBlockChance() {
+        return this.equippedArmor?.stats.blockChance || 0;
     }
 
     // Max HP bonus from every equipped slot combined.
@@ -2872,6 +2955,10 @@ export class Game {
         }
         if (entry.isNew) message += ' 새 합성법이 기록되었습니다.';
         if (upgraded) message += ' 장착했습니다!';
+        if (result.item.options?.length > 0) {
+            const optionText = result.item.options.map((option) => option.label).join(' · ');
+            message += ` 옵션: ${optionText}`;
+        }
 
         this.playSound(result.success ? 'mining-hit' : 'slime-squish');
         this.persist();
@@ -2924,6 +3011,19 @@ export class Game {
             equipped: equippedInSlot,
             baseAttack: this.attackPower,
             totalAttack: this.getTotalAttack(),
+            // Curated ratios to try before the player has discovered their
+            // own — the actual result still follows the normal archetype/
+            // tier rules, so the preview here is what it would really forge.
+            defaultRecipes: DEFAULT_RECIPES
+                .filter((recipe) => recipe.slot === slot)
+                .map((recipe) => ({
+                    id: recipe.id,
+                    label: recipe.label,
+                    note: recipe.note,
+                    mix: recipe.mix,
+                    preview: previewCraft(recipe.mix, this.getEffectiveLuck(), slot),
+                    affordable: this.canAffordMix(recipe.mix)
+                })),
             // Recipes saved before armor/accessory existed have no `slot` field
             // and were always weapons, so default missing slots to 'weapon'.
             recipes: this.recipeBook
@@ -3342,6 +3442,18 @@ export class Game {
         // chases and fights instead of walking to a click destination.
         const inCombat = this.updatePlayerCombat(delta);
 
+        // Auto-mine: once free (no target, not fighting) and the toggle is
+        // on, keep heading for the nearest ore instead of standing idle —
+        // the moment a fight ends this picks right back up on its own.
+        if (!inCombat && !this.isDown && this.autoMine && !this.playerData.miningTarget) {
+            const nearest = this.findNearestNode(this.player.position);
+            if (nearest) {
+                this.playerData.miningTarget = nearest;
+                this.playerData.targetPos.copy(this.getMiningStandPosition(nearest));
+                this.miningHitTimer = 0;
+            }
+        }
+
         if (!inCombat && !this.isDown) {
             // Move the leader on the XZ plane and clamp the last step so it never
             // overshoots the selected ore node.
@@ -3503,7 +3615,14 @@ export class Game {
             // Emptying a seam is progress toward stripping this floor bare.
             this.floorNodesCleared += 1;
             if (this.depth > 0 && this.isFloorCleared()) {
-                this.ascendFloor();
+                if (!this.floorReadyToAscend) {
+                    this.floorReadyToAscend = true;
+                    this.pushCombatFeed(
+                        `${this.getFloorLabel()}의 광맥을 모두 캐냈습니다! 다음 층으로 이동할 수 있습니다.`,
+                        '#8fe4ff'
+                    );
+                    this.persist();
+                }
             } else if (this.depth > 0) {
                 // Replace it so the floor always has something left to work.
                 this.spawnNode();
@@ -3526,7 +3645,8 @@ export class Game {
             cleared: Math.min(this.floorNodesCleared, quota),
             quota,
             hardness: this.getDepthHardness(),
-            surface: this.depth <= 0
+            surface: this.depth <= 0,
+            readyToAscend: this.floorReadyToAscend
         };
     }
 

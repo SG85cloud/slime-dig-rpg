@@ -329,6 +329,8 @@ export class UI {
                     <div style="display:flex; flex-direction:column; min-height:0;">
                         <div class="craft-equipped" style="padding:13px; border-radius:11px; border:1px solid #5a4460;
                                     background:rgba(0,0,0,.36);"></div>
+                        <div style="margin-top:14px; font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#ffcf6b;">기본 조합법</div>
+                        <div class="craft-default-recipes" style="margin-top:9px; display:grid; gap:8px;"></div>
                         <div style="margin-top:14px; display:flex; justify-content:space-between; align-items:baseline;">
                             <div style="font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#cbb8e8;">발견한 합성법</div>
                             <div class="craft-recipe-count" style="color:#a99bb8; font-size:11px;"></div>
@@ -507,6 +509,8 @@ export class UI {
         if (stats.luck) chips.push({ label: `행운 +${Math.round(stats.luck * 10) / 10}`, color: '#c7a3ef' });
         if (stats.lifesteal) chips.push({ label: `흡혈 +${Math.round(stats.lifesteal * 100)}%`, color: '#ff8fae' });
         if (stats.hp) chips.push({ label: `체력 +${stats.hp}`, color: '#8fd9a8' });
+        if (stats.spellProcChance) chips.push({ label: `마법 폭발 ${Math.round(stats.spellProcChance * 100)}%`, color: '#c9a6ff' });
+        if (stats.blockChance) chips.push({ label: `피해 무효 ${Math.round(stats.blockChance * 100)}%`, color: '#8fe4ff' });
         return chips;
     }
 
@@ -653,6 +657,46 @@ export class UI {
                 </div>
             `;
         }
+
+        // Default recipes — curated starting ratios, not yet discovered by the player.
+        const defaultsEl = this.craftOverlay.querySelector('.craft-default-recipes');
+        defaultsEl.innerHTML = '';
+        (data.defaultRecipes || []).forEach((recipe) => {
+            const tier = tierOf(recipe.preview.tier.id);
+            const card = document.createElement('div');
+            card.style.cssText = `padding:10px 11px; border-radius:9px; border:1px solid ${recipe.affordable ? '#d19a5f' : '#5a4460'};
+                                  background:rgba(255,255,255,.03);`;
+            const mixText = ['coal', 'iron', 'gold', 'mithril']
+                .filter((ore) => recipe.mix[ore] > 0)
+                .map((ore) => {
+                    const labels = { coal: '석탄', iron: '철', gold: '금', mithril: '미스릴' };
+                    return `${labels[ore]} ${recipe.mix[ore]}`;
+                })
+                .join(' · ');
+            card.innerHTML = `
+                <div style="display:flex; align-items:center; gap:9px;">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:13px; font-weight:800; color:#fff1d1;">${recipe.label}</div>
+                        <div style="font-size:11px; color:#a99bb8; margin-top:2px;">${mixText}</div>
+                    </div>
+                    <button class="default-recipe-load" type="button" style="cursor:pointer; border:1px solid #d19a5f;
+                            border-radius:7px; background:#3a2818; color:#ffe6c4; padding:6px 10px;
+                            font:700 11px Inter, sans-serif;">불러오기</button>
+                </div>
+                <div style="margin-top:7px; font-size:11px; color:#8d80a0;">
+                    예상 결과 <span style="color:${tier.color}; font-weight:700;">${recipe.preview.expectedName}</span>
+                    (${tier.label}) · 성공 확률 ${Math.round(recipe.preview.chance * 100)}%
+                </div>
+                <div style="margin-top:3px; font-size:11px; color:#8d80a0;">${recipe.note}</div>
+            `;
+            card.querySelector('.default-recipe-load').addEventListener('click', () => {
+                Object.keys(this.craftMix).forEach((ore) => {
+                    this.craftMix[ore] = recipe.mix[ore] || 0;
+                });
+                this.refreshCraftWorkshop(null);
+            });
+            defaultsEl.appendChild(card);
+        });
 
         // Recipe book
         this.craftOverlay.querySelector('.craft-recipe-count').textContent = `${data.recipes.length}종 기록됨`;
@@ -929,8 +973,23 @@ export class UI {
                 <div class="depth-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#4d7fa0,#9fe0ff); transition:width .3s;"></div>
             </div>
             <div class="depth-progress" style="margin-top:6px; font-size:11.5px; color:#9fc4d8;">광맥 0 / 8 채굴 완료 · 모두 캐면 위층으로</div>
+            <button class="depth-ascend" type="button" style="
+                display:none; margin-top:9px; width:100%; padding:8px 9px; pointer-events:auto;
+                border:1px solid #8fe4ff; border-radius:7px; background:linear-gradient(180deg,#2c5f78,#173a4d);
+                color:#eafcff; font:800 12px Inter, sans-serif; cursor:pointer;
+                box-shadow:0 0 14px rgba(143,228,255,.35);
+            ">▲ 다음 층으로 이동</button>
         `;
         this.container.appendChild(this.depthPanel);
+
+        this.depthPanel.querySelector('.depth-ascend').addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.ascendHandler) this.ascendHandler();
+        });
+    }
+
+    setAscendHandler(handler) {
+        this.ascendHandler = handler;
     }
 
     updateDepth(depth) {
@@ -940,6 +999,8 @@ export class UI {
         const bar = this.depthPanel.querySelector('.depth-bar');
         const progress = this.depthPanel.querySelector('.depth-progress');
 
+        const ascendBtn = this.depthPanel.querySelector('.depth-ascend');
+
         if (depth.surface) {
             label.textContent = '☀ 지상';
             label.style.color = '#ffe39a';
@@ -948,6 +1009,7 @@ export class UI {
             bar.style.background = 'linear-gradient(90deg,#d8a24d,#ffe39a)';
             progress.textContent = `지하 ${depth.startDepth}층에서 지상까지 올라왔습니다`;
             this.depthPanel.style.borderColor = '#c99b4e';
+            ascendBtn.style.display = 'none';
             return;
         }
 
@@ -955,7 +1017,10 @@ export class UI {
         hardness.textContent = `암반 경도 x${depth.hardness.toFixed(1)}`;
         const ratio = Math.min(100, depth.cleared / Math.max(1, depth.quota) * 100);
         bar.style.width = `${ratio}%`;
-        progress.textContent = `광맥 ${depth.cleared} / ${depth.quota} 채굴 완료 · 모두 캐면 위층으로`;
+        progress.textContent = depth.readyToAscend
+            ? `광맥을 모두 캐냈습니다! 준비되면 다음 층으로 이동하세요.`
+            : `광맥 ${depth.cleared} / ${depth.quota} 채굴 완료 · 모두 캐면 위층으로`;
+        ascendBtn.style.display = depth.readyToAscend ? 'block' : 'none';
     }
 
     // --------------------------------------------------------- wave reward
@@ -1732,9 +1797,12 @@ export class UI {
             pointer-events: auto;
         `;
         this.combatPanel.innerHTML = `
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
                 <div style="font:700 11px Orbitron, sans-serif; letter-spacing:2px; color:#ffb3a6;">COMBAT</div>
-                <button class="auto-combat-toggle" type="button">⚔ 자동 전투 ON</button>
+                <div style="display:flex; gap:6px;">
+                    <button class="auto-mine-toggle" type="button">⛏ 자동 채굴 ON</button>
+                    <button class="auto-combat-toggle" type="button">⚔ 자동 전투 ON</button>
+                </div>
             </div>
             <div class="combat-status" style="margin-top:9px; font-size:12.5px; color:#d7cbe1; line-height:1.5;"></div>
             <button class="wave-start" type="button">🛡 광산 방어 시작</button>
@@ -1756,6 +1824,17 @@ export class UI {
         toggle.addEventListener('click', (event) => {
             event.stopPropagation();
             if (this.autoCombatHandler) this.autoCombatHandler();
+        });
+
+        const mineToggle = this.combatPanel.querySelector('.auto-mine-toggle');
+        mineToggle.style.cssText = `
+            cursor:pointer; border:1px solid #6fb08a; border-radius:7px; padding:5px 9px;
+            background:linear-gradient(180deg,#245c40,#123122); color:#dffff0;
+            font:700 11px Inter, sans-serif;
+        `;
+        mineToggle.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.autoMineHandler) this.autoMineHandler();
         });
 
         // Opt-in mine defence. Waves never start on their own any more.
@@ -1801,6 +1880,10 @@ export class UI {
         this.autoCombatHandler = handler;
     }
 
+    setAutoMineHandler(handler) {
+        this.autoMineHandler = handler;
+    }
+
     flashDamageVignette() {
         if (!this.damageVignette) return;
         this.damageVignette.style.transition = 'opacity .05s ease-out';
@@ -1844,6 +1927,13 @@ export class UI {
             ? 'linear-gradient(180deg,#7a3524,#4a1d12)'
             : 'linear-gradient(180deg,#3a3346,#211d2b)';
         toggle.style.borderColor = combat.auto ? '#d1785f' : '#6c568d';
+
+        const mineToggle = this.combatPanel.querySelector('.auto-mine-toggle');
+        mineToggle.textContent = combat.autoMine ? '⛏ 자동 채굴 ON' : '⏸ 자동 채굴 OFF';
+        mineToggle.style.background = combat.autoMine
+            ? 'linear-gradient(180deg,#245c40,#123122)'
+            : 'linear-gradient(180deg,#3a3346,#211d2b)';
+        mineToggle.style.borderColor = combat.autoMine ? '#6fb08a' : '#6c568d';
 
         const status = this.combatPanel.querySelector('.combat-status');
         if (combat.isDown) {

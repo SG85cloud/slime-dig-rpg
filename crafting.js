@@ -198,6 +198,29 @@ export const ITEM_ARCHETYPES = [
     }
 ];
 
+/**
+ * Curated starting points for a player who doesn't want to guess ratios from
+ * scratch. These are not a separate guaranteed-outcome system — loading one
+ * just fills the ore sliders, and the usual dominant-ore/mass/tier rules
+ * still decide what actually comes out of the forge.
+ */
+export const DEFAULT_RECIPES = [
+    {
+        id: 'starter_weapon',
+        slot: 'weapon',
+        label: '초급 무기 조합',
+        note: '철을 주재료로 삼은 안정적인 첫 검.',
+        mix: { coal: 30, iron: 20, gold: 0, mithril: 0 }
+    },
+    {
+        id: 'advanced_weapon',
+        slot: 'weapon',
+        label: '상급 무기 조합',
+        note: '철을 대량으로 쏟아붓는 고위험 고보상 조합.',
+        mix: { coal: 100, iron: 500, gold: 5, mithril: 0 }
+    }
+];
+
 /** Normalised ratio key so the same blend always maps to the same recipe. */
 export function recipeKey(mix) {
     return ORE_KEYS.map((ore) => `${ore}:${Math.max(0, Math.floor(mix[ore] || 0))}`).join('|');
@@ -324,12 +347,84 @@ export function previewCraft(mix, luck = 1, slot = 'weapon') {
         blend,
         chance,
         expectedName: buildItemName(archetype, tier),
-        expectedStats: buildItemStats(archetype, tier, score)
+        expectedStats: buildItemStats(archetype, tier, score),
+        // The exact bonus rolls only lock in at craft time — this is just
+        // how many the blend's natural tier would grant.
+        optionCount: getOptionCount(tier.id),
+        hasSpecialOption: tier.id === 'legendary'
     };
 }
 
 export function buildItemName(archetype, tier) {
     return tier.prefix ? `${tier.prefix} ${archetype.name}` : archetype.name;
+}
+
+/**
+ * Bonus option rolls layered on top of an item's base archetype stats.
+ * Higher tiers roll more of them, and the top tier always adds one
+ * guaranteed pick from a stronger, slot-specific special pool — a unique
+ * effect rather than just a bigger number. Only stat keys the gameplay code
+ * actually reads for that slot are used here, so nothing rolls dead.
+ */
+const OPTION_POOLS = {
+    weapon: [
+        { id: 'atk', key: 'attack', roll: (scale) => Math.max(1, Math.round(scale * 0.16)), label: (v) => `공격력 +${v}` },
+        { id: 'crit', key: 'crit', roll: () => (2 + Math.floor(Math.random() * 4)) / 100, label: (v) => `치명타 확률 +${Math.round(v * 100)}%` },
+        { id: 'hp', key: 'hp', roll: (scale) => Math.max(2, Math.round(scale * 0.35)), label: (v) => `최대 체력 +${v}` }
+    ],
+    armor: [
+        { id: 'def', key: 'defense', roll: (scale) => Math.max(1, Math.round(scale * 0.14)), label: (v) => `방어력 +${v}` },
+        { id: 'hp', key: 'hp', roll: (scale) => Math.max(3, Math.round(scale * 0.45)), label: (v) => `최대 체력 +${v}` }
+    ],
+    accessory: [
+        { id: 'luck', key: 'luck', roll: () => 1 + Math.floor(Math.random() * 3), label: (v) => `행운 +${v}` },
+        { id: 'crit', key: 'crit', roll: () => (2 + Math.floor(Math.random() * 4)) / 100, label: (v) => `치명타 확률 +${Math.round(v * 100)}%` },
+        { id: 'lifesteal', key: 'lifesteal', roll: () => (2 + Math.floor(Math.random() * 4)) / 100, label: (v) => `흡혈 확률 +${Math.round(v * 100)}%` },
+        { id: 'hp', key: 'hp', roll: (scale) => Math.max(2, Math.round(scale * 0.3)), label: (v) => `최대 체력 +${v}` }
+    ]
+};
+
+const SPECIAL_OPTIONS = {
+    weapon: [
+        { id: 'spell_proc', key: 'spellProcChance', value: 0.05, label: '5% 확률로 마법 폭발 발동' },
+        { id: 'vampiric', key: 'lifesteal', value: 0.15, label: '흡혈 확률 +15%' }
+    ],
+    armor: [
+        { id: 'fortress', key: 'blockChance', value: 0.15, label: '피격 시 15% 확률로 피해 무효' },
+        { id: 'colossus', key: 'hp', value: 30, label: '최대 체력 +30' }
+    ],
+    accessory: [
+        { id: 'fortune', key: 'luck', value: 6, label: '행운 +6' },
+        { id: 'precision', key: 'crit', value: 0.1, label: '치명타 확률 +10%' }
+    ]
+};
+
+/** How many random bonus options a tier rolls, before any guaranteed special. */
+export function getOptionCount(tierId) {
+    return { crude: 0, normal: 0, fine: 1, rare: 2, epic: 3, legendary: 3 }[tierId] || 0;
+}
+
+/** Rolls this item's bonus options for the forge — see OPTION_POOLS above. */
+function rollItemOptions(slot, tierId, score) {
+    const pool = OPTION_POOLS[slot] || [];
+    const count = Math.min(pool.length, getOptionCount(tierId));
+    const scale = Math.pow(Math.max(1, score), 0.62);
+
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    const picks = shuffled.slice(0, count).map((option) => {
+        const value = option.roll(scale);
+        return { key: option.key, value, label: option.label(value) };
+    });
+
+    if (tierId === 'legendary') {
+        const specialPool = SPECIAL_OPTIONS[slot] || [];
+        if (specialPool.length > 0) {
+            const special = specialPool[Math.floor(Math.random() * specialPool.length)];
+            picks.push({ key: special.key, value: special.value, label: special.label, special: true });
+        }
+    }
+
+    return picks;
 }
 
 // Stat keys that scale with the mix's raw material score, the same way a
@@ -382,6 +477,13 @@ export function forgeItem(mix, luck = 1, slot = 'weapon') {
     }
 
     const tier = QUALITY_TIERS[tierIndex];
+    const baseStats = buildItemStats(archetype, tier, score);
+    const options = rollItemOptions(archetype.slot, tier.id, score);
+    const stats = { ...baseStats };
+    options.forEach((option) => {
+        stats[option.key] = Math.round(((stats[option.key] || 0) + option.value) * 1000) / 1000;
+    });
+
     const item = {
         id: `${archetype.id}-${tier.id}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
         archetypeId: archetype.id,
@@ -391,7 +493,8 @@ export function forgeItem(mix, luck = 1, slot = 'weapon') {
         blurb: archetype.blurb,
         tierId: tier.id,
         score,
-        stats: buildItemStats(archetype, tier, score),
+        stats,
+        options: options.map((option) => ({ label: option.label, special: !!option.special })),
         mix: ORE_KEYS.reduce((acc, ore) => {
             acc[ore] = Math.max(0, Math.floor(mix[ore] || 0));
             return acc;
@@ -416,5 +519,7 @@ export function getItemPower(item) {
         + (s.crit || 0) * 120
         + (s.hp || 0) * 0.6
         + (s.luck || 0) * 15
-        + (s.lifesteal || 0) * 100;
+        + (s.lifesteal || 0) * 100
+        + (s.spellProcChance || 0) * 200
+        + (s.blockChance || 0) * 150;
 }
