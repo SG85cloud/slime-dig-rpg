@@ -1192,6 +1192,38 @@ export class UI {
         this.rewardOverlay.style.display = 'flex';
     }
 
+    setBossRewardHandler(handler) {
+        this.bossRewardHandler = handler;
+    }
+
+    showBossReward(data) {
+        if (!data) return;
+        if (!this.bossRewardOverlay) {
+            this.bossRewardOverlay = document.createElement('div');
+            this.bossRewardOverlay.style.cssText = `position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;background:radial-gradient(circle at 50% 38%,rgba(44,31,12,.9),rgba(7,6,10,.96));backdrop-filter:blur(5px);pointer-events:auto;z-index:101;`;
+            this.bossRewardOverlay.innerHTML = `<div style="width:min(940px,100%);max-height:100%;overflow-y:auto;text-align:center;font-family:Inter,sans-serif;"><div style="font:700 11px Orbitron,sans-serif;letter-spacing:3px;color:#ffe39a;">BOSS RELIC</div><h2 style="margin:8px 0 4px;color:#fff1d1;font:800 clamp(22px,4vw,34px) Orbitron,sans-serif;">광산의 심장을 선택하세요</h2><div class="boss-reward-sub" style="color:#bfb2cc;font-size:13px;">보스 처치 후 단 하나의 유물을 가져갈 수 있습니다.</div><div class="boss-reward-cards" style="margin-top:20px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));"></div></div>`;
+            this.container.appendChild(this.bossRewardOverlay);
+        }
+        this.rewardOpen = true;
+        this.closeCraftWorkshop(); this.closeStatusWindow(); this.closeDockPanels();
+        const cards = this.bossRewardOverlay.querySelector('.boss-reward-cards');
+        cards.innerHTML = '';
+        (data.choices || []).forEach(choice => {
+            const card = document.createElement('button'); card.type='button';
+            card.style.cssText=`display:flex;flex-direction:column;gap:9px;text-align:left;padding:19px 18px;border:2px solid ${choice.color};border-radius:13px;background:linear-gradient(165deg,rgba(38,29,18,.98),rgba(12,10,16,.98));color:#eee;cursor:pointer;font:inherit;box-shadow:0 0 22px ${choice.color}33;`;
+            card.innerHTML=`<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:29px;">${choice.icon}</span><span style="font:800 16px Orbitron,sans-serif;color:${choice.color};">${choice.title}</span></div><div style="font-size:13.5px;font-weight:800;color:#fff1d1;">${choice.summary}</div><div style="font-size:12px;line-height:1.55;color:#bfb2cc;">${choice.benefit}</div><div style="margin-top:auto;padding-top:9px;color:${choice.color};font-weight:800;font-size:11px;letter-spacing:1px;">유물 선택 ▸</div>`;
+            card.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if(this.bossRewardHandler) this.bossRewardHandler(choice.id); });
+            cards.appendChild(card);
+        });
+        this.bossRewardOverlay.style.display='flex';
+    }
+
+    closeBossReward() {
+        if (!this.bossRewardOverlay) return;
+        this.bossRewardOverlay.style.display='none';
+        this.rewardOpen = false;
+    }
+
     closeWaveReward() {
         if (!this.rewardOverlay) return;
         this.rewardOpen = false;

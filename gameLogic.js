@@ -247,6 +247,7 @@ export class Game {
         this.deepestReached = this.startDepth;
         this.ascending = false;
         this.floorTheme = FLOOR_THEMES[this.depth] || null;
+        if (!this.cycleModifier) this.cycleModifier = this.getCycleModifier();
         // Floor quota met, but ascending is now a deliberate click rather
         // than automatic — the player keeps mining leftovers until ready.
         this.floorReadyToAscend = false;
@@ -261,6 +262,10 @@ export class Game {
         this.finalBossActive = false;
         this.surfaceConquered = false;
         this.cycle = 0;
+        // v15: boss relic choice persists across the run and defines the next cycle.
+        this.bossRelics = [];
+        this.bossRewardPending = null;
+        this.cycleModifier = null;
 
         // Spent on rerollTrait() to swap the one innate trait for a fresh roll.
         this.traitRerollTickets = 0;
@@ -344,6 +349,9 @@ export class Game {
         // A reward left unclaimed at the last save is offered again on return.
         if (this.rewardPending) {
             setTimeout(() => this.offerWaveReward(this.rewardPending.wave), 800);
+        }
+        if (this.bossRewardPending) {
+            setTimeout(() => this.app.ui.showBossReward?.(this.getBossRewardData()), 900);
         }
         // A leader who reloads mid-surface, boss not yet beaten, faces it again.
         if (this.depth <= 0 && !this.surfaceConquered) {
@@ -501,6 +509,9 @@ export class Game {
         if (Number.isFinite(rerollTickets) && rerollTickets >= 0) this.traitRerollTickets = Math.floor(rerollTickets);
         const cycle = Number(saved.cycle);
         if (Number.isFinite(cycle) && cycle >= 0) this.cycle = Math.floor(cycle);
+        if (Array.isArray(saved.bossRelics)) this.bossRelics = saved.bossRelics.filter(r => r && r.id).slice(-5);
+        if (saved.bossRewardPending && Array.isArray(saved.bossRewardPending.choices)) this.bossRewardPending = saved.bossRewardPending;
+        if (saved.cycleModifier && saved.cycleModifier.id) this.cycleModifier = saved.cycleModifier;
         if (typeof saved.surfaceConquered === 'boolean') this.surfaceConquered = saved.surfaceConquered;
         if (typeof saved.floorReadyToAscend === 'boolean') this.floorReadyToAscend = saved.floorReadyToAscend;
 
@@ -596,6 +607,9 @@ export class Game {
             mineEventStats: { ...this.mineEventStats },
             cycle: this.cycle,
             surfaceConquered: this.surfaceConquered,
+            bossRelics: this.bossRelics.map(r => ({ ...r })),
+            bossRewardPending: this.bossRewardPending ? { ...this.bossRewardPending, choices: this.bossRewardPending.choices.map(c => ({ ...c })) } : null,
+            cycleModifier: this.cycleModifier ? { ...this.cycleModifier } : null,
             floorReadyToAscend: this.floorReadyToAscend,
             unstableHaul: this.unstableHaul || 0,
             greedSeams: this.greedSeams || 0,
@@ -873,6 +887,8 @@ export class Game {
         const luck = this.getEffectiveLuck();
         const weights = {};
         const markedRareBoost = this.markedSeams > 0 ? 1.55 : 1;
+        const relicRareMult = this.bossRelics.reduce((m, r) => m * (r.rareMult || 1), 1);
+        const cycleRareMult = this.cycleModifier?.rareMult || 1;
 
         Object.entries(this.oreConfig).forEach(([oreType, oreConfig]) => {
             const rarityGap = oreConfig.rarity - config.rarity;
@@ -883,7 +899,7 @@ export class Game {
                 // Better ore than the vein: genuinely scarce. v9 incidents can
                 // temporarily bend these odds upward for a few pulls.
                 const rareBoost = this.eventRareBoost > 0 ? (1 + this.eventRareBoost) : 1;
-                weights[oreType] = ((7 / Math.pow(3.4, rarityGap - 1)) + luck * (1.5 / rarityGap)) * rareBoost * markedRareBoost;
+                weights[oreType] = ((7 / Math.pow(3.4, rarityGap - 1)) + luck * (1.5 / rarityGap)) * rareBoost * markedRareBoost * relicRareMult * cycleRareMult;
             } else {
                 // Worse ore than the vein: common filler, reduced slightly by luck.
                 weights[oreType] = Math.max(2, (20 / Math.pow(1.6, -rarityGap - 1)) - luck * 1.4);
@@ -1049,7 +1065,7 @@ export class Game {
         });
         // Depth hardness is applied after strength, so climbing always costs the
         // leader real effort no matter how much muscle it has banked.
-        const hardness = this.getDepthHardness();
+        const hardness = this.getDepthHardness() * (this.cycleModifier?.hardnessMult || 1);
         const base = Math.max(1, config.baseSwings - reduction) * traitMult * hardness;
         const floor = Math.max(2, Math.round(config.baseSwings * 0.3 * hardness));
         return Math.max(floor, Math.round(base));
@@ -1536,7 +1552,8 @@ export class Game {
     getWorkerMaxHp(worker) {
         const role = worker?.userData?.workerRole || 'miner';
         const roleMult = { miner: 0.9, fighter: 1.0, guard: 1.35, prospector: 0.95 }[role] || 1;
-        return Math.round((55 + this.getWorkerLevel(worker) * 5) * roleMult);
+        const relicHpMult = this.bossRelics.reduce((m, r) => m * (r.workerHpMult || 1), 1);
+        return Math.round((55 + this.getWorkerLevel(worker) * 5) * roleMult * relicHpMult);
     }
 
     getWorkerRoleLabel(role) {
@@ -1587,6 +1604,7 @@ export class Game {
         this.app.ui.setQuestRewardHandler(() => this.claimQuestReward());
         this.app.ui.setContractClaimHandler?.((id) => this.claimContract(id));
         this.app.ui.setMineEventHandler?.((choiceId) => this.resolveMineEvent(choiceId));
+        this.app.ui.setBossRewardHandler?.((choiceId) => this.claimBossReward(choiceId));
         // Status window: spend a ticket to reroll the leader's innate trait.
         this.app.ui.setTraitRerollHandler(() => this.rerollTrait());
         // Depth panel: climb to the next floor once its quota is met.
@@ -3068,25 +3086,19 @@ export class Game {
     resolveFinalBossVictory() {
         this.finalBossActive = false;
         this.surfaceConquered = true;
-        this.cycle += 1;
-
-        const bonusGold = 40 + this.cycle * 10;
-        const bonusMithril = 6 + this.cycle * 2;
+        const bonusGold = 40 + (this.cycle + 1) * 10;
+        const bonusMithril = 6 + (this.cycle + 1) * 2;
         this.inventory.gold += bonusGold;
         this.inventory.mithril += bonusMithril;
         this.attackPower += 5;
-
-        this.app.ui.showBanner(
-            '★ 광산 점령 완료',
-            `지상을 정복했습니다! 금광석 ${bonusGold} · 미스릴 ${bonusMithril} · 공격력 +5`,
-            '#ffe39a'
-        );
-        this.pushCombatFeed(
-            `★ 광산을 점령했습니다! 보상: 금광석 ${bonusGold} · 미스릴 ${bonusMithril} · 공격력 +5`,
-            '#ffe39a'
-        );
+        this.bossRewardPending = {
+            cycle: this.cycle + 1,
+            choices: this.getBossRewardChoices()
+        };
+        this.app.ui.showBanner('★ 광산 점령 완료', `금광석 ${bonusGold} · 미스릴 ${bonusMithril} · 공격력 +5`, '#ffe39a');
+        this.pushCombatFeed('★ 보스를 쓰러뜨렸습니다! 이제 보스 유물을 하나 선택하세요.', '#ffe39a');
         this.persist();
-        setTimeout(() => this.startNextCycle(), 3200);
+        setTimeout(() => this.app.ui.showBossReward?.(this.getBossRewardData()), 700);
     }
 
     /** Reopens a fresh, harder shaft at B30F after a surface conquest. */
@@ -3107,8 +3119,8 @@ export class Game {
         for (let i = 0; i < count; i++) this.spawnNode();
         this.applyDepthAtmosphere();
 
-        this.app.ui.showBanner('⛏ 새로운 광산', '더 단단해진 광산이 지하 30층에 다시 열립니다', '#8fe4ff');
-        this.pushCombatFeed('⛏ 정복을 마치고 새로운 광산으로 다시 내려갑니다.', '#8fe4ff');
+        this.app.ui.showBanner('⛏ 새로운 광산', `${this.cycleModifier?.icon || '⚠'} ${this.cycleModifier?.name || '새로운 변형'} · ${this.cycleModifier?.desc || '더 단단해진 광산'}`, '#8fe4ff');
+        this.pushCombatFeed(`⛏ 정복을 마치고 새로운 광산으로 다시 내려갑니다. ${this.cycleModifier?.icon || ''} ${this.cycleModifier?.name || ''}`, '#8fe4ff');
         this.persist();
     }
 
@@ -3157,11 +3169,14 @@ export class Game {
     rollFieldEncounterDelay() {
         const tightening = Math.min(14, this.getFloorsClimbed() * 0.45);
         const noisePressure = Math.min(22, (this.miningNoise || 0) * 0.22);
-        return Math.max(7, (22 - tightening - noisePressure) + Math.random() * 18);
+        const modifier = this.cycleModifier?.encounterMult || 1;
+        return Math.max(5.5, ((22 - tightening - noisePressure) + Math.random() * 18) * modifier);
     }
 
     addMiningNoise(amount = 1) {
-        this.miningNoise = Math.min(100, (this.miningNoise || 0) + amount);
+        const relicNoiseMult = this.bossRelics.reduce((m, r) => m * (r.noiseMult || 1), 1);
+        const cycleNoiseMult = this.cycleModifier?.noiseMult || 1;
+        this.miningNoise = Math.min(100, (this.miningNoise || 0) + amount * relicNoiseMult * cycleNoiseMult);
         if (this.miningNoise >= 70 && this.miningDangerFlash <= 0) {
             this.miningDangerFlash = 4;
             this.pushCombatFeed(`🚨 채굴 소음 ${Math.round(this.miningNoise)}% — 몬스터가 몰려옵니다!`, '#ff7a4a');
@@ -3395,6 +3410,52 @@ export class Game {
         return Math.max(1, this.wave + 1);
     }
 
+    getBossRewardChoices() {
+        const cycle = this.cycle || 0;
+        return [
+            { id: 'heart_of_the_mine', icon: '💠', title: '광산의 심장', color: '#8fe4ff', summary: '영구 유물 · 공격력 +10%', benefit: '모든 후속 광산에서 리더의 기본 공격력이 10% 증가합니다.', relic: { id: 'heart_of_the_mine', name: '광산의 심장', icon: '💠', attackMult: 1.10 } },
+            { id: 'prospector_crown', icon: '👑', title: '탐광왕의 왕관', color: '#ffe39a', summary: '영구 유물 · 희귀 광석 +18%', benefit: '금광석·미스릴이 나올 확률이 크게 증가합니다. 대신 채굴 소음이 8% 더 빠르게 쌓입니다.', relic: { id: 'prospector_crown', name: '탐광왕의 왕관', icon: '👑', rareMult: 1.18, noiseMult: 1.08 } },
+            { id: 'guardian_core', icon: '🛡', title: '수호자의 핵', color: '#9ad9b0', summary: '영구 유물 · 워커 HP +20%', benefit: '모든 워커의 최대 HP가 20% 증가합니다. 구조와 방어가 쉬워집니다.', relic: { id: 'guardian_core', name: '수호자의 핵', icon: '🛡', workerHpMult: 1.20 } }
+        ];
+    }
+
+    getCycleModifier() {
+        const mods = [
+            { id: 'hard_rock', icon: '🪨', name: '압축 암반', desc: '광맥의 채굴 난이도 +18%', hardnessMult: 1.18 },
+            { id: 'monster_nest', icon: '👹', name: '괴물 둥지', desc: '습격 주기가 짧아집니다.', encounterMult: 0.72 },
+            { id: 'rich_seams', icon: '💎', name: '풍요의 광맥', desc: '희귀 광석 확률 +22%, 채굴 소음 +12%', rareMult: 1.22, noiseMult: 1.12 },
+            { id: 'volatile_mine', icon: '💥', name: '불안정 광산', desc: '욕심 보너스 +35%, 사망 시 불안정 보너스 전부 소실', greedMult: 1.35 }
+        ];
+        return mods[Math.floor(Math.random() * mods.length)];
+    }
+
+    getBossRewardData() {
+        if (!this.bossRewardPending) return null;
+        return { ...this.bossRewardPending, choices: this.bossRewardPending.choices.map(c => ({ ...c })) };
+    }
+
+    claimBossReward(choiceId) {
+        const pending = this.bossRewardPending;
+        if (!pending || !pending.choices) return { ok: false, reason: '선택할 보상이 없습니다.' };
+        const choice = pending.choices.find(c => c.id === choiceId);
+        if (!choice) return { ok: false, reason: '잘못된 보상입니다.' };
+        const relic = choice.relic;
+        if (!this.bossRelics.some(r => r.id === relic.id)) this.bossRelics.push({ ...relic });
+        const gainedLegacy = 25 + this.cycle * 5;
+        this.meta.legacyPoints = (this.meta.legacyPoints || 0) + gainedLegacy;
+        saveMeta(this.profileId, this.meta);
+        this.bossRewardPending = null;
+        this.cycle += 1;
+        this.cycleModifier = this.getCycleModifier();
+        this.app.ui.closeBossReward?.();
+        this.app.ui.showBanner('★ 유물 획득', `${relic.icon} ${relic.name} · 유산 포인트 +${gainedLegacy}`, '#ffe39a');
+        this.pushCombatFeed(`★ 보스 유물 획득: ${relic.name}`, '#ffe39a');
+        this.pushCombatFeed(`⚠ 다음 사이클 변형: ${this.cycleModifier.icon} ${this.cycleModifier.name}`, '#ffb3a6');
+        this.persist();
+        setTimeout(() => this.startNextCycle(), 1800);
+        return { ok: true };
+    }
+
     getCombatData() {
         const target = this.playerTarget && this.enemies.includes(this.playerTarget) && !this.playerTarget.userData.dying
             ? this.playerTarget
@@ -3423,6 +3484,9 @@ export class Game {
             attackInterval: this.getPlayerAttackInterval(),
             dodgeCooldown: Math.max(0, this.dodgeCooldown || 0),
             dodgeReady: !this.isDown && !this.mineEvent && (this.dodgeCooldown || 0) <= 0,
+            bossRewardPending: !!this.bossRewardPending,
+            bossRelics: this.bossRelics.map(r => ({ ...r })),
+            cycleModifier: this.cycleModifier ? { ...this.cycleModifier } : null,
             dodging: (this.dodgeTimer || 0) > 0,
             target: target
                 ? {
@@ -3465,7 +3529,8 @@ export class Game {
 
     // Total attack including the forged weapon so combat reads one number.
     getTotalAttack() {
-        return this.attackPower + (this.equipped?.stats.attack || 0);
+        const relicAttackMult = this.bossRelics.reduce((m, r) => m * (r.attackMult || 1), 1);
+        return (this.attackPower + (this.equipped?.stats.attack || 0)) * relicAttackMult;
     }
 
     // Weapon crit and accessory crit stack the same way trait crit does.
@@ -4346,7 +4411,7 @@ export class Game {
         const veinRarity = this.oreConfig[node?.userData?.oreType]?.rarity || 0;
         const lucky = rarity > veinRarity;
         const base = 3 + rarity * 4 + Math.min(4, Math.max(0, amount - 1) * 2);
-        const bonus = Math.max(2, Math.round(base * (1 + this.greedSeams * 0.12)));
+        const bonus = Math.max(2, Math.round(base * (1 + this.greedSeams * 0.12) * (this.cycleModifier?.greedMult || 1)));
         this.unstableHaul = Math.min(999, (this.unstableHaul || 0) + bonus);
         this.greedSeams = (this.greedSeams || 0) + 1;
         this.bumpQuestStat('greedSeams', 1);
