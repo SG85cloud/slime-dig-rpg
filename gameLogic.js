@@ -175,11 +175,11 @@ export class Game {
         this.isDown = false;
         this.enemySpawnTimer = null;
         this.miningHitTimer = 0;
-        // Mining pressure: the longer the leader keeps extracting, the more likely
-        // the noise and vibration attract a hostile pack. This turns safe clicking
-        // into a risk/reward decision instead of a pure idle loop.
-        this.miningRisk = 0;
-        this.miningRiskWarningShown = false;
+        // Shared mining pressure: the more aggressively the squad mines, the
+        // more attention the mine draws. This creates a risk/reward loop without
+        // requiring a separate wave UI.
+        this.miningNoise = 0;
+        this.miningDangerFlash = 0;
         this.quest = {
             stage: 'coal',
             coalGoal: 10,
@@ -1374,6 +1374,10 @@ export class Game {
         worker.userData.isMining = false;
         worker.userData.squadRole = this.squadCommand;
         worker.userData.attackCooldown = 0;
+        // Each worker gets its own seam assignment so the squad actually feels
+        // like a mining crew instead of ten units stacked on one node.
+        worker.userData.miningTarget = null;
+        worker.userData.miningTargetIndex = index;
         // Individual growth: a worker gets a little sharper the more it mines
         // and fights, on top of the global trait/boon/facility multipliers.
         worker.userData.workerXp = Math.max(0, initialXp);
@@ -2583,6 +2587,14 @@ export class Game {
         if (this.quest.stage === 'coal' || this.quest.stage === 'recruit') return;
         if (this.waveActive || this.isDown) return;
 
+        // Mining noise decays while the crew is idle. Several workers hitting
+        // seams at once therefore make an encounter arrive much sooner.
+        const activeMiners = this.workers.filter((worker) => worker.userData.isMining).length
+            + (this.player?.userData.isMining ? 1 : 0);
+        const decay = activeMiners > 0 ? 0.75 : 2.4;
+        this.miningNoise = Math.max(0, (this.miningNoise || 0) - delta * decay);
+        this.miningDangerFlash = Math.max(0, (this.miningDangerFlash || 0) - delta);
+
         if (this.fieldEncounterTimer === undefined || this.fieldEncounterTimer === null) {
             this.fieldEncounterTimer = this.rollFieldEncounterDelay();
         }
@@ -2591,21 +2603,35 @@ export class Game {
 
         const activeFieldEnemies = this.enemies.filter((enemy) => enemy.userData.isFieldEnemy && !enemy.userData.dying).length;
         if (activeFieldEnemies >= 2) {
-            // Already busy; check back soon rather than piling more monsters on.
-            this.fieldEncounterTimer = 8;
+            this.fieldEncounterTimer = 7;
             return;
         }
 
         this.spawnFieldEncounter();
+        // A successful ambush clears some pressure, but not all of it: the mine
+        // should remain dangerous if the player immediately resumes mining.
+        this.miningNoise *= 0.38;
         this.fieldEncounterTimer = this.rollFieldEncounterDelay();
     }
 
-    // Roughly every 45-90s early on, tightening a little as the leader climbs.
+    // Base pressure is intentionally short enough to matter. High mining noise
+    // compresses the timer further, making greed visibly dangerous.
     rollFieldEncounterDelay() {
-        // Encounters come noticeably faster the higher the leader has
-        // climbed, down to near-constant pressure right under the surface.
-        const tightening = Math.min(25, this.getFloorsClimbed() * 0.8);
-        return (35 - tightening) + Math.random() * 35;
+        const tightening = Math.min(14, this.getFloorsClimbed() * 0.45);
+        const noisePressure = Math.min(22, (this.miningNoise || 0) * 0.22);
+        return Math.max(7, (22 - tightening - noisePressure) + Math.random() * 18);
+    }
+
+    addMiningNoise(amount = 1) {
+        this.miningNoise = Math.min(100, (this.miningNoise || 0) + amount);
+        if (this.miningNoise >= 70 && this.miningDangerFlash <= 0) {
+            this.miningDangerFlash = 4;
+            this.pushCombatFeed(`🚨 채굴 소음 ${Math.round(this.miningNoise)}% — 몬스터가 몰려옵니다!`, '#ff7a4a');
+            this.app.ui.showBanner('🚨 광산 소음 경보', '계속 캐면 습격 위험이 크게 올라갑니다!', '#ff7a4a');
+        } else if (this.miningNoise >= 40 && this.miningDangerFlash <= 0) {
+            this.miningDangerFlash = 4;
+            this.pushCombatFeed(`⚠ 채굴 소음 ${Math.round(this.miningNoise)}% — 주변이 시끄러워졌습니다.`, '#ffd166');
+        }
     }
 
     spawnFieldEncounter() {
@@ -2849,6 +2875,7 @@ export class Game {
             waveUnlocked: this.canRunWaves(),
             nextWave: Math.max(0, this.wave) + 1,
             maxSelectableWave: this.getMaxSelectableWave(),
+            miningNoise: Math.round(this.miningNoise || 0),
             enemiesLeft: this.enemies.filter((enemy) => !enemy.userData.dying).length,
             attackInterval: this.getPlayerAttackInterval(),
             target: target
@@ -3434,9 +3461,19 @@ export class Game {
         let isMining = false;
 
         if (this.squadCommand === 'mine') {
-            const node = this.playerData.miningTarget && this.nodes.includes(this.playerData.miningTarget)
-                ? this.playerData.miningTarget
-                : this.findNearestNode(this.player.position);
+            // Prefer this worker's own seam. If it was depleted, pick the
+            // nearest available node with a light round-robin bias so workers
+            // naturally spread across the mine.
+            let node = worker.userData.miningTarget;
+            if (!node || !this.nodes.includes(node)) {
+                const candidates = this.nodes.slice().sort((a, b) => {
+                    const da = worker.position.distanceToSquared(a.position);
+                    const db = worker.position.distanceToSquared(b.position);
+                    return da - db;
+                });
+                node = candidates.length ? candidates[worker.userData.miningTargetIndex % candidates.length] : null;
+                worker.userData.miningTarget = node;
+            }
             if (node) {
                 const offset = new THREE.Vector3(Math.cos(formationAngle), 0, Math.sin(formationAngle)).multiplyScalar(1.35);
                 destination = node.position.clone().add(offset);
@@ -3449,6 +3486,7 @@ export class Game {
                     worker.userData.swingTimer = (worker.userData.swingTimer || 0) - delta;
                     if (worker.userData.swingTimer <= 0) {
                         this.swingAtNode(node);
+                        this.addMiningNoise(0.75);
                         worker.userData.workerXp = (worker.userData.workerXp || 0) + 1;
                         worker.userData.swingTimer = 0.72 / (this.traitEffects.workerSwingMult
                             * this.boons.workerSwingMult * this.getWorkerLevelMult(worker));
@@ -3580,6 +3618,7 @@ export class Game {
                 this.miningHitTimer -= delta;
                 if (this.miningHitTimer <= 0) {
                     this.swingAtNode(miningTarget);
+                    this.addMiningNoise(1.4);
                     this.miningHitTimer = this.getSwingInterval();
                 }
             }
@@ -3587,7 +3626,6 @@ export class Game {
             this.miningHitTimer = 0;
         }
         this.animatePlayerMining(isPlayerMining, delta);
-        this.updateMiningRisk(delta, isPlayerMining, miningTarget);
 
         // Only one tool shows at a time: the pickaxe while heading to or
         // working an ore node, the weapon the rest of the time (including
@@ -3664,63 +3702,6 @@ export class Game {
         };
     }
 
-    /**
-     * Mining creates noise. Risk rises from actual pickaxe impacts and slowly
-     * drains when the leader stops mining. At 100% the mine answers with an
-     * ambush, then leaves a little residual danger so the player cannot simply
-     * hold one ore forever.
-     */
-    updateMiningRisk(delta, isMining, node = null) {
-        if (this.quest.stage === 'coal' || this.quest.stage === 'recruit') {
-            this.miningRisk = Math.max(0, this.miningRisk - delta * 18);
-            return;
-        }
-
-        if (isMining && node) {
-            const rarity = (this.oreConfig[node.userData.oreType] || this.oreConfig.coal).rarity;
-            const depthPressure = this.getFloorsClimbed() * 0.035;
-            this.miningRisk = Math.min(100, this.miningRisk + delta * (2.2 + rarity * 0.7 + depthPressure));
-
-            if (this.miningRisk >= 70 && !this.miningRiskWarningShown) {
-                this.miningRiskWarningShown = true;
-                this.pushCombatFeed('⚠ 채굴 소음이 너무 커집니다… 무언가 다가옵니다.', '#ffd166');
-                this.app.ui.showBanner('⚠ 채굴 소음 경고', '계속 캐면 몬스터가 몰려올 수 있습니다.', '#ffd166');
-            }
-        } else {
-            this.miningRisk = Math.max(0, this.miningRisk - delta * 7.5);
-            if (this.miningRisk < 45) this.miningRiskWarningShown = false;
-        }
-
-        if (this.miningRisk < 100 || this.waveActive || this.isDown) return;
-
-        const nodePos = node?.position?.clone() || this.player.position.clone();
-        const climbed = this.getFloorsClimbed();
-        const pool = climbed < 8 ? ['crawler']
-            : climbed < 18 ? ['crawler', 'archer']
-            : ['crawler', 'archer', 'brute'];
-        const count = climbed >= 12 && Math.random() < 0.45 ? 2 : 1;
-
-        for (let i = 0; i < count; i++) {
-            const typeId = pool[Math.floor(Math.random() * pool.length)];
-            const angle = Math.random() * Math.PI * 2;
-            this.spawnEnemy(typeId, {
-                angle,
-                distance: 5.5 + Math.random() * 2.5,
-                isFieldEnemy: true,
-                waveOverride: Math.max(1, Math.round(climbed * 0.9))
-            });
-        }
-
-        this.miningRisk = 28;
-        this.miningRiskWarningShown = false;
-        this.playerTarget = this.enemies[this.enemies.length - 1] || null;
-        this.autoCombat = true;
-        this.playerData.miningTarget = null;
-        this.combatFX.spawnShockwave(nodePos, { color: 0xff9c4a, scale: 3.2 });
-        this.pushCombatFeed(`🚨 채굴 소음에 이끌려 몬스터 ${count}마리가 습격했습니다!`, '#ff7a4a');
-        this.app.ui.showBanner('🚨 광산 습격!', `채굴 소음이 몬스터를 불러냈습니다 · ${count}마리`, '#ff7a4a');
-    }
-
     // One pickaxe swing. The vein only yields an item once enough swings land,
     // and it keeps producing until its reserves run out.
     swingAtNode(node) {
@@ -3728,8 +3709,6 @@ export class Game {
 
         node.userData.hitPulse = 1;
         node.userData.swings = (node.userData.swings || 0) + 1;
-        const riskRarity = (this.oreConfig[node.userData.oreType] || this.oreConfig.coal).rarity;
-        this.miningRisk = Math.min(100, this.miningRisk + 4 + riskRarity * 2.5 + this.getFloorsClimbed() * 0.12);
 
         if (node.userData.swings < node.userData.swingsRequired) return;
 
@@ -3763,6 +3742,9 @@ export class Game {
             this.scene.remove(node);
             this.nodes = this.nodes.filter((entry) => entry !== node);
             if (this.playerData.miningTarget === node) this.playerData.miningTarget = null;
+            this.workers.forEach((worker) => {
+                if (worker.userData.miningTarget === node) worker.userData.miningTarget = null;
+            });
 
             // Emptying a seam is progress toward stripping this floor bare.
             this.floorNodesCleared += 1;
@@ -3814,9 +3796,7 @@ export class Game {
             reserves: node.userData.reserves,
             lastYieldLabel: lastYield ? (this.oreConfig[lastYield]?.label || lastYield) : null,
             lastYieldAmount: lastYield ? (node.userData.lastYieldAmount || 1) : 0,
-            lastYieldLucky: lastYield ? !!node.userData.lastYieldLucky : false,
-            risk: Math.round(this.miningRisk),
-            riskState: this.miningRisk >= 70 ? 'danger' : this.miningRisk >= 40 ? 'warning' : 'safe'
+            lastYieldLucky: lastYield ? !!node.userData.lastYieldLucky : false
         };
     }
 

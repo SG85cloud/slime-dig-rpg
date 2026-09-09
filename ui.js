@@ -1650,19 +1650,15 @@ export class UI {
         const progress = this.statPanel.querySelector('.mining-progress');
         if (miningProgress) {
             const base = `${miningProgress.label} 광맥 ${miningProgress.swings}/${miningProgress.swingsRequired}회 · 매장량 ${miningProgress.reserves}`;
-            const risk = Number.isFinite(miningProgress.risk) ? miningProgress.risk : 0;
-            const riskText = risk >= 70 ? `\n🚨 습격 위험 ${risk}% · 지금 멈추는 게 안전합니다`
-                : risk >= 40 ? `\n⚠ 채굴 소음 ${risk}% · 계속 캐면 적이 올 수 있습니다`
-                : `\n채굴 소음 ${risk}%`;
             if (miningProgress.lastYieldLabel) {
                 const amount = miningProgress.lastYieldAmount > 1 ? ` x${miningProgress.lastYieldAmount}` : '';
                 progress.textContent = miningProgress.lastYieldLucky
-                    ? `${base}${riskText}\n✨ ${miningProgress.lastYieldLabel}${amount} 획득! (행운)`
-                    : `${base}${riskText}\n${miningProgress.lastYieldLabel}${amount} 획득`;
+                    ? `${base}\n✨ ${miningProgress.lastYieldLabel}${amount} 획득! (행운)`
+                    : `${base}\n${miningProgress.lastYieldLabel}${amount} 획득`;
                 progress.style.color = miningProgress.lastYieldLucky ? '#ffe39a' : '#b7f3ff';
             } else {
-                progress.textContent = base + riskText;
-                progress.style.color = risk >= 70 ? '#ff7d6b' : risk >= 40 ? '#ffd166' : '#b7f3ff';
+                progress.textContent = base;
+                progress.style.color = '#b7f3ff';
             }
             progress.style.whiteSpace = 'pre-line';
         } else {
@@ -1813,6 +1809,15 @@ export class UI {
                 </div>
             </div>
             <div class="combat-status" style="margin-top:9px; font-size:12.5px; color:#d7cbe1; line-height:1.5;"></div>
+            <div class="mining-risk" style="margin-top:8px; display:none;">
+                <div style="display:flex; justify-content:space-between; font-size:10.5px; color:#cdbfd7;">
+                    <span>⛏ 채굴 소음</span><b class="risk-value" style="font-family:Orbitron,sans-serif;"></b>
+                </div>
+                <div style="height:7px; margin-top:4px; border-radius:999px; overflow:hidden; background:#17131c; border:1px solid #4d4257;">
+                    <div class="risk-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#6fb08a,#ffd166,#ff6b5e); transition:width .2s;"></div>
+                </div>
+                <div class="risk-hint" style="margin-top:4px; font-size:10.5px; color:#9f91aa;"></div>
+            </div>
             <button class="wave-start" type="button">🛡 광산 방어 시작</button>
             <div class="combat-feed" style="margin-top:9px; display:grid; gap:3px; font-size:11.5px; line-height:1.45; overflow:hidden;"></div>
         `;
@@ -1944,6 +1949,18 @@ export class UI {
         mineToggle.style.borderColor = combat.autoMine ? '#6fb08a' : '#6c568d';
 
         const status = this.combatPanel.querySelector('.combat-status');
+        const risk = this.combatPanel.querySelector('.mining-risk');
+        if (risk) {
+            const noise = Math.round(combat.miningNoise || 0);
+            risk.style.display = noise > 1 ? 'block' : 'none';
+            risk.querySelector('.risk-value').textContent = `${noise}%`;
+            risk.querySelector('.risk-bar').style.width = `${noise}%`;
+            risk.querySelector('.risk-hint').textContent = noise >= 70
+                ? '🚨 매우 위험 — 잠시 채굴을 멈추면 소음이 내려갑니다.'
+                : noise >= 40
+                    ? '⚠ 위험 증가 — 계속 캐면 몬스터가 찾아옵니다.'
+                    : '현재는 비교적 조용합니다.';
+        }
         if (combat.isDown) {
             status.innerHTML = `<span style="color:#ff7d6b; font-weight:700;">리더 전투불능 · ${combat.reviveIn.toFixed(1)}초 후 부활</span>`;
         } else if (combat.waveActive || combat.enemiesLeft > 0) {
