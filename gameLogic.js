@@ -191,8 +191,15 @@ export class Game {
             // instead of it firing silently in the background.
             rewardReady: false,
             // Craft count toward the 'craft3' step specifically.
-            craftCount: 0
+            craftCount: 0,
+            // Repeatable side contracts. These are deliberately different from
+            // the tutorial chain: they create a reason to play each floor
+            // differently instead of only following one checklist.
+            contractStats: { kills: 0, oreMined: 0, greedSeams: 0, rescues: 0,
+                retreats: 0, rareFinds: 0, floorAscends: 0 },
+            contracts: []
         };
+        this.ensureQuestContracts();
 
         // Leader stats: strength lowers the swings needed per ore, speed shortens
         // the swing interval, and luck improves the rare-ore roll.
@@ -451,6 +458,14 @@ export class Game {
         if (typeof saved.quest?.rewardReady === 'boolean') this.quest.rewardReady = saved.quest.rewardReady;
         const craftCount = Number(saved.quest?.craftCount);
         if (Number.isFinite(craftCount) && craftCount >= 0) this.quest.craftCount = Math.floor(craftCount);
+        if (saved.quest?.contractStats && typeof saved.quest.contractStats === 'object') {
+            Object.keys(this.quest.contractStats).forEach((key) => {
+                const value = Number(saved.quest.contractStats[key]);
+                if (Number.isFinite(value) && value >= 0) this.quest.contractStats[key] = Math.floor(value);
+            });
+        }
+        if (Array.isArray(saved.quest?.contracts)) this.quest.contracts = saved.quest.contracts.filter(c => c && c.id && c.type);
+        this.ensureQuestContracts();
 
         const rerollTickets = Number(saved.traitRerollTickets);
         if (Number.isFinite(rerollTickets) && rerollTickets >= 0) this.traitRerollTickets = Math.floor(rerollTickets);
@@ -539,7 +554,9 @@ export class Game {
                 stage: this.quest.stage,
                 coalGoal: this.quest.coalGoal,
                 rewardReady: this.quest.rewardReady,
-                craftCount: this.quest.craftCount
+                craftCount: this.quest.craftCount,
+                contractStats: { ...this.quest.contractStats },
+                contracts: this.quest.contracts.map(c => ({ ...c }))
             },
             cycle: this.cycle,
             surfaceConquered: this.surfaceConquered,
@@ -899,6 +916,7 @@ export class Game {
         const bankedGreed = Math.max(0, Math.round(this.unstableHaul || 0));
         if (bankedGreed > 0) {
             this.inventory.gold += bankedGreed;
+            this.bumpQuestStat('floorAscends', 1);
             this.pushCombatFeed(`🏦 욕심 채굴 보너스 ${bankedGreed}을(를) 안전하게 확보했습니다!`, '#ffd166');
         }
         this.depth = Math.max(0, this.depth - 1);
@@ -1479,6 +1497,7 @@ export class Game {
         this.app.ui.setWaveRewardHandler((choiceId) => this.claimWaveReward(choiceId));
         // Tutorial-quest "claim reward" button in the quest panel.
         this.app.ui.setQuestRewardHandler(() => this.claimQuestReward());
+        this.app.ui.setContractClaimHandler?.((id) => this.claimContract(id));
         // Status window: spend a ticket to reroll the leader's innate trait.
         this.app.ui.setTraitRerollHandler(() => this.rerollTrait());
         // Depth panel: climb to the next floor once its quota is met.
@@ -1578,7 +1597,69 @@ export class Game {
         return nodePosition.clone().add(approach.multiplyScalar(2.35));
     }
 
-    getQuestData() {
+    getContractDefinitions() {
+        const d = this.depth;
+        const cycle = this.cycle || 0;
+        const difficulty = Math.max(0, Math.floor((this.startDepth - d) / 3) + cycle * 2);
+        return [
+            { type: 'kills', icon: '⚔', title: '갱도 소탕', description: `몬스터 ${8 + difficulty * 2}마리를 처치하세요.`, target: 8 + difficulty * 2, rewardGold: 8 + difficulty * 2, accent: '#ff9c9c' },
+            { type: 'oreMined', icon: '⛏', title: '광부의 하루', description: `광석 ${18 + difficulty * 3}개를 직접 채굴하세요.`, target: 18 + difficulty * 3, rewardGold: 10 + difficulty * 2, accent: '#8fe4ff' },
+            { type: 'greedSeams', icon: '🔥', title: '한 번만 더', description: `욕심 채굴 ${2 + Math.min(4, difficulty)}회에 도전하세요.`, target: 2 + Math.min(4, difficulty), rewardGold: 16 + difficulty * 3, accent: '#ffd166' },
+            { type: 'rescues', icon: '🚑', title: '동료를 버리지 마', description: '쓰러진 워커를 2명 구조하세요.', target: 2, rewardGold: 18, accent: '#8fd9a8' },
+            { type: 'rareFinds', icon: '💎', title: '빛나는 광맥', description: `금광석 또는 미스릴을 ${3 + Math.min(3, difficulty)}개 발견하세요.`, target: 3 + Math.min(3, difficulty), rewardGold: 20 + difficulty * 2, accent: '#d7b8ff' },
+            { type: 'retreats', icon: '↩', title: '살아서 돌아오기', description: '긴급 철수를 1회 사용하세요.', target: 1, rewardGold: 7 + difficulty, accent: '#b7f3ff' },
+            { type: 'floorAscends', icon: '⬆', title: '한 층 더', description: '다음 층으로 안전하게 상승하세요.', target: 1, rewardGold: 12 + difficulty * 2, accent: '#c7a3ef' }
+        ];
+    }
+
+    ensureQuestContracts() {
+        if (!this.quest) return;
+        if (!Array.isArray(this.quest.contracts)) this.quest.contracts = [];
+        const defs = this.getContractDefinitions();
+        const used = new Set(this.quest.contracts.map(c => c.type));
+        while (this.quest.contracts.length < 3) {
+            const pool = defs.filter(d => !used.has(d.type));
+            if (!pool.length) break;
+            const def = pool[Math.floor(Math.random() * pool.length)];
+            this.quest.contracts.push({ id: `${def.type}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, type: def.type, title: def.title, icon: def.icon, target: def.target, rewardGold: def.rewardGold, accent: def.accent, claimed: false, baseProgress: this.quest.contractStats[def.type] || 0 });
+            used.add(def.type);
+        }
+    }
+
+    getQuestContractData() {
+        this.ensureQuestContracts();
+        return this.quest.contracts.map(c => {
+            const def = this.getContractDefinitions().find(d => d.type === c.type) || c;
+            const base = Number(c.baseProgress) || 0;
+            const current = Math.max(0, (this.quest.contractStats[c.type] || 0) - base);
+            return { ...c, description: def.description, progress: Math.min(c.target, current), ready: current >= c.target, claimed: !!c.claimed };
+        });
+    }
+
+    claimContract(id) {
+        const contract = this.quest.contracts.find(c => c.id === id);
+        if (!contract) return { ok: false, reason: '의뢰를 찾을 수 없습니다.' };
+        const data = this.getQuestContractData().find(c => c.id === id);
+        if (!data?.ready || contract.claimed) return { ok: false, reason: '아직 완료되지 않은 의뢰입니다.' };
+        const reward = Math.max(1, Number(contract.rewardGold) || 1);
+        this.inventory.gold += reward;
+        contract.claimed = true;
+        this.quest.contracts = this.quest.contracts.filter(c => c.id !== id);
+        this.ensureQuestContracts();
+        this.pushCombatFeed(`📜 의뢰 완료! ${contract.title} · 금광석 ${reward} 획득`, '#8fd9a8');
+        this.app.ui.showBanner('의뢰 완료', `${contract.title} · 금광석 ${reward}`, '#8fd9a8');
+        this.persist();
+        return { ok: true };
+    }
+
+    bumpQuestStat(type, amount = 1) {
+        if (!this.quest?.contractStats || !Object.prototype.hasOwnProperty.call(this.quest.contractStats, type)) return;
+        this.quest.contractStats[type] += Math.max(0, Math.floor(amount));
+        this.ensureQuestContracts();
+        this.persist();
+    }
+
+    getStoryQuestData() {
         // The dragon's hoard always takes priority: a leader standing on
         // B25F sees the chest choice, whatever tutorial step it is nominally on.
         if (this.depth === 25) {
@@ -1829,6 +1910,11 @@ export class Game {
         };
     }
 
+    getQuestData() {
+        const story = this.getStoryQuestData();
+        return { ...story, contracts: this.getQuestContractData() };
+    }
+
     /** Announces a tutorial-chain transition with a banner and feed line. */
     advanceTutorialQuest(nextStage, title, subtitle) {
         this.quest.stage = nextStage;
@@ -1989,6 +2075,7 @@ export class Game {
             worker.userData.attackCooldown = 0;
         });
         this.retreatTimer = 6;
+        this.bumpQuestStat('retreats', 1);
         this.miningNoise = Math.max(0, (this.miningNoise || 0) * 0.72);
         this.pushCombatFeed('↩ 긴급 철수! 채굴을 중단하고 분대를 리더 곁으로 집결시킵니다.', '#8fe4ff');
         this.app.ui.showBanner('↩ 긴급 철수', '채굴을 멈추고 분대를 방어 태세로 전환합니다.', '#8fe4ff');
@@ -2097,6 +2184,7 @@ export class Game {
         if (enemy.userData.healthBar) enemy.userData.healthBar.visible = false;
         this.playSound('slime-squish');
         this.grantKillReward(enemy);
+        this.bumpQuestStat('kills', 1);
     }
 
     /** Ore + recruit rewards for a slain monster. */
@@ -3626,6 +3714,7 @@ export class Game {
             worker.userData.squadRole = this.squadCommand;
             worker.userData.healthBar.visible = false;
             this.combatFX.spawnShockwave(worker.position, { color: 0x8fd9a8, scale: 2.6 });
+            this.bumpQuestStat('rescues', 1);
             this.pushCombatFeed('💚 워커 슬라임을 구조했습니다!', '#8fd9a8');
             return false;
         }
@@ -3910,6 +3999,8 @@ export class Game {
         const bonus = Math.max(2, Math.round(base * (1 + this.greedSeams * 0.12)));
         this.unstableHaul = Math.min(999, (this.unstableHaul || 0) + bonus);
         this.greedSeams = (this.greedSeams || 0) + 1;
+        this.bumpQuestStat('greedSeams', 1);
+        this.bumpQuestStat('rareFinds', rarity >= 2 ? amount : (lucky ? amount : 0));
         if (lucky || rarity >= 2) {
             this.pushCombatFeed(`🔥 욕심 채굴! ${this.oreConfig[minedOre].label} 발견으로 보너스 +${bonus}`, '#ffd166');
         } else {
@@ -3938,6 +4029,7 @@ export class Game {
         if (Math.random() < this.traitEffects.doubleOreChance) amount *= 2;
         this.inventory[minedOre] += amount;
         this.totalOreMined = (this.totalOreMined || 0) + amount;
+        this.bumpQuestStat('oreMined', amount);
         node.userData.lastYieldAmount = amount;
         node.userData.lastYield = minedOre;
         node.userData.lastYieldTimer = 2.2;

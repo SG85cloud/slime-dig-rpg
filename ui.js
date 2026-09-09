@@ -1079,6 +1079,10 @@ export class UI {
         this.questRewardHandler = handler;
     }
 
+    setContractClaimHandler(handler) {
+        this.contractClaimHandler = handler;
+    }
+
     setTraitRerollHandler(handler) {
         this.traitRerollHandler = handler;
     }
@@ -1178,6 +1182,7 @@ export class UI {
                 font:800 12.5px Inter, sans-serif; cursor:pointer;
                 box-shadow:0 0 14px rgba(107,227,168,.35);
             ">🎁 보상받기</button>
+            <div class="quest-contracts" style="margin-top:12px; display:grid; gap:8px;"></div>
         `;
         // Insert above the HUD, which was appended to the rail first.
         this.leftRail.insertBefore(this.questPanel, this.hud || null);
@@ -1185,6 +1190,34 @@ export class UI {
         this.questPanel.querySelector('.quest-reward-claim').addEventListener('click', (event) => {
             event.stopPropagation();
             if (this.questRewardHandler) this.questRewardHandler();
+        });
+    }
+
+    renderQuestContracts(contracts) {
+        const box = this.questPanel?.querySelector('.quest-contracts');
+        if (!box) return;
+        box.innerHTML = '';
+        (contracts || []).forEach(contract => {
+            const row = document.createElement('div');
+            const pct = Math.min(100, (contract.progress / Math.max(1, contract.target)) * 100);
+            const ready = !!contract.ready;
+            row.style.cssText = `padding:9px 9px 8px; border:1px solid ${ready ? contract.accent : '#3d314a'}; border-radius:8px; background:${ready ? 'rgba(50,90,66,.28)' : 'rgba(17,14,24,.72)'};`;
+            row.innerHTML = `
+                <div style="display:flex; align-items:center; gap:7px;">
+                    <span style="font-size:16px;">${contract.icon || '📜'}</span>
+                    <span style="font-size:12px; font-weight:800; color:${contract.accent || '#fff1d1'};">${contract.title}</span>
+                    <span style="margin-left:auto; font-size:10px; color:#a99bb8;">${contract.progress}/${contract.target}</span>
+                </div>
+                <div style="font-size:10.5px; line-height:1.35; color:#bfb2cc; margin-top:3px;">${contract.description}</div>
+                <div style="height:4px; margin-top:6px; background:#201925; border-radius:99px; overflow:hidden;"><div style="height:100%; width:${pct}%; background:${contract.accent || '#c7a3ef'};"></div></div>
+                ${ready ? `<button type="button" data-contract-id="${contract.id}" style="margin-top:6px; width:100%; padding:5px; border:1px solid #6be3a8; border-radius:5px; background:#214b35; color:#e8fff2; font:800 10px Inter,sans-serif; cursor:pointer;">🎁 금광석 ${contract.rewardGold} 받기</button>` : ''}
+            `;
+            const button = row.querySelector('button[data-contract-id]');
+            if (button) button.addEventListener('click', (event) => {
+                event.preventDefault(); event.stopPropagation();
+                if (this.contractClaimHandler) this.contractClaimHandler(contract.id);
+            });
+            box.appendChild(row);
         });
     }
 
@@ -1204,6 +1237,7 @@ export class UI {
             ? 'linear-gradient(90deg,#54d6aa,#b7f3ff)'
             : `linear-gradient(90deg, ${quest.accent || '#8c63b5'}, #c7a3ef)`;
         this.questPanel.querySelector('.quest-reward-claim').style.display = quest.rewardReady ? 'block' : 'none';
+        this.renderQuestContracts(quest.contracts || []);
     }
 
     initTraitCodex() {
