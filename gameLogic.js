@@ -175,6 +175,11 @@ export class Game {
         this.isDown = false;
         this.enemySpawnTimer = null;
         this.miningHitTimer = 0;
+        // Mining pressure: the longer the leader keeps extracting, the more likely
+        // the noise and vibration attract a hostile pack. This turns safe clicking
+        // into a risk/reward decision instead of a pure idle loop.
+        this.miningRisk = 0;
+        this.miningRiskWarningShown = false;
         this.quest = {
             stage: 'coal',
             coalGoal: 10,
@@ -3582,6 +3587,7 @@ export class Game {
             this.miningHitTimer = 0;
         }
         this.animatePlayerMining(isPlayerMining, delta);
+        this.updateMiningRisk(delta, isPlayerMining, miningTarget);
 
         // Only one tool shows at a time: the pickaxe while heading to or
         // working an ore node, the weapon the rest of the time (including
@@ -3658,6 +3664,63 @@ export class Game {
         };
     }
 
+    /**
+     * Mining creates noise. Risk rises from actual pickaxe impacts and slowly
+     * drains when the leader stops mining. At 100% the mine answers with an
+     * ambush, then leaves a little residual danger so the player cannot simply
+     * hold one ore forever.
+     */
+    updateMiningRisk(delta, isMining, node = null) {
+        if (this.quest.stage === 'coal' || this.quest.stage === 'recruit') {
+            this.miningRisk = Math.max(0, this.miningRisk - delta * 18);
+            return;
+        }
+
+        if (isMining && node) {
+            const rarity = (this.oreConfig[node.userData.oreType] || this.oreConfig.coal).rarity;
+            const depthPressure = this.getFloorsClimbed() * 0.035;
+            this.miningRisk = Math.min(100, this.miningRisk + delta * (2.2 + rarity * 0.7 + depthPressure));
+
+            if (this.miningRisk >= 70 && !this.miningRiskWarningShown) {
+                this.miningRiskWarningShown = true;
+                this.pushCombatFeed('⚠ 채굴 소음이 너무 커집니다… 무언가 다가옵니다.', '#ffd166');
+                this.app.ui.showBanner('⚠ 채굴 소음 경고', '계속 캐면 몬스터가 몰려올 수 있습니다.', '#ffd166');
+            }
+        } else {
+            this.miningRisk = Math.max(0, this.miningRisk - delta * 7.5);
+            if (this.miningRisk < 45) this.miningRiskWarningShown = false;
+        }
+
+        if (this.miningRisk < 100 || this.waveActive || this.isDown) return;
+
+        const nodePos = node?.position?.clone() || this.player.position.clone();
+        const climbed = this.getFloorsClimbed();
+        const pool = climbed < 8 ? ['crawler']
+            : climbed < 18 ? ['crawler', 'archer']
+            : ['crawler', 'archer', 'brute'];
+        const count = climbed >= 12 && Math.random() < 0.45 ? 2 : 1;
+
+        for (let i = 0; i < count; i++) {
+            const typeId = pool[Math.floor(Math.random() * pool.length)];
+            const angle = Math.random() * Math.PI * 2;
+            this.spawnEnemy(typeId, {
+                angle,
+                distance: 5.5 + Math.random() * 2.5,
+                isFieldEnemy: true,
+                waveOverride: Math.max(1, Math.round(climbed * 0.9))
+            });
+        }
+
+        this.miningRisk = 28;
+        this.miningRiskWarningShown = false;
+        this.playerTarget = this.enemies[this.enemies.length - 1] || null;
+        this.autoCombat = true;
+        this.playerData.miningTarget = null;
+        this.combatFX.spawnShockwave(nodePos, { color: 0xff9c4a, scale: 3.2 });
+        this.pushCombatFeed(`🚨 채굴 소음에 이끌려 몬스터 ${count}마리가 습격했습니다!`, '#ff7a4a');
+        this.app.ui.showBanner('🚨 광산 습격!', `채굴 소음이 몬스터를 불러냈습니다 · ${count}마리`, '#ff7a4a');
+    }
+
     // One pickaxe swing. The vein only yields an item once enough swings land,
     // and it keeps producing until its reserves run out.
     swingAtNode(node) {
@@ -3665,6 +3728,8 @@ export class Game {
 
         node.userData.hitPulse = 1;
         node.userData.swings = (node.userData.swings || 0) + 1;
+        const riskRarity = (this.oreConfig[node.userData.oreType] || this.oreConfig.coal).rarity;
+        this.miningRisk = Math.min(100, this.miningRisk + 4 + riskRarity * 2.5 + this.getFloorsClimbed() * 0.12);
 
         if (node.userData.swings < node.userData.swingsRequired) return;
 
@@ -3749,7 +3814,9 @@ export class Game {
             reserves: node.userData.reserves,
             lastYieldLabel: lastYield ? (this.oreConfig[lastYield]?.label || lastYield) : null,
             lastYieldAmount: lastYield ? (node.userData.lastYieldAmount || 1) : 0,
-            lastYieldLucky: lastYield ? !!node.userData.lastYieldLucky : false
+            lastYieldLucky: lastYield ? !!node.userData.lastYieldLucky : false,
+            risk: Math.round(this.miningRisk),
+            riskState: this.miningRisk >= 70 ? 'danger' : this.miningRisk >= 40 ? 'warning' : 'safe'
         };
     }
 

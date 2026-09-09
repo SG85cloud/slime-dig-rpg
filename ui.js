@@ -1650,15 +1650,19 @@ export class UI {
         const progress = this.statPanel.querySelector('.mining-progress');
         if (miningProgress) {
             const base = `${miningProgress.label} 광맥 ${miningProgress.swings}/${miningProgress.swingsRequired}회 · 매장량 ${miningProgress.reserves}`;
+            const risk = Number.isFinite(miningProgress.risk) ? miningProgress.risk : 0;
+            const riskText = risk >= 70 ? `\n🚨 습격 위험 ${risk}% · 지금 멈추는 게 안전합니다`
+                : risk >= 40 ? `\n⚠ 채굴 소음 ${risk}% · 계속 캐면 적이 올 수 있습니다`
+                : `\n채굴 소음 ${risk}%`;
             if (miningProgress.lastYieldLabel) {
                 const amount = miningProgress.lastYieldAmount > 1 ? ` x${miningProgress.lastYieldAmount}` : '';
                 progress.textContent = miningProgress.lastYieldLucky
-                    ? `${base}\n✨ ${miningProgress.lastYieldLabel}${amount} 획득! (행운)`
-                    : `${base}\n${miningProgress.lastYieldLabel}${amount} 획득`;
+                    ? `${base}${riskText}\n✨ ${miningProgress.lastYieldLabel}${amount} 획득! (행운)`
+                    : `${base}${riskText}\n${miningProgress.lastYieldLabel}${amount} 획득`;
                 progress.style.color = miningProgress.lastYieldLucky ? '#ffe39a' : '#b7f3ff';
             } else {
-                progress.textContent = base;
-                progress.style.color = '#b7f3ff';
+                progress.textContent = base + riskText;
+                progress.style.color = risk >= 70 ? '#ff7d6b' : risk >= 40 ? '#ffd166' : '#b7f3ff';
             }
             progress.style.whiteSpace = 'pre-line';
         } else {
