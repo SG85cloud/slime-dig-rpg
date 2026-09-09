@@ -515,7 +515,7 @@ export class Game {
             this.pendingWorkerRoles = saved.workerRoles.map((role) => this.workerRoles.includes(role) ? role : 'miner');
         }
 
-        if (['mine', 'attack', 'defend'].includes(saved.squadCommand)) {
+        if (['mine', 'attack', 'defend', 'focus'].includes(saved.squadCommand)) {
             this.savedCommand = saved.squadCommand;
         }
 
@@ -1251,6 +1251,18 @@ export class Game {
         // instead of the wave counter, which may still be 0 for a leader who
         // hasn't started a defence run yet.
         const scaled = scaleEnemyStats(config, Math.max(1, options.waveOverride ?? this.wave));
+        const eliteAffix = options.eliteAffix || null;
+        const affixTable = {
+            berserker: { name: '광폭', hp: 1.18, damage: 1.38, speed: 1.22, tint: 0xff5f5f, desc: '체력이 낮아질수록 공격이 빨라집니다.' },
+            plated: { name: '중갑', hp: 1.62, damage: 0.92, speed: 0.78, tint: 0xd8b56a, desc: '피해를 22% 덜 받습니다.' },
+            volatile: { name: '불안정', hp: 0.88, damage: 1.16, speed: 1.08, tint: 0x9fffd0, desc: '사망 시 주변에 폭발 피해를 줍니다.' },
+            leech: { name: '흡혈', hp: 1.05, damage: 1.08, speed: 0.96, tint: 0xc66bff, desc: '공격 적중 시 체력을 일부 회복합니다.' }
+        };
+        const affix = affixTable[eliteAffix];
+        if (affix) {
+            scaled.hp = Math.round(scaled.hp * affix.hp);
+            scaled.damage = Math.round(scaled.damage * affix.damage);
+        }
         const angle = options.angle !== undefined ? options.angle : Math.random() * Math.PI * 2;
         const distance = options.distance !== undefined ? options.distance : 17 + Math.random() * 7;
         // initWorld() can spawn a returning "recruit" quest enemy before
@@ -1303,13 +1315,17 @@ export class Game {
             attackInterval: config.attackInterval * this.traitEffects.enemyIntervalMult,
             attackTimer: 0.7 + Math.random() * 0.8,
             range: config.range,
-            moveSpeed: config.moveSpeed,
+            moveSpeed: config.moveSpeed * (affix?.speed || 1),
             keepDistance: config.keepDistance || 0,
             style: config.style,
             baseY: groundY,
             baseScale: config.scale,
-            tint: config.tint,
-            elite: config.elite,
+            tint: affix ? affix.tint : config.tint,
+            elite: config.elite || !!affix,
+            eliteAffix: eliteAffix,
+            eliteAffixName: affix?.name || '',
+            eliteAffixDesc: affix?.desc || '',
+            damageReduction: eliteAffix === 'plated' ? 0.22 : 0,
             pattern: config.pattern || 'basic',
             patternTimer: 3.5 + Math.random() * 2.5,
             patternCooldown: 2.5 + Math.random() * 1.5,
@@ -1343,13 +1359,29 @@ export class Game {
         let index = 0;
         const total = composition.reduce((sum, [, count]) => sum + count, 0);
 
+        let eliteAssigned = false;
         composition.forEach(([typeId, count]) => {
             for (let i = 0; i < count; i++) {
                 const angle = (index / Math.max(1, total)) * Math.PI * 2 + Math.random() * 0.5;
-                this.spawnEnemy(typeId, { angle, distance: 15 + Math.random() * 6 });
+                let eliteAffix = null;
+                if (isEliteWave(wave) && !eliteAssigned && typeId !== 'overlord') {
+                    const pool = ['berserker', 'plated', 'volatile', 'leech'];
+                    eliteAffix = pool[Math.floor(Math.random() * pool.length)];
+                    eliteAssigned = true;
+                }
+                this.spawnEnemy(typeId, { angle, distance: 15 + Math.random() * 6, eliteAffix });
                 index += 1;
             }
         });
+        if (isEliteWave(wave) && !eliteAssigned) {
+            const boss = this.enemies[this.enemies.length - 1];
+            if (boss) {
+                const pool = ['berserker', 'plated', 'volatile', 'leech'];
+                const affix = pool[Math.floor(Math.random() * pool.length)];
+                boss.userData.eliteAffix = affix;
+                boss.userData.eliteAffixName = ({berserker:'광폭', plated:'중갑', volatile:'불안정', leech:'흡혈'})[affix];
+            }
+        }
 
         if (isEliteWave(wave)) {
             this.pushCombatFeed(`⚠ 정예 웨이브 ${wave}! 광산의 군주가 나타납니다.`, '#ff7a4a');
@@ -1597,7 +1629,11 @@ export class Game {
 
     setSquadCommand(command) {
         if (this.workers.length === 0) return;
-        if (!['mine', 'attack', 'defend'].includes(command)) return;
+        if (!['mine', 'attack', 'defend', 'focus'].includes(command)) return;
+        if (command === 'focus' && (!this.playerTarget || !this.enemies.includes(this.playerTarget) || this.playerTarget.userData.dying)) {
+            this.pushCombatFeed('🎯 먼저 적을 클릭해 집중 대상을 지정하세요.', '#ffe39a');
+            return;
+        }
         this.squadCommand = command;
         if (command !== 'mine') {
             this.playerData.miningTarget = null;
@@ -2195,7 +2231,7 @@ export class Game {
     damageEnemy(enemy, rawDamage, options = {}) {
         if (!enemy || enemy.userData.dying) return 0;
 
-        const damage = Math.max(1, Math.round(rawDamage));
+        const damage = Math.max(1, Math.round(rawDamage * (1 - (enemy.userData.damageReduction || 0))));
         enemy.userData.hp -= damage;
         enemy.userData.hitFlash = 1;
         // Knockback reads as physical force on lighter monsters.
@@ -2262,6 +2298,12 @@ export class Game {
 
         if (enemy.userData.healthBar) enemy.userData.healthBar.visible = false;
         this.playSound('slime-squish');
+        if (enemy.userData.eliteAffix === 'volatile') {
+            const blastTargets = this.getCombatTargetsInRadius(enemy.position, 3.2);
+            blastTargets.forEach((target) => this.damageCombatTarget(target, Math.round(enemy.userData.damage * 0.9), enemy));
+            this.combatFX.spawnShockwave(enemy.position, { color: 0x9fffd0, scale: 7 });
+            this.pushCombatFeed('💥 불안정 정예가 폭발했습니다!', '#9fffd0');
+        }
         this.grantKillReward(enemy);
         this.bumpQuestStat('kills', 1);
     }
@@ -2272,9 +2314,11 @@ export class Game {
         const oreRoll = Math.random();
         let reward;
         if (enemy.userData.elite) {
-            this.inventory.mithril += 2;
-            this.inventory.gold += 3;
-            reward = '미스릴 2 · 금광석 3';
+            this.inventory.mithril += enemy.userData.eliteAffix ? 3 : 2;
+            this.inventory.gold += enemy.userData.eliteAffix ? 5 : 3;
+            reward = enemy.userData.eliteAffix
+                ? `미스릴 3 · 금광석 5 · ${enemy.userData.eliteAffixName} 보너스`
+                : '미스릴 2 · 금광석 3';
         } else if (oreRoll < 0.14) {
             this.inventory.gold += 1;
             reward = '금광석 1';
@@ -3319,6 +3363,9 @@ export class Game {
                     hp: Math.max(0, target.userData.hp),
                     maxHp: target.userData.maxHp,
                     elite: target.userData.elite,
+                    eliteAffix: target.userData.eliteAffix || null,
+                    eliteAffixName: target.userData.eliteAffixName || '',
+                    eliteAffixDesc: target.userData.eliteAffixDesc || '',
                     pattern: target.userData.pattern || 'basic',
                     patternState: target.userData.patternState || 'ready',
                     patternWindup: Math.max(0, target.userData.patternWindup || 0),
@@ -3997,6 +4044,14 @@ export class Game {
                             * this.boons.workerSwingMult * this.getWorkerLevelMult(worker) * roleMiningMult);
                     }
                 }
+            }
+        } else if (this.squadCommand === 'focus') {
+            enemy = this.playerTarget && this.enemies.includes(this.playerTarget) && !this.playerTarget.userData.dying
+                ? this.playerTarget : this.acquireTarget(worker.position, 20);
+            if (enemy) {
+                const flank = new THREE.Vector3(Math.cos(formationAngle), 0, Math.sin(formationAngle)).multiplyScalar(1.5);
+                destination = enemy.position.clone().add(flank);
+                if (worker.position.distanceTo(enemy.position) < 2.6) this.workerAttack(worker, enemy, delta);
             }
         } else if (this.squadCommand === 'attack') {
             enemy = this.acquireTarget(worker.position, 20);

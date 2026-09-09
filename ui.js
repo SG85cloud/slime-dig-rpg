@@ -1801,10 +1801,11 @@ export class UI {
                         background:rgba(255,255,255,.05); color:#e8dcf5; font:700 11px Inter, sans-serif;
                         padding:3px 8px; cursor:pointer;">✕</button>
             </div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;">
                 <button data-command="mine" type="button">⛏ 채굴</button>
                 <button data-command="attack" type="button">⚔ 공격</button>
                 <button data-command="defend" type="button">🛡 방어</button>
+                <button data-command="focus" type="button">🎯 집중</button>
             </div>
             <div class="command-status" style="margin-top: 9px; color: #9fe8ff; font-size: 12px;">현재 명령: 채굴</div>
             <div class="worker-role-list" style="margin-top:10px; display:grid; gap:6px;"></div>
@@ -1923,6 +1924,7 @@ export class UI {
                     <button class="auto-combat-toggle" type="button">⚔ 자동 전투 ON</button>
                 </div>
             </div>
+            <div class="target-affix" style="display:none; margin-top:6px; padding:5px 7px; border-radius:5px; background:rgba(122,70,38,.22); border:1px solid rgba(255,178,95,.35); color:#ffd39a; font-size:11px; line-height:1.35;"></div>
             <div class="combat-status" style="margin-top:9px; font-size:12.5px; color:#d7cbe1; line-height:1.5;"></div>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:7px;">
                 <button class="retreat-button" type="button">↩ 긴급 철수</button>
@@ -2104,6 +2106,13 @@ export class UI {
             dodgeButton.textContent = ready ? '💨 회피 [SPACE] · READY' : `💨 회피 · ${Math.max(0, combat.dodgeCooldown || 0).toFixed(1)}초`;
             dodgeButton.style.opacity = ready ? '1' : '0.55';
             dodgeButton.style.cursor = ready ? 'pointer' : 'not-allowed';
+        }
+
+        const targetAffix = this.combatPanel.querySelector('.target-affix');
+        if (targetAffix) {
+            const t = combat.target;
+            targetAffix.textContent = t?.eliteAffixName ? `✦ 정예 특성: ${t.eliteAffixName} · ${t.eliteAffixDesc || ''}` : '';
+            targetAffix.style.display = t?.eliteAffixName ? 'block' : 'none';
         }
 
         const status = this.combatPanel.querySelector('.combat-status');
@@ -2610,9 +2619,9 @@ export class UI {
     }
 
     refreshCommandPanel() {
-        const labels = { mine: '채굴', attack: '공격', defend: '방어' };
-        const colors = { mine: '#b7f3ff', attack: '#ff9c9c', defend: '#ffe39a' };
-        const icons = { mine: '⛏', attack: '⚔', defend: '🛡' };
+        const labels = { mine: '채굴', attack: '공격', defend: '방어', focus: '집중 공격' };
+        const colors = { mine: '#b7f3ff', attack: '#ff9c9c', defend: '#ffe39a', focus: '#ffb266' };
+        const icons = { mine: '⛏', attack: '⚔', defend: '🛡', focus: '🎯' };
         const buttons = this.commandPanel?.querySelectorAll('button[data-command]') || [];
         buttons.forEach((button) => {
             const selected = button.dataset.command === this.activeCommand;
@@ -2712,7 +2721,7 @@ export class UI {
             commandStatus.textContent = '전투 보상 획득 후 사용 가능';
             commandStatus.style.color = '#a99bb8';
         } else if (commandStatus) {
-            const labels = { mine: '채굴', attack: '공격', defend: '방어' };
+            const labels = { mine: '채굴', attack: '공격', defend: '방어', focus: '집중 공격' };
             commandStatus.textContent = `현재 명령: ${labels[this.activeCommand]}`;
         }
         // Loadout summary shown next to the leader's vitals.
