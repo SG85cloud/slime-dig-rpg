@@ -29,6 +29,8 @@ export class UI {
         this.resetHandler = null;
         this.craftHandlers = null;
         this.craftOpen = false;
+        this.mineEventOpen = false;
+        this.mineEventHandler = null;
         this.craftMix = { coal: 0, iron: 0, gold: 0, mithril: 0 };
         this.craftSlot = 'weapon';
         this.equipmentData = null;
@@ -1075,6 +1077,49 @@ export class UI {
         this.waveRewardHandler = handler;
     }
 
+    setMineEventHandler(handler) {
+        this.mineEventHandler = handler;
+    }
+
+    showMineEvent(event, workerData = null) {
+        if (!event || !this.mineEventOverlay) return;
+        this.mineEventOpen = true;
+        const workers = workerData?.count || 0;
+        this.mineEventOverlay.querySelector('.mine-event-icon').textContent = event.icon || '❗';
+        this.mineEventOverlay.querySelector('.mine-event-title').textContent = event.title || '광산 사건';
+        this.mineEventOverlay.querySelector('.mine-event-text').textContent = event.text || '';
+        const choices = this.mineEventOverlay.querySelector('.mine-event-choices');
+        choices.innerHTML = '';
+        (event.choices || []).forEach((choice) => {
+            const button = document.createElement('button');
+            const need = choice.requiresWorkers || 0;
+            const disabled = workers < need;
+            button.type = 'button';
+            button.disabled = disabled;
+            button.style.cssText = `width:100%; text-align:left; padding:13px 14px; border:1px solid ${disabled ? '#3d3545' : (choice.color || '#8063a0')}; border-radius:9px; background:${disabled ? '#17141d' : 'linear-gradient(145deg,rgba(40,31,54,.98),rgba(18,14,26,.98))'}; color:${disabled ? '#6f6878' : '#f4ecff'}; cursor:${disabled ? 'not-allowed' : 'pointer'}; opacity:${disabled ? '.6' : '1'}; font-family:Inter,sans-serif;`;
+            button.innerHTML = `<div style="display:flex;align-items:center;gap:9px;"><span style="font-size:20px;">${choice.icon || '•'}</span><span style="font-weight:800;font-size:13px;">${choice.title}</span>${need ? `<span style="margin-left:auto;font-size:10px;color:#ffb3b3;">워커 ${need}명 필요</span>` : ''}</div><div style="margin-top:5px;margin-left:29px;font-size:11px;line-height:1.4;color:${disabled ? '#6f6878' : '#bfb2cc'};">${choice.desc || ''}</div>`;
+            button.addEventListener('click', (e) => {
+                e.preventDefault(); e.stopPropagation();
+                if (!this.mineEventHandler) return;
+                const result = this.mineEventHandler(choice.id);
+                if (result?.ok) this.closeMineEvent();
+                else if (result?.reason) {
+                    const hint = this.mineEventOverlay.querySelector('.mine-event-hint');
+                    if (hint) hint.textContent = result.reason;
+                }
+            });
+            choices.appendChild(button);
+        });
+        this.mineEventOverlay.querySelector('.mine-event-hint').textContent = `현재 워커 ${workers}명 · 선택하면 즉시 결과가 적용됩니다.`;
+        this.mineEventOverlay.style.display = 'flex';
+    }
+
+    closeMineEvent() {
+        if (!this.mineEventOverlay) return;
+        this.mineEventOpen = false;
+        this.mineEventOverlay.style.display = 'none';
+    }
+
     setQuestRewardHandler(handler) {
         this.questRewardHandler = handler;
     }
@@ -1186,6 +1231,28 @@ export class UI {
         `;
         // Insert above the HUD, which was appended to the rail first.
         this.leftRail.insertBefore(this.questPanel, this.hud || null);
+
+        // v9: modal choice event. It deliberately blocks the mine until the player
+        // commits to a risk/reward decision.
+        this.mineEventOverlay = document.createElement('div');
+        this.mineEventOverlay.style.cssText = `
+            position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+            padding:24px; box-sizing:border-box; background:rgba(5,4,10,.72); backdrop-filter:blur(4px);
+            z-index:92; pointer-events:auto;
+        `;
+        this.mineEventOverlay.innerHTML = `
+            <div style="width:min(560px,94vw); padding:22px; box-sizing:border-box; border:2px solid #8d6caf;
+                border-radius:15px; background:linear-gradient(155deg,rgba(37,27,50,.99),rgba(11,9,18,.99));
+                box-shadow:0 18px 60px rgba(0,0,0,.65),0 0 28px rgba(144,94,190,.22); font-family:Inter,sans-serif;">
+                <div style="text-align:center; color:#ffd166; font:700 10px Orbitron,sans-serif; letter-spacing:3px;">MINE INCIDENT</div>
+                <div class="mine-event-icon" style="text-align:center;font-size:42px;margin-top:6px;"></div>
+                <div class="mine-event-title" style="text-align:center;margin-top:3px;color:#fff1d1;font-size:22px;font-weight:900;"></div>
+                <div class="mine-event-text" style="text-align:center;margin-top:8px;color:#c9bfd4;font-size:13px;line-height:1.55;"></div>
+                <div class="mine-event-choices" style="display:grid;gap:9px;margin-top:18px;"></div>
+                <div class="mine-event-hint" style="margin-top:11px;text-align:center;color:#9d91ab;font-size:10px;"></div>
+            </div>
+        `;
+        this.container.appendChild(this.mineEventOverlay);
 
         this.questPanel.querySelector('.quest-reward-claim').addEventListener('click', (event) => {
             event.stopPropagation();

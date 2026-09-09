@@ -183,6 +183,11 @@ export class Game {
         this.miningNoise = 0;
         this.miningDangerFlash = 0;
         this.retreatTimer = 0;
+        // v9: choice-driven mine incidents. While an incident is open, mining pauses
+        // and the player must trade safety, reward and worker risk.
+        this.mineEvent = null;
+        this.eventRareBoost = 0;
+        this.eventRareCharges = 0;
         this.quest = {
             stage: 'coal',
             coalGoal: 10,
@@ -315,6 +320,9 @@ export class Game {
         this.initWorld();
         this.initPlayer();
         this.initControls();
+        if (this.mineEvent) {
+            setTimeout(() => this.app.ui.showMineEvent?.(this.mineEvent, this.getWorkerData()), 400);
+        }
 
         // Re-recruit the workers that were part of the squad on the last visit,
         // each rejoining at the individual level it had earned.
@@ -458,6 +466,12 @@ export class Game {
         if (typeof saved.quest?.rewardReady === 'boolean') this.quest.rewardReady = saved.quest.rewardReady;
         const craftCount = Number(saved.quest?.craftCount);
         if (Number.isFinite(craftCount) && craftCount >= 0) this.quest.craftCount = Math.floor(craftCount);
+        if (saved.mineEvent && saved.mineEvent.id && saved.mineEvent.choices) {
+            this.mineEvent = saved.mineEvent;
+        }
+        this.eventRareBoost = Math.max(0, Number(saved.eventRareBoost) || 0);
+        this.eventRareCharges = Math.max(0, Math.floor(Number(saved.eventRareCharges) || 0));
+
         if (saved.quest?.contractStats && typeof saved.quest.contractStats === 'object') {
             Object.keys(this.quest.contractStats).forEach((key) => {
                 const value = Number(saved.quest.contractStats[key]);
@@ -558,6 +572,9 @@ export class Game {
                 contractStats: { ...this.quest.contractStats },
                 contracts: this.quest.contracts.map(c => ({ ...c }))
             },
+            mineEvent: this.mineEvent ? { ...this.mineEvent } : null,
+            eventRareBoost: this.eventRareBoost || 0,
+            eventRareCharges: this.eventRareCharges || 0,
             cycle: this.cycle,
             surfaceConquered: this.surfaceConquered,
             floorReadyToAscend: this.floorReadyToAscend,
@@ -843,9 +860,10 @@ export class Game {
                 // The vein's own ore stays the most common result.
                 weights[oreType] = 58;
             } else if (rarityGap > 0) {
-                // Better ore than the vein: genuinely scarce. The steeper falloff
-                // means striking mithril out of a lesser vein is a real event.
-                weights[oreType] = (7 / Math.pow(3.4, rarityGap - 1)) + luck * (1.5 / rarityGap);
+                // Better ore than the vein: genuinely scarce. v9 incidents can
+                // temporarily bend these odds upward for a few pulls.
+                const rareBoost = this.eventRareBoost > 0 ? (1 + this.eventRareBoost) : 1;
+                weights[oreType] = ((7 / Math.pow(3.4, rarityGap - 1)) + luck * (1.5 / rarityGap)) * rareBoost;
             } else {
                 // Worse ore than the vein: common filler, reduced slightly by luck.
                 weights[oreType] = Math.max(2, (20 / Math.pow(1.6, -rarityGap - 1)) - luck * 1.4);
@@ -914,9 +932,9 @@ export class Game {
 
         const from = this.depth;
         const bankedGreed = Math.max(0, Math.round(this.unstableHaul || 0));
+        this.bumpQuestStat('floorAscends', 1);
         if (bankedGreed > 0) {
             this.inventory.gold += bankedGreed;
-            this.bumpQuestStat('floorAscends', 1);
             this.pushCombatFeed(`🏦 욕심 채굴 보너스 ${bankedGreed}을(를) 안전하게 확보했습니다!`, '#ffd166');
         }
         this.depth = Math.max(0, this.depth - 1);
@@ -1498,6 +1516,7 @@ export class Game {
         // Tutorial-quest "claim reward" button in the quest panel.
         this.app.ui.setQuestRewardHandler(() => this.claimQuestReward());
         this.app.ui.setContractClaimHandler?.((id) => this.claimContract(id));
+        this.app.ui.setMineEventHandler?.((choiceId) => this.resolveMineEvent(choiceId));
         // Status window: spend a ticket to reroll the leader's innate trait.
         this.app.ui.setTraitRerollHandler(() => this.rerollTrait());
         // Depth panel: climb to the next floor once its quota is met.
@@ -3732,6 +3751,10 @@ export class Game {
 
     updateWorker(worker, index, delta) {
         if (this.updateDownedWorker(worker, delta)) return;
+        if (this.mineEvent) {
+            worker.userData.isMining = false;
+            return;
+        }
         const formationAngle = (index / Math.max(1, this.workers.length)) * Math.PI * 2;
         let destination = this.player.position.clone();
         let enemy = null;
@@ -3889,7 +3912,7 @@ export class Game {
         // tiny per-frame damage value. Fighting always interrupts mining.
         let isPlayerMining = false;
         const miningTarget = this.playerData.miningTarget;
-        if (!inCombat && !this.isDown && miningTarget && this.nodes.includes(miningTarget)) {
+        if (!this.mineEvent && !inCombat && !this.isDown && miningTarget && this.nodes.includes(miningTarget)) {
             const dx = this.player.position.x - miningTarget.position.x;
             const dz = this.player.position.z - miningTarget.position.z;
             const dist = Math.hypot(dx, dz);
@@ -4009,6 +4032,167 @@ export class Game {
         this.persist();
     }
 
+    // ============================================================= v9 mine events
+    getMineEventDefinitions() {
+        const depth = this.depth;
+        const danger = Math.round(this.miningNoise || 0);
+        return [
+            {
+                id: 'crack', icon: '🕳️', title: '수상한 균열',
+                text: '균열 안쪽에서 푸른 광택과 낮은 울음소리가 동시에 들립니다.',
+                choices: [
+                    { id: 'dig', icon: '⛏', title: '균열을 판다', desc: '희귀 광석 확률 ↑↑ / 습격 위험 ↑↑', color: '#ffd166' },
+                    { id: 'seal', icon: '🧱', title: '봉인한다', desc: '아무것도 잃지 않고 안전하게 진행', color: '#8fd9a8' },
+                    { id: 'workers', icon: '👷', title: '워커 2명을 투입한다', desc: '보상 ↑↑ / 워커 부상 위험', color: '#d7b8ff', requiresWorkers: 2 }
+                ]
+            },
+            {
+                id: 'bones', icon: '🦴', title: '뼈 무더기',
+                text: '오래된 광부의 장비 사이에서 아직 움직이는 뼈가 보입니다.',
+                choices: [
+                    { id: 'search', icon: '🔎', title: '조사한다', desc: '보물을 얻을 수 있지만 즉시 습격', color: '#ffd166' },
+                    { id: 'leave', icon: '🚶', title: '지나간다', desc: '안전하게 채굴을 계속한다', color: '#8fd9a8' },
+                    { id: 'guard', icon: '🛡', title: '경비 워커를 세운다', desc: '경비 역할이 있으면 피해를 줄인다', color: '#8fe4ff' }
+                ]
+            },
+            {
+                id: 'gold_seam', icon: '💎', title: '빛나는 광맥',
+                text: `광맥 깊숙한 곳에서 ${depth <= 15 ? '금빛' : '희미한'} 맥이 번쩍입니다.`,
+                choices: [
+                    { id: 'rush', icon: '🔥', title: '전부 캐낸다', desc: '욕심 보너스 ↑↑ / 채굴 소음 급증', color: '#ffd166' },
+                    { id: 'sample', icon: '⛏', title: '조금만 캔다', desc: '희귀 광석 확률 ↑ / 위험 소폭 증가', color: '#d7b8ff' },
+                    { id: 'mark', icon: '📍', title: '위치를 표시한다', desc: '안전하지만 지금은 보상을 얻지 못한다', color: '#8fd9a8' }
+                ]
+            },
+            {
+                id: 'collapse', icon: '🧱', title: '무너지는 갱도',
+                text: '천장에서 돌가루가 떨어집니다. 오래 머물면 통로가 무너질 것 같습니다.',
+                choices: [
+                    { id: 'mine', icon: '⛏', title: '서둘러 채굴한다', desc: '보상 ↑ / 워커 부상 위험', color: '#ffd166', requiresWorkers: 0 },
+                    { id: 'retreat', icon: '↩', title: '즉시 물러난다', desc: '안전 확보 / 이번 광맥은 포기', color: '#8fd9a8' },
+                    { id: 'two_workers', icon: '👷', title: '워커 2명을 보낸다', desc: '보상 ↑↑ / 부상 위험 ↑↑', color: '#ff9c9c', requiresWorkers: 2 }
+                ]
+            },
+            {
+                id: 'whisper', icon: '👂', title: '이상한 울음소리',
+                text: '벽 너머에서 누군가 도움을 청하는 것 같은 소리가 들립니다.',
+                choices: [
+                    { id: 'approach', icon: '👁️', title: '다가간다', desc: '희귀 보상 또는 강한 적과 조우', color: '#d7b8ff' },
+                    { id: 'send', icon: '👷', title: '워커를 보낸다', desc: '워커가 대신 위험을 감수한다', color: '#ff9c9c', requiresWorkers: 1 },
+                    { id: 'ignore', icon: '🚶', title: '무시한다', desc: '안전하지만 숨겨진 기회를 놓친다', color: '#8fd9a8' }
+                ]
+            },
+            {
+                id: 'black_slime', icon: '👁️', title: '검은 점액',
+                text: '바위 틈에서 검은 슬라임이 꿈틀거립니다. 보통 슬라임과는 냄새부터 다릅니다.',
+                choices: [
+                    { id: 'touch', icon: '🧪', title: '채취한다', desc: '희귀 광석 + 특수 보상 / 위험 증가', color: '#d7b8ff' },
+                    { id: 'burn', icon: '🔥', title: '태워버린다', desc: '안전하지만 보상 없음', color: '#ffd166' },
+                    { id: 'observe', icon: '🔎', title: '관찰한다', desc: '탐광꾼이 있으면 추가 보상을 얻을 수 있다', color: '#8fe4ff' }
+                ]
+            }
+        ];
+    }
+
+    maybeTriggerMineEvent(node) {
+        if (this.mineEvent || this.isDown || this.waveActive || !node) return false;
+        if (this.depth <= 0 || this.quest.stage === 'coal' || this.quest.stage === 'recruit') return false;
+        const prospectors = this.workers.filter(w => (w.userData.workerRole || 'miner') === 'prospector' && w.userData.downTimer <= 0).length;
+        const chance = Math.min(0.13, 0.035 + this.getFloorsClimbed() * 0.0015 + prospectors * 0.018 + (this.miningNoise || 0) * 0.00025);
+        if (Math.random() > chance) return false;
+        const defs = this.getMineEventDefinitions();
+        const def = defs[Math.floor(Math.random() * defs.length)];
+        this.mineEvent = { id: def.id, icon: def.icon, title: def.title, text: def.text, choices: def.choices, createdAt: Date.now() };
+        this.playerData.miningTarget = null;
+        this.playerTarget = null;
+        this.miningHitTimer = 0;
+        this.workers.forEach(w => { w.userData.miningTarget = null; });
+        this.app.ui.showMineEvent?.(this.mineEvent, this.getWorkerData());
+        this.pushCombatFeed(`❗ 사건 발생: ${def.title}`, '#ffd166');
+        return true;
+    }
+
+    resolveMineEvent(choiceId) {
+        const event = this.mineEvent;
+        if (!event) return { ok: false, reason: '진행 중인 사건이 없습니다.' };
+        const choice = event.choices.find(c => c.id === choiceId);
+        if (!choice) return { ok: false, reason: '잘못된 선택입니다.' };
+        const aliveWorkers = this.workers.filter(w => w.userData.downTimer <= 0);
+        if (choice.requiresWorkers && aliveWorkers.length < choice.requiresWorkers) {
+            return { ok: false, reason: `워커가 ${choice.requiresWorkers}명 필요합니다.` };
+        }
+
+        // Event payouts join the same unstable pool as greed-mining bonuses:
+        // banked for real on the next ascend, wiped entirely on a field death.
+        const reward = (n) => {
+            this.unstableHaul = Math.min(999, (this.unstableHaul || 0) + n);
+        };
+        const injure = (worker, amount) => this.damageWorker(worker, amount, { userData: { type: 'mine-event' } });
+        let message = '';
+        let color = choice.color || '#d7c4ed';
+
+        if (event.id === 'crack') {
+            if (choiceId === 'dig') {
+                this.eventRareBoost = 1.9; this.eventRareCharges = 4; this.addMiningNoise(24);
+                if (Math.random() < 0.65) this.spawnFieldEncounter();
+                message = '균열을 파고들었습니다. 희귀 광맥이 보이지만 무언가 깨어났습니다!';
+            } else if (choiceId === 'workers') {
+                reward(12 + this.getFloorsClimbed());
+                this.addMiningNoise(12);
+                aliveWorkers.slice(0, 2).forEach(w => { if (Math.random() < 0.45) injure(w, 22 + Math.random() * 14); });
+                this.eventRareBoost = 0.9; this.eventRareCharges = 3;
+                message = '워커 2명이 균열 안쪽을 확보했습니다. 보너스 광석을 얻었지만 부상자가 생길 수 있습니다.';
+            } else message = '균열을 봉인했습니다. 위험 없이 길을 확보했습니다.';
+        } else if (event.id === 'bones') {
+            if (choiceId === 'search') {
+                reward(10 + Math.floor(Math.random() * 10));
+                this.addMiningNoise(18); this.spawnFieldEncounter();
+                message = '낡은 광부의 보관함을 찾았습니다. 하지만 뼈들이 움직이기 시작합니다!';
+            } else if (choiceId === 'guard') {
+                const guards = aliveWorkers.filter(w => w.userData.workerRole === 'guard');
+                if (guards.length) { reward(7 + guards.length * 3); message = '경비 워커가 주변을 통제했습니다. 안전하게 보급품을 확보했습니다.'; }
+                else { this.addMiningNoise(8); message = '경비 워커가 없어 조심스럽게 지나갔습니다.'; }
+            } else message = '뼈 무더기를 지나쳤습니다. 지금은 안전이 우선입니다.';
+        } else if (event.id === 'gold_seam') {
+            if (choiceId === 'rush') {
+                reward(16); this.greedSeams = (this.greedSeams || 0) + 1; this.addMiningNoise(28); this.eventRareBoost = 1.5; this.eventRareCharges = 5;
+                this.pushCombatFeed('🔥 사건으로 욕심 채굴 보너스가 커졌습니다.', '#ffd166');
+                message = '빛나는 광맥을 끝까지 긁어냈습니다. 큰 보상이지만 광산이 크게 소란스러워졌습니다.';
+            } else if (choiceId === 'sample') {
+                reward(5); this.addMiningNoise(10); this.eventRareBoost = 1.25; this.eventRareCharges = 3;
+                message = '광맥 일부만 채취했습니다. 희귀 광석의 기척이 남아 있습니다.';
+            } else message = '광맥 위치를 표시했습니다. 나중을 위해 남겨두었습니다.';
+        } else if (event.id === 'collapse') {
+            if (choiceId === 'mine') {
+                reward(10); this.addMiningNoise(20); if (Math.random() < 0.35 && aliveWorkers.length) injure(aliveWorkers[Math.floor(Math.random()*aliveWorkers.length)], 26); message = '무너지기 직전까지 채굴해 광석을 확보했습니다.';
+            } else if (choiceId === 'two_workers') {
+                reward(18); this.addMiningNoise(14); aliveWorkers.slice(0,2).forEach(w => { if (Math.random() < 0.6) injure(w, 28 + Math.random()*15); }); message = '워커 2명이 위험한 지점을 뚫었습니다. 큰 보상과 함께 부상 위험도 컸습니다.';
+            } else message = '통로에서 즉시 빠져나왔습니다. 광맥은 포기했지만 모두 무사합니다.';
+        } else if (event.id === 'whisper') {
+            if (choiceId === 'approach') {
+                if (Math.random() < 0.55) { reward(22); this.eventRareBoost = 2.1; this.eventRareCharges = 3; message = '숨겨진 광부의 주머니를 찾았습니다!'; }
+                else { this.addMiningNoise(25); this.spawnFieldEncounter(); message = '울음소리의 정체는 굶주린 괴물이었습니다!'; color = '#ff9c9c'; }
+            } else if (choiceId === 'send') {
+                const w = aliveWorkers[0];
+                if (Math.random() < 0.65) injure(w, 24 + Math.random()*18); reward(9); message = '워커가 대신 확인했습니다. 작은 보급품을 회수했습니다.';
+            } else message = '울음소리를 무시하고 채굴을 계속합니다.';
+        } else if (event.id === 'black_slime') {
+            if (choiceId === 'touch') { reward(15); this.eventRareBoost = 2.4; this.eventRareCharges = 4; this.addMiningNoise(16); message = '검은 점액을 채취했습니다. 희귀 광석의 반응이 강해졌습니다.'; }
+            else if (choiceId === 'observe') {
+                const pros = aliveWorkers.filter(w => w.userData.workerRole === 'prospector');
+                if (pros.length) { reward(12 + pros.length * 4); this.eventRareBoost = 1.5; this.eventRareCharges = 3; message = '탐광꾼이 검은 점액의 광물 반응을 분석해 추가 보상을 찾았습니다.'; }
+                else message = '관찰했지만 특별한 정보를 얻지 못했습니다.';
+            } else message = '검은 점액을 태워 없앴습니다. 위험 요소가 사라졌습니다.';
+        }
+
+        this.mineEvent = null;
+        this.app.ui.closeMineEvent?.();
+        this.app.ui.showBanner('사건 해결', message, color);
+        this.pushCombatFeed(`🧭 ${message}`, color);
+        this.persist();
+        return { ok: true, message };
+    }
+
     // One pickaxe swing. The vein only yields an item once enough swings land,
     // and it keeps producing until its reserves run out.
     swingAtNode(node) {
@@ -4030,6 +4214,11 @@ export class Game {
         this.inventory[minedOre] += amount;
         this.totalOreMined = (this.totalOreMined || 0) + amount;
         this.bumpQuestStat('oreMined', amount);
+        if (this.eventRareCharges > 0) {
+            this.eventRareCharges -= 1;
+            if (this.eventRareCharges <= 0) this.eventRareBoost = 0;
+        }
+        if (this.maybeTriggerMineEvent(node)) return;
         node.userData.lastYieldAmount = amount;
         node.userData.lastYield = minedOre;
         node.userData.lastYieldTimer = 2.2;
