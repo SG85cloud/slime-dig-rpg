@@ -1924,7 +1924,10 @@ export class UI {
                 </div>
             </div>
             <div class="combat-status" style="margin-top:9px; font-size:12.5px; color:#d7cbe1; line-height:1.5;"></div>
-            <button class="retreat-button" type="button">↩ 긴급 철수</button>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:7px;">
+                <button class="retreat-button" type="button">↩ 긴급 철수</button>
+                <button class="dodge-button" type="button">💨 회피 [SPACE]</button>
+            </div>
             <div class="mining-risk" style="margin-top:8px; display:none;">
                 <div style="display:flex; justify-content:space-between; font-size:10.5px; color:#cdbfd7;">
                     <span>⛏ 채굴 소음</span><b class="risk-value" style="font-family:Orbitron,sans-serif;"></b>
@@ -1978,6 +1981,17 @@ export class UI {
             if (this.retreatHandler) this.retreatHandler();
         });
 
+        const dodgeButton = this.combatPanel.querySelector('.dodge-button');
+        dodgeButton.style.cssText = `
+            width:100%; padding:8px 9px; border:1px solid #5d9fc0;
+            border-radius:7px; background:linear-gradient(180deg,#254c61,#172d39); color:#dff6ff;
+            font:800 11.5px Inter, sans-serif; cursor:pointer;
+        `;
+        dodgeButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.dodgeHandler) this.dodgeHandler();
+        });
+
         const waveStart = this.combatPanel.querySelector('.wave-start');
         waveStart.style.cssText = `
             margin-top:10px; width:100%; padding:10px 9px; border:1px solid #6fb8d1;
@@ -2018,6 +2032,10 @@ export class UI {
 
     setWaveStartHandler(handler) {
         this.waveStartHandler = handler;
+    }
+
+    setDodgeHandler(handler) {
+        this.dodgeHandler = handler;
     }
 
     setAutoCombatHandler(handler) {
@@ -2078,6 +2096,15 @@ export class UI {
             ? 'linear-gradient(180deg,#245c40,#123122)'
             : 'linear-gradient(180deg,#3a3346,#211d2b)';
         mineToggle.style.borderColor = combat.autoMine ? '#6fb08a' : '#6c568d';
+
+        const dodgeButton = this.combatPanel.querySelector('.dodge-button');
+        if (dodgeButton) {
+            const ready = combat.dodgeReady;
+            dodgeButton.disabled = !ready;
+            dodgeButton.textContent = ready ? '💨 회피 [SPACE] · READY' : `💨 회피 · ${Math.max(0, combat.dodgeCooldown || 0).toFixed(1)}초`;
+            dodgeButton.style.opacity = ready ? '1' : '0.55';
+            dodgeButton.style.cursor = ready ? 'pointer' : 'not-allowed';
+        }
 
         const status = this.combatPanel.querySelector('.combat-status');
         const risk = this.combatPanel.querySelector('.mining-risk');

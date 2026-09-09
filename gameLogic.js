@@ -170,6 +170,11 @@ export class Game {
         this.autoMine = true;
         this.playerAttackTimer = 0;
         this.playerTarget = null;
+        // v12: active dodge turns enemy telegraphs into a real player decision.
+        this.dodgeCooldown = 0;
+        this.dodgeTimer = 0;
+        this.dodgeVector = new THREE.Vector3();
+        this.dodgeSpeed = 12;
         this.combatFeed = [];
         this.lastCombatMoment = 0;
         this.regenTimer = 0;
@@ -1519,6 +1524,12 @@ export class Game {
     initControls() {
         this.canvas = this.app.renderer.domElement;
         this.canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
+        window.addEventListener('keydown', (event) => {
+            if (event.code === 'Space' && !event.repeat) {
+                const result = this.startDodge();
+                if (result?.ok) event.preventDefault();
+            }
+        });
         this.app.ui.setCommandHandler((command) => this.setSquadCommand(command));
         this.app.ui.setWorkerRoleHandler?.((index, role) => this.setWorkerRole(index, role));
         this.app.ui.setStatHandler((stat) => this.upgradeStat(stat));
@@ -1527,6 +1538,7 @@ export class Game {
         this.app.ui.setAutoCombatHandler(() => this.toggleAutoCombat());
         this.app.ui.setAutoMineHandler(() => this.toggleAutoMine());
         this.app.ui.setRetreatHandler(() => this.startEmergencyRetreat());
+        this.app.ui.setDodgeHandler?.(() => this.startDodge());
         // Mine defence waves are launched by the player from the combat menu.
         this.app.ui.setWaveStartHandler(() => {
             const result = this.startDefenceWave();
@@ -1555,6 +1567,32 @@ export class Game {
                 return this.getCraftData(this.app.ui.craftMix, slot || item?.slot);
             }
         });
+    }
+
+    /** v12: short invulnerable dash. It is intentionally compact: the player
+     * still clicks to move, but Space gives a reaction tool for telegraphed hits. */
+    startDodge() {
+        if (this.isDown || this.mineEvent || this.retreatTimer > 0 || this.dodgeCooldown > 0) {
+            return { ok: false, reason: '회피할 수 없습니다.' };
+        }
+        const dir = new THREE.Vector3(0, 0, 1);
+        const angle = this.player.rotation.y || 0;
+        dir.set(Math.sin(angle), 0, Math.cos(angle)).normalize();
+        if (this.playerTarget && this.enemies.includes(this.playerTarget)) {
+            const away = new THREE.Vector3().subVectors(this.player.position, this.playerTarget.position).setY(0);
+            if (away.lengthSq() > 0.2) dir.copy(away.normalize());
+        }
+        this.dodgeVector.copy(dir);
+        this.dodgeTimer = 0.48;
+        this.dodgeCooldown = 4.2;
+        this.playerData.miningTarget = null;
+        this.playerData.targetPos.copy(this.player.position);
+        this.player.userData.airborne = 0.16;
+        this.combatFX.spawnBurst(this.player.position, { color: 0x8fe4ff, radius: 0.45, expand: 2.5, life: 0.32 });
+        this.combatFX.spawnFlash(this.player.position, 0x8fe4ff, 28, 0.24);
+        this.app.addShake(0.18);
+        this.pushCombatFeed('💨 회피! 짧은 시간 동안 피해를 무시합니다.', '#8fe4ff');
+        return { ok: true };
     }
 
     setSquadCommand(command) {
@@ -2343,6 +2381,11 @@ export class Game {
     /** Damage applied to the leader, with hit feedback and death handling. */
     damagePlayer(amount, source) {
         if (this.isDown) return;
+        if (this.dodgeTimer > 0) {
+            this.combatFX.spawnFlash(this.player.position, 0x8fe4ff, 36, 0.25);
+            this.pushCombatFeed('💨 회피 성공!', '#8fe4ff');
+            return;
+        }
 
         // Legendary armor proc: shrug off the hit entirely.
         if (Math.random() < this.getBlockChance()) {
@@ -2750,6 +2793,17 @@ export class Game {
     /** Leader auto-combat: pick a target, close in, and strike on cooldown. */
     updatePlayerCombat(delta) {
         this.playerAttackTimer = Math.max(0, this.playerAttackTimer - delta);
+        this.dodgeCooldown = Math.max(0, this.dodgeCooldown - delta);
+        if (this.dodgeTimer > 0) {
+            this.dodgeTimer = Math.max(0, this.dodgeTimer - delta);
+            const step = Math.min(delta * this.dodgeSpeed, 0.8);
+            this.player.position.addScaledVector(this.dodgeVector, step);
+            this.player.position.y = this.player.userData.baseY || 0.5;
+            this.player.scale.setScalar((this.player.userData.baseScale || 1.25) * (1 + this.dodgeTimer * 0.45));
+            this.playerData.targetPos.copy(this.player.position);
+            this.updateWeaponPose(delta, true);
+            return true;
+        }
 
         if (this.isDown) {
             this.deathTimer -= delta;
@@ -3256,6 +3310,9 @@ export class Game {
             enemiesLeft: this.enemies.filter((enemy) => !enemy.userData.dying).length,
             workersDown: this.workers.filter((worker) => worker.userData.downTimer > 0).length,
             attackInterval: this.getPlayerAttackInterval(),
+            dodgeCooldown: Math.max(0, this.dodgeCooldown || 0),
+            dodgeReady: !this.isDown && !this.mineEvent && (this.dodgeCooldown || 0) <= 0,
+            dodging: (this.dodgeTimer || 0) > 0,
             target: target
                 ? {
                     name: target.userData.name,
@@ -4182,7 +4239,8 @@ export class Game {
     getMineEventDefinitions() {
         const depth = this.depth;
         const danger = Math.round(this.miningNoise || 0);
-        const themeId = this.floorTheme?.id || '';
+        // FLOOR_THEMES is keyed by B-depth, so special-event routing uses the actual depth.
+        const themeId = this.depth;
         const defs = [
             { id:'crack', icon:'🕳️', title:'수상한 균열', text:'균열 안쪽에서 푸른 광택과 낮은 울음소리가 동시에 들립니다.', choices:[
                 {id:'dig',icon:'⛏',title:'균열을 판다',desc:'희귀 광석 대폭 증가 · 습격 위험 크게 증가',color:'#ffd166',risk:2},
@@ -4215,17 +4273,17 @@ export class Game {
                 {id:'observe',icon:'🔎',title:'관찰한다',desc:'탐광꾼이 있으면 추가 보상',color:'#8fe4ff',workerChoice:true}
             ]}
         ];
-        if (themeId === 'ice') defs.push({id:'frozen_cache',icon:'❄️',title:'얼어붙은 보급함',text:'얼음 속에 오래된 광부의 보급함이 갇혀 있습니다.',choices:[
+        if (themeId === 20) defs.push({id:'frozen_cache',icon:'❄️',title:'얼어붙은 보급함',text:'얼음 속에 오래된 광부의 보급함이 갇혀 있습니다.',choices:[
             {id:'break',icon:'⛏',title:'얼음을 깨고 꺼낸다',desc:'미스릴 기회 ↑ · 소음 증가',color:'#8fe4ff',risk:1},
             {id:'melt',icon:'🔥',title:'천천히 녹인다',desc:'안전하게 작은 보상 확보',color:'#8fd9a8',safe:true},
             {id:'prospector',icon:'💎',title:'탐광꾼에게 맡긴다',desc:'탐광꾼이 있으면 희귀 보상 크게 증가',color:'#d7b8ff',workerChoice:true}
         ]});
-        if (themeId === 'lava') defs.push({id:'lava_vent',icon:'🌋',title:'용암 가스 분출구',text:'갈라진 바위 아래에서 뜨거운 가스가 새어 나옵니다.',choices:[
+        if (themeId === 10) defs.push({id:'lava_vent',icon:'🌋',title:'용암 가스 분출구',text:'갈라진 바위 아래에서 뜨거운 가스가 새어 나옵니다.',choices:[
             {id:'open',icon:'🔥',title:'분출구를 연다',desc:'금광 보상 ↑↑ · 전투 위험 ↑↑',color:'#ff9c9c',risk:2},
             {id:'seal',icon:'🧱',title:'봉인한다',desc:'화염 위험 제거 · 안전하게 진행',color:'#8fd9a8',safe:true},
             {id:'guard',icon:'🛡',title:'경비를 세우고 채굴한다',desc:'경비가 있으면 위험을 크게 완화',color:'#8fe4ff',workerChoice:true}
         ]});
-        if (themeId === 'dragon') defs.push({id:'dragon_scale',icon:'🐉',title:'용의 비늘 흔적',text:'벽면에 거대한 비늘 자국이 남아 있습니다. 드래곤이 이곳을 지나간 듯합니다.',choices:[
+        if (themeId === 25) defs.push({id:'dragon_scale',icon:'🐉',title:'용의 비늘 흔적',text:'벽면에 거대한 비늘 자국이 남아 있습니다. 드래곤이 이곳을 지나간 듯합니다.',choices:[
             {id:'track',icon:'👁️',title:'흔적을 추적한다',desc:'전설 보상 기회 ↑ · 강력한 적 조우 가능',color:'#ffd166',risk:2},
             {id:'hide',icon:'🫥',title:'흔적을 숨긴다',desc:'안전하게 통로를 확보',color:'#8fd9a8',safe:true},
             {id:'workers',icon:'👷',title:'워커 2명을 보내 확인한다',desc:'보상 ↑↑ · 부상 위험',color:'#d7b8ff',requiresWorkers:2,workerChoice:true}
