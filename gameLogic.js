@@ -154,6 +154,8 @@ export class Game {
         this.recipeBook = [];
         this.craftLog = null;
         this.squadCommand = 'mine';
+        this.workerRoles = ['miner', 'fighter', 'guard', 'prospector'];
+        this.pendingWorkerRoles = [];
         this.elapsed = 0;
         this.baseMaxHp = 100;
         this.maxPlayerHp = 100;
@@ -307,7 +309,7 @@ export class Game {
         // Re-recruit the workers that were part of the squad on the last visit,
         // each rejoining at the individual level it had earned.
         for (let i = 0; i < this.pendingWorkerCount; i++) {
-            this.addWorker(this.pendingWorkerXp[i] || 0);
+            this.addWorker(this.pendingWorkerXp[i] || 0, this.pendingWorkerRoles[i] || this.workerRoles[i % this.workerRoles.length]);
         }
         this.setSquadCommand(this.savedCommand || this.squadCommand);
 
@@ -461,6 +463,9 @@ export class Game {
         if (Array.isArray(saved.workerXp)) {
             this.pendingWorkerXp = saved.workerXp.map((xp) => Math.max(0, Number(xp) || 0));
         }
+        if (Array.isArray(saved.workerRoles)) {
+            this.pendingWorkerRoles = saved.workerRoles.map((role) => this.workerRoles.includes(role) ? role : 'miner');
+        }
 
         if (['mine', 'attack', 'defend'].includes(saved.squadCommand)) {
             this.savedCommand = saved.squadCommand;
@@ -536,6 +541,7 @@ export class Game {
             floorReadyToAscend: this.floorReadyToAscend,
             workerCount: this.workers.length,
             workerXp: this.workers.map((worker) => worker.userData.workerXp || 0),
+            workerRoles: this.workers.map((worker) => worker.userData.workerRole || 'miner'),
             squadCommand: this.squadCommand,
             totalOreMined: this.totalOreMined || 0,
             equipped: this.equipped,
@@ -1357,7 +1363,7 @@ export class Game {
         this.weaponArm.rotation.set(-0.35, 0, -0.5);
     }
 
-    addWorker(initialXp = 0) {
+    addWorker(initialXp = 0, role = 'miner') {
         if (this.workers.length >= this.getWorkerCap()) return false;
 
         const index = this.workers.length;
@@ -1374,8 +1380,9 @@ export class Game {
         worker.userData.miningClock = Math.random() * Math.PI * 2;
         worker.userData.isMining = false;
         worker.userData.squadRole = this.squadCommand;
+        worker.userData.workerRole = this.workerRoles.includes(role) ? role : 'miner';
         worker.userData.attackCooldown = 0;
-        worker.userData.maxHp = 55 + this.getWorkerLevel(worker) * 5;
+        worker.userData.maxHp = this.getWorkerMaxHp(worker);
         worker.userData.hp = worker.userData.maxHp;
         worker.userData.downTimer = 0;
         worker.userData.healthBar = this.createHealthBar(0.95, 0x66d9a8);
@@ -1410,10 +1417,35 @@ export class Game {
         return 1 + (this.getWorkerLevel(worker) - 1) * 0.05;
     }
 
+    getWorkerMaxHp(worker) {
+        const role = worker?.userData?.workerRole || 'miner';
+        const roleMult = { miner: 0.9, fighter: 1.0, guard: 1.35, prospector: 0.95 }[role] || 1;
+        return Math.round((55 + this.getWorkerLevel(worker) * 5) * roleMult);
+    }
+
+    getWorkerRoleLabel(role) {
+        return ({ miner: '광부', fighter: '전투원', guard: '경비', prospector: '탐광꾼' })[role] || '광부';
+    }
+
+    setWorkerRole(index, role) {
+        if (!this.workerRoles.includes(role)) return false;
+        const worker = this.workers[index];
+        if (!worker || worker.userData.downTimer > 0) return false;
+        const oldMax = worker.userData.maxHp || this.getWorkerMaxHp(worker);
+        const ratio = oldMax > 0 ? (worker.userData.hp ?? oldMax) / oldMax : 1;
+        worker.userData.workerRole = role;
+        worker.userData.maxHp = this.getWorkerMaxHp(worker);
+        worker.userData.hp = Math.max(1, Math.min(worker.userData.maxHp, Math.round(worker.userData.maxHp * ratio)));
+        this.pushCombatFeed(`워커 ${index + 1}번 역할 변경: ${this.getWorkerRoleLabel(role)}`, '#d7c4ed');
+        this.persist();
+        return true;
+    }
+
     initControls() {
         this.canvas = this.app.renderer.domElement;
         this.canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
         this.app.ui.setCommandHandler((command) => this.setSquadCommand(command));
+        this.app.ui.setWorkerRoleHandler?.((index, role) => this.setWorkerRole(index, role));
         this.app.ui.setStatHandler((stat) => this.upgradeStat(stat));
         this.app.ui.setFacilityHandler((key) => this.upgradeFacility(key));
         this.app.ui.setMetaHandler((key) => this.buyMetaUpgrade(key));
@@ -3504,7 +3536,8 @@ export class Game {
             );
         }
 
-        const damage = 4 * this.traitEffects.workerAttackMult * this.boons.workerAttackMult
+        const roleDamageMult = ({ miner: 0.78, fighter: 1.35, guard: 0.92, prospector: 0.72 }[worker.userData.workerRole] || 1);
+        const damage = 4 * roleDamageMult * this.traitEffects.workerAttackMult * this.boons.workerAttackMult
             * this.getWorkerLevelMult(worker) * (1 + (this.stats.strength - 1) * 0.18);
         this.damageEnemy(enemy, damage, { from: worker.position, color: '#b7f3ff', knockback: 0.16 });
         worker.userData.workerXp = (worker.userData.workerXp || 0) + 2;
@@ -3615,10 +3648,12 @@ export class Game {
                     worker.userData.swingTimer = (worker.userData.swingTimer || 0) - delta;
                     if (worker.userData.swingTimer <= 0) {
                         this.swingAtNode(node);
-                        this.addMiningNoise(0.75);
+                        const roleMiningMult = ({ miner: 1.35, fighter: 0.72, guard: 0.82, prospector: 0.92 }[worker.userData.workerRole] || 1);
+                        const roleNoiseMult = ({ miner: 1.0, fighter: 0.8, guard: 0.7, prospector: 0.65 }[worker.userData.workerRole] || 1);
+                        this.addMiningNoise(0.75 * roleNoiseMult);
                         worker.userData.workerXp = (worker.userData.workerXp || 0) + 1;
                         worker.userData.swingTimer = 0.72 / (this.traitEffects.workerSwingMult
-                            * this.boons.workerSwingMult * this.getWorkerLevelMult(worker));
+                            * this.boons.workerSwingMult * this.getWorkerLevelMult(worker) * roleMiningMult);
                     }
                 }
             }
@@ -3638,7 +3673,7 @@ export class Game {
             }
         } else {
             // 방어 명령: 리더 주변을 순찰하다가 가까이 온 적을 요격합니다.
-            enemy = this.acquireTarget(this.player.position, 8);
+            enemy = this.acquireTarget(this.player.position, worker.userData.workerRole === 'guard' ? 10 : 8);
             if (enemy) {
                 const flank = new THREE.Vector3(Math.cos(formationAngle), 0, Math.sin(formationAngle))
                     .multiplyScalar(1.5);
@@ -3654,7 +3689,8 @@ export class Game {
             }
         }
 
-        this.moveWorker(worker, destination, delta, this.squadCommand === 'defend' ? 3.5 : 4);
+        const roleSpeed = ({ miner: 3.8, fighter: 4.5, guard: 3.7, prospector: 4.1 }[worker.userData.workerRole] || 4);
+        this.moveWorker(worker, destination, delta, this.squadCommand === 'defend' ? Math.min(roleSpeed, 3.8) : roleSpeed);
         // Fighting workers use the combat flourish; mining workers keep the
         // existing pickaxe loop.
         if (enemy) {
@@ -3819,7 +3855,8 @@ export class Game {
             count: this.workers.length,
             levels,
             avgLevel,
-            downed: this.workers.filter((worker) => worker.userData.downTimer > 0).length
+            downed: this.workers.filter((worker) => worker.userData.downTimer > 0).length,
+            roles: this.workers.map((worker) => ({ role: worker.userData.workerRole || 'miner', label: this.getWorkerRoleLabel(worker.userData.workerRole || 'miner') }))
         };
     }
 

@@ -1694,6 +1694,7 @@ export class UI {
                 <button data-command="defend" type="button">🛡 방어</button>
             </div>
             <div class="command-status" style="margin-top: 9px; color: #9fe8ff; font-size: 12px;">현재 명령: 채굴</div>
+            <div class="worker-role-list" style="margin-top:10px; display:grid; gap:6px;"></div>
         `;
         this.popoverLayer.appendChild(this.commandPanel);
 
@@ -2405,6 +2406,35 @@ export class UI {
         this.refreshDock();
     }
 
+    setWorkerRoleHandler(handler) {
+        this.workerRoleHandler = handler;
+    }
+
+    renderWorkerRoleList() {
+        const list = this.commandPanel?.querySelector('.worker-role-list');
+        if (!list) return;
+        const roles = this.workerData?.roles || [];
+        const roleLabels = { miner: '⛏ 광부', fighter: '⚔ 전투원', guard: '🛡 경비', prospector: '💎 탐광꾼' };
+        if (!roles.length) {
+            list.innerHTML = '<div style="color:#7f718f;font-size:11px;">고용된 워커가 없습니다.</div>';
+            return;
+        }
+        list.innerHTML = roles.map((item, index) => `
+            <div style="display:grid; grid-template-columns: 58px 1fr; gap:6px; align-items:center;">
+                <div style="font-size:11px;color:#cbb8e8;font-weight:700;">워커 ${index + 1}</div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;">
+                    ${Object.entries(roleLabels).map(([role, label]) => `<button type="button" data-worker-index="${index}" data-worker-role="${role}" style="border:1px solid ${item.role === role ? '#d7c4ed' : '#4f4164'};border-radius:4px;padding:5px 2px;background:${item.role === role ? '#664487' : '#211a2d'};color:#eee;font:600 10px Inter,sans-serif;cursor:pointer;">${label}</button>`).join('')}
+                </div>
+            </div>`).join('');
+        list.querySelectorAll('button[data-worker-role]').forEach((button) => {
+            button.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
+            button.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                this.workerRoleHandler?.(Number(button.dataset.workerIndex), button.dataset.workerRole);
+            });
+        });
+    }
+
     setCommand(command) {
         if (!['mine', 'attack', 'defend'].includes(command)) return;
         this.activeCommand = command;
@@ -2489,6 +2519,7 @@ export class UI {
         this.lastMaxPlayerHp = maxPlayerHp;
         this.lastWorkerCount = workerCount;
         this.workerData = workerData;
+        this.renderWorkerRoleList();
         this.updateCombatHUD(combat);
         // Keep the open workshop in sync with the stockpile without re-rendering
         // (and killing interaction) on every single frame.
