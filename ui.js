@@ -2607,7 +2607,7 @@ export class UI {
     }
 
     setCommand(command) {
-        if (!['mine', 'attack', 'defend'].includes(command)) return;
+        if (!['mine', 'attack', 'defend', 'focus'].includes(command)) return;
         this.activeCommand = command;
         this.refreshCommandPanel();
         if (this.commandHandler) this.commandHandler(command);
@@ -2620,7 +2620,7 @@ export class UI {
 
     refreshCommandPanel() {
         const labels = { mine: '채굴', attack: '공격', defend: '방어', focus: '집중 공격' };
-        const colors = { mine: '#b7f3ff', attack: '#ff9c9c', defend: '#ffe39a', focus: '#ffb266' };
+        const colors = { mine: '#b7f3ff', attack: '#ff9c9c', defend: '#ffe39a', focus: '#d9a7ff' };
         const icons = { mine: '⛏', attack: '⚔', defend: '🛡', focus: '🎯' };
         const buttons = this.commandPanel?.querySelectorAll('button[data-command]') || [];
         buttons.forEach((button) => {

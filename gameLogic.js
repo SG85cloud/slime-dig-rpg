@@ -1333,6 +1333,10 @@ export class Game {
             patternState: 'ready',
             phase: 1,
             enraged: false,
+            bossPhase: 1,
+            bossTransitioning: false,
+            bossSummonCooldown: 0,
+            bossHazardCooldown: 0,
             xp: config.xp,
             isQuestEnemy: !!options.isQuestEnemy,
             isFieldEnemy: !!options.isFieldEnemy,
@@ -2227,12 +2231,79 @@ export class Game {
         return best;
     }
 
+    /** v14: three-stage surface boss. Each transition changes the arena pressure
+     * instead of simply multiplying HP/damage. */
+    updateBossPhase(enemy) {
+        const d = enemy?.userData;
+        if (!d?.isFinalBoss || d.dying) return;
+        const ratio = d.hp / Math.max(1, d.maxHp);
+        let next = ratio <= 0.20 ? 3 : ratio <= 0.50 ? 2 : 1;
+        if (next <= d.bossPhase || d.bossTransitioning) return;
+        d.bossPhase = next;
+        d.phase = next;
+        d.enraged = next >= 2;
+        d.bossTransitioning = true;
+        d.patternState = 'cooldown';
+        d.patternCooldown = 1.4;
+        d.patternTimer = 1.2;
+        d.bossSummonCooldown = 0.5;
+        d.bossHazardCooldown = 0.2;
+        if (next === 2) {
+            d.moveSpeed *= 1.12;
+            d.attackInterval *= 0.78;
+            this.combatFX.spawnShockwave(enemy.position, { color: 0xff6b55, scale: 13 });
+            this.combatFX.spawnFlash(enemy.position, 0xff5a5a, 90, 0.85);
+            this.app.addShake(1.2);
+            this.pushCombatFeed('🔥 2단계: 광산 점령자가 광폭화했습니다!', '#ff6b55');
+            this.app.ui.showBanner('🔥 2단계 — 광폭화', '공격이 빨라지고 갱도에 지원군을 부릅니다!', '#ff6b55');
+        } else if (next === 3) {
+            d.moveSpeed *= 1.18;
+            d.attackInterval *= 0.72;
+            this.combatFX.spawnShockwave(enemy.position, { color: 0xff304f, scale: 17 });
+            this.combatFX.spawnFlash(enemy.position, 0xff304f, 120, 1.0);
+            this.app.addShake(1.6);
+            this.pushCombatFeed('☠ 최종 단계: 광산 점령자가 갱도를 붕괴시키기 시작합니다!', '#ff304f');
+            this.app.ui.showBanner('☠ 최종 단계', '지면분쇄가 강해집니다. 회피 타이밍을 놓치지 마세요!', '#ff304f');
+        }
+        setTimeout(() => { if (d) d.bossTransitioning = false; }, 900);
+    }
+
+    bossPhaseAction(enemy, d, pos) {
+        if (!d.isFinalBoss || d.dying) return;
+        d.bossSummonCooldown = Math.max(0, (d.bossSummonCooldown || 0) - 0.1);
+        d.bossHazardCooldown = Math.max(0, (d.bossHazardCooldown || 0) - 0.1);
+        if (d.bossPhase >= 2 && d.bossSummonCooldown <= 0) {
+            const alive = this.enemies.filter(e => !e.userData.dying && e !== enemy).length;
+            const maxAdds = d.bossPhase === 3 ? 5 : 4;
+            if (alive < maxAdds) {
+                const type = Math.random() < 0.55 ? 'crawler' : 'archer';
+                this.spawnEnemy(type, { distance: 8 + Math.random() * 4, angle: Math.random() * Math.PI * 2, isFieldEnemy: true, waveOverride: this.wave + 3 });
+                this.pushCombatFeed('⚠ 광산 점령자가 지원군을 소환했습니다!', '#ff9c6b');
+            }
+            d.bossSummonCooldown = d.bossPhase === 3 ? 7.5 : 10.5;
+        }
+        if (d.bossPhase === 3 && d.bossHazardCooldown <= 0) {
+            const hazardPos = new THREE.Vector3(
+                this.player.position.x + (Math.random() - 0.5) * 5,
+                d.baseY,
+                this.player.position.z + (Math.random() - 0.5) * 5
+            );
+            this.combatFX.spawnShockwave(hazardPos, { color: 0xff304f, scale: 5.5 });
+            this.pushCombatFeed('☠ 붕괴 지점이 생겼습니다! 이동하세요.', '#ff5470');
+            const targets = this.getCombatTargetsInRadius(hazardPos, 2.1);
+            targets.forEach(v => this.damageCombatTarget(v, Math.round(d.damage * 0.7), enemy));
+            d.bossHazardCooldown = 5.2;
+        }
+    }
+
     /** Applies damage to a monster with full visual feedback. */
     damageEnemy(enemy, rawDamage, options = {}) {
         if (!enemy || enemy.userData.dying) return 0;
 
-        const damage = Math.max(1, Math.round(rawDamage * (1 - (enemy.userData.damageReduction || 0))));
+        const reduction = enemy.userData.damageReduction || 0;
+        const damage = Math.max(1, Math.round(rawDamage * (1 - reduction)));
         enemy.userData.hp -= damage;
+        this.updateBossPhase(enemy);
         enemy.userData.hitFlash = 1;
         // Knockback reads as physical force on lighter monsters.
         const push = new THREE.Vector3()
@@ -2670,21 +2741,14 @@ export class Game {
                 });
             });
         } else if (d.pattern === 'boss') {
-            const hpRatio = d.hp / Math.max(1, d.maxHp);
-            if (hpRatio <= 0.5 && !d.enraged) {
-                d.enraged = true;
-                d.phase = 2;
-                d.moveSpeed *= 1.18;
-                d.attackInterval *= 0.72;
-                this.combatFX.spawnShockwave(pos, { color: 0xff4d55, scale: 10 });
-                this.combatFX.spawnFlash(pos, 0xff4d55, 70, 0.7);
-                this.pushCombatFeed('🔥 광산 점령자가 폭주합니다! 공격 속도가 상승했습니다.', '#ff5a5a');
-            }
-            radius = d.enraged ? 5.2 : 4.1;
-            damage = Math.round(d.damage * (d.enraged ? 1.45 : 1.25));
-            label = d.enraged ? '폭주 지면분쇄' : '지면분쇄';
-            this.combatFX.spawnShockwave(pos, { color: d.enraged ? 0xff4d55 : 0xff9c4a, scale: d.enraged ? 10 : 7 });
-            this.app.addShake(d.enraged ? 1.0 : 0.65);
+            this.updateBossPhase(enemy);
+            this.bossPhaseAction(enemy, d, pos);
+            const phase = d.bossPhase || 1;
+            radius = phase === 3 ? 6.4 : phase === 2 ? 5.2 : 4.1;
+            damage = Math.round(d.damage * (phase === 3 ? 1.65 : phase === 2 ? 1.45 : 1.25));
+            label = phase === 3 ? '최종 지면분쇄' : phase === 2 ? '폭주 지면분쇄' : '지면분쇄';
+            this.combatFX.spawnShockwave(pos, { color: phase >= 2 ? 0xff4d55 : 0xff9c4a, scale: phase === 3 ? 12 : phase === 2 ? 10 : 7 });
+            this.app.addShake(phase === 3 ? 1.35 : phase === 2 ? 1.0 : 0.65);
         }
 
         if (radius > 0) {
@@ -2987,6 +3051,9 @@ export class Game {
             boss.userData.damage = Math.round(scaled.damage * 1.3 * (1 + this.cycle * 0.15));
             boss.userData.name = '광산 점령자';
             boss.userData.isFinalBoss = true;
+            boss.userData.bossPhase = 1;
+            boss.userData.bossSummonCooldown = 5.0;
+            boss.userData.bossHazardCooldown = 8.0;
         }
         this.spawnEnemy('brute', { distance: 13, angle: Math.PI / 2 - 1.3 });
         this.spawnEnemy('brute', { distance: 13, angle: Math.PI / 2 + 1.3 });
@@ -3366,6 +3433,8 @@ export class Game {
                     eliteAffix: target.userData.eliteAffix || null,
                     eliteAffixName: target.userData.eliteAffixName || '',
                     eliteAffixDesc: target.userData.eliteAffixDesc || '',
+                    isFinalBoss: !!target.userData.isFinalBoss,
+                    bossPhase: target.userData.bossPhase || target.userData.phase || 1,
                     pattern: target.userData.pattern || 'basic',
                     patternState: target.userData.patternState || 'ready',
                     patternWindup: Math.max(0, target.userData.patternWindup || 0),
