@@ -1168,7 +1168,10 @@ export class Game {
         const scaled = scaleEnemyStats(config, Math.max(1, options.waveOverride ?? this.wave));
         const angle = options.angle !== undefined ? options.angle : Math.random() * Math.PI * 2;
         const distance = options.distance !== undefined ? options.distance : 17 + Math.random() * 7;
-        const origin = options.origin || this.player.position;
+        // initWorld() can spawn a returning "recruit" quest enemy before
+        // initPlayer() has created this.player; the leader always starts
+        // at the origin anyway, so fall back to that.
+        const origin = options.origin || this.player?.position || new THREE.Vector3();
 
         // Derive the grounding offset from the real GLB bounds (cached per type)
         // so no monster is buried in or hovering over the mine floor.
@@ -2153,10 +2156,94 @@ export class Game {
         this.app.addShake(0.9);
         this.pushCombatFeed('리더가 쓰러졌습니다… 잠시 후 부활합니다.', '#ff7d6b');
 
+        if (this.waveActive) {
+            this.failWave();
+        } else {
+            this.applyDeathPenalty();
+        }
+
         // Enemies lose interest and drift away while the leader recovers.
         this.enemies.forEach((enemy) => {
             enemy.userData.attackTimer = 2.5;
         });
+    }
+
+    /** Falling in a formal wave is an outright loss: no reward, run ends now. */
+    failWave() {
+        const failedWave = this.wave;
+        this.waveActive = false;
+        this.finalBossActive = false;
+
+        // Clear the field so the next attempt starts clean.
+        this.enemies.forEach((enemy) => this.scene.remove(enemy));
+        this.enemies = [];
+
+        this.app.ui.showBanner('☠ 웨이브 실패', `웨이브 ${failedWave}에서 리더가 쓰러졌습니다`, '#ff5a5a');
+        this.pushCombatFeed(`☠ 웨이브 ${failedWave} 실패하였습니다.`, '#ff5a5a');
+        this.app.multiplayer.broadcastEvent?.('wave_fail', { wave: failedWave });
+        this.persist();
+    }
+
+    /**
+     * Falling to a wandering field monster costs a slice of the haul, plus
+     * something heavier: a squad worker dies outright if one is on hand,
+     * otherwise the leader's own revival is bought back with a steep gold fee.
+     */
+    applyDeathPenalty() {
+        const lost = {};
+        let anyLost = false;
+        Object.keys(this.oreConfig).forEach((ore) => {
+            const amount = Math.floor((this.inventory[ore] || 0) * 0.1);
+            if (amount > 0) {
+                this.inventory[ore] -= amount;
+                lost[ore] = amount;
+                anyLost = true;
+            }
+        });
+
+        if (anyLost) {
+            const summary = Object.entries(lost)
+                .map(([ore, amount]) => `${this.oreConfig[ore].label} ${amount}`)
+                .join(' · ');
+            this.pushCombatFeed(`💢 몬스터에게 당해 광석을 빼앗겼습니다: ${summary}`, '#ff9c9c');
+        }
+
+        if (this.workers.length > 0) {
+            // The least experienced worker takes the fall for the squad.
+            const fallen = this.workers.reduce((weakest, worker) => (
+                (worker.userData.workerXp || 0) < (weakest.userData.workerXp || 0) ? worker : weakest
+            ));
+            this.combatFX.spawnBurst(fallen.position, { color: 0x8b1a1a, radius: 0.6, expand: 2.4, life: 0.6 });
+            this.removeWorker(fallen);
+            this.pushCombatFeed('💀 워커 슬라임 한 마리가 목숨을 잃었습니다.', '#ff5a5a');
+        } else {
+            const cost = Math.min(
+                this.inventory.gold,
+                40 + this.getFloorsClimbed() * 4 + this.cycle * 15
+            );
+            if (cost > 0) {
+                this.inventory.gold -= cost;
+                this.pushCombatFeed(`💰 부활 비용으로 금광석 ${cost}을(를) 지불했습니다.`, '#ffe39a');
+            } else {
+                this.pushCombatFeed('💸 지불할 금광석마저 없어 빈손으로 부활했습니다.', '#9fc4d8');
+            }
+        }
+
+        this.persist();
+    }
+
+    /** Removes a worker for good: scene, mesh resources, and the squad list. */
+    removeWorker(worker) {
+        if (worker.userData.pickaxe) {
+            worker.userData.pickaxe.traverse((child) => {
+                if (child.isMesh) {
+                    child.geometry?.dispose();
+                    child.material?.dispose();
+                }
+            });
+        }
+        this.scene.remove(worker);
+        this.workers = this.workers.filter((entry) => entry !== worker);
     }
 
     revivePlayer() {
@@ -3716,6 +3803,8 @@ export class Game {
             this.pushCombatFeed(`🔔 다른 광부가 웨이브 ${event.wave} 방어를 시작했습니다.`, '#9fc4d8');
         } else if (event.type === 'wave_clear') {
             this.pushCombatFeed(`🔔 다른 광부가 웨이브 ${event.wave}을(를) 격퇴했습니다!`, '#8fd9a8');
+        } else if (event.type === 'wave_fail') {
+            this.pushCombatFeed(`🔔 다른 광부가 웨이브 ${event.wave}에서 쓰러졌습니다…`, '#ff9c9c');
         } else if (event.type === 'floor_ascend') {
             this.pushCombatFeed(`🔔 다른 광부가 ${this.getFloorLabel(event.floor)}(으)로 올라갔습니다.`, '#8fe4ff');
         }

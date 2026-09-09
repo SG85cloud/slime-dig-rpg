@@ -39,11 +39,11 @@ class App {
 
     async init() {
         await this.loadAssets();
-        
+
         this.ui = new UI();
         this.multiplayer = await initMultiplayer();
         this.game = new Game(this);
-        
+
         window.addEventListener('resize', () => this.onResize());
         this.animate();
     }

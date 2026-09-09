@@ -973,6 +973,7 @@ export class UI {
                 <div class="depth-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#4d7fa0,#9fe0ff); transition:width .3s;"></div>
             </div>
             <div class="depth-progress" style="margin-top:6px; font-size:11.5px; color:#9fc4d8;">광맥 0 / 8 채굴 완료 · 모두 캐면 위층으로</div>
+            <div class="depth-warning" style="display:none; margin-top:6px; font-size:11px; line-height:1.4; color:#ff9c9c;">⚠ 위층일수록 필드 몬스터가 강해져 사망할 수 있습니다. 사망 시 워커가 있으면 1명이 영구 사망하고, 없으면 막대한 금광석을 부활 비용으로 잃습니다.</div>
             <button class="depth-ascend" type="button" style="
                 display:none; margin-top:9px; width:100%; padding:8px 9px; pointer-events:auto;
                 border:1px solid #8fe4ff; border-radius:7px; background:linear-gradient(180deg,#2c5f78,#173a4d);
@@ -1000,6 +1001,7 @@ export class UI {
         const progress = this.depthPanel.querySelector('.depth-progress');
 
         const ascendBtn = this.depthPanel.querySelector('.depth-ascend');
+        const warning = this.depthPanel.querySelector('.depth-warning');
 
         if (depth.surface) {
             label.textContent = '☀ 지상';
@@ -1010,6 +1012,7 @@ export class UI {
             progress.textContent = `지하 ${depth.startDepth}층에서 지상까지 올라왔습니다`;
             this.depthPanel.style.borderColor = '#c99b4e';
             ascendBtn.style.display = 'none';
+            warning.style.display = 'none';
             return;
         }
 
@@ -1021,6 +1024,7 @@ export class UI {
             ? `광맥을 모두 캐냈습니다! 준비되면 다음 층으로 이동하세요.`
             : `광맥 ${depth.cleared} / ${depth.quota} 채굴 완료 · 모두 캐면 위층으로`;
         ascendBtn.style.display = depth.readyToAscend ? 'block' : 'none';
+        warning.style.display = depth.readyToAscend ? 'block' : 'none';
     }
 
     // --------------------------------------------------------- wave reward
