@@ -1982,8 +1982,11 @@ export class UI {
         } else if (combat.retreating) {
             status.innerHTML = `<span style="color:#8fe4ff; font-weight:700;">↩ 철수 중 · ${combat.retreatIn.toFixed(1)}초</span><br><span style="color:#a99bb8;">채굴 소음이 빠르게 감소합니다.</span>`;
         } else if (combat.waveActive || combat.enemiesLeft > 0) {
+            const downedText = combat.workersDown > 0
+                ? ` · <b style="color:#ffcf8a;">구조 대기 워커 ${combat.workersDown}</b>`
+                : '';
             status.innerHTML = `웨이브 <b style="color:#fff1d1;">${combat.wave}</b> 교전 중 ·
-                                남은 몬스터 <b style="color:#ff9c9c;">${combat.enemiesLeft}</b>마리`;
+                                남은 몬스터 <b style="color:#ff9c9c;">${combat.enemiesLeft}</b>마리${downedText}`;
         } else if (combat.waveUnlocked) {
             status.innerHTML = `평화 · 다음은 웨이브 <b style="color:#ffe39a;">${combat.nextWave}</b> ·
                                 공격 속도 ${combat.attackInterval.toFixed(2)}초<br>

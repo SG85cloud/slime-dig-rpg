@@ -1375,6 +1375,13 @@ export class Game {
         worker.userData.isMining = false;
         worker.userData.squadRole = this.squadCommand;
         worker.userData.attackCooldown = 0;
+        worker.userData.maxHp = 55 + this.getWorkerLevel(worker) * 5;
+        worker.userData.hp = worker.userData.maxHp;
+        worker.userData.downTimer = 0;
+        worker.userData.healthBar = this.createHealthBar(0.95, 0x66d9a8);
+        worker.userData.healthBar.position.set(0, 1.15, 0);
+        worker.userData.healthBar.visible = false;
+        worker.add(worker.userData.healthBar);
         // Each worker gets its own seam assignment so the squad actually feels
         // like a mining crew instead of ten units stacked on one node.
         worker.userData.miningTarget = null;
@@ -2299,6 +2306,27 @@ export class Game {
         this.pushCombatFeed('리더가 다시 일어섰습니다!', '#8fd9a8');
     }
 
+    /** Monsters can pressure the squad as well as the leader. Defenders are
+     * attractive targets, while a mining worker is an easier victim. */
+    acquireEnemyTarget(enemy) {
+        const candidates = [];
+        if (!this.isDown) candidates.push({ object: this.player, priority: 1.35 });
+        this.workers.forEach(worker => {
+            if (worker.userData.downTimer > 0) return;
+            const priority = worker.userData.squadRole === 'defend' ? 0.85 : 1.15;
+            candidates.push({ object: worker, priority });
+        });
+        let best = null;
+        let bestScore = Infinity;
+        candidates.forEach(({ object, priority }) => {
+            const distance = enemy.position.distanceTo(object.position);
+            if (distance > 18) return;
+            const score = distance * priority;
+            if (score < bestScore) { bestScore = score; best = object; }
+        });
+        return best;
+    }
+
     /** Per-frame monster brain: approach, keep range, wind up, strike. */
     updateEnemy(enemy, delta) {
         const data = enemy.userData;
@@ -2329,15 +2357,15 @@ export class Game {
         }
 
         data.bob += delta * (data.style === 'melee' ? 5.5 : 3.4);
-        const target = this.isDown ? null : this.player;
-        const toPlayer = target
+        const target = this.acquireEnemyTarget(enemy);
+        const toTarget = target
             ? new THREE.Vector3().subVectors(target.position, enemy.position).setY(0)
             : new THREE.Vector3();
-        const distance = target ? toPlayer.length() : Infinity;
+        const distance = target ? toTarget.length() : Infinity;
 
         if (target && distance > 0.01) {
-            toPlayer.normalize();
-            enemy.lookAt(enemy.position.x + toPlayer.x, enemy.position.y, enemy.position.z + toPlayer.z);
+            toTarget.normalize();
+            enemy.lookAt(enemy.position.x + toTarget.x, enemy.position.y, enemy.position.z + toTarget.z);
         }
 
         // Movement: melee closes in, ranged keeps its preferred spacing.
@@ -2345,10 +2373,10 @@ export class Game {
         if (target) {
             const preferred = data.keepDistance > 0 ? data.keepDistance : data.range * 0.82;
             if (distance > preferred + 0.35) {
-                enemy.position.addScaledVector(toPlayer, data.moveSpeed * delta);
+                enemy.position.addScaledVector(toTarget, data.moveSpeed * delta);
                 moving = true;
             } else if (data.keepDistance > 0 && distance < preferred - 1.4) {
-                enemy.position.addScaledVector(toPlayer, -data.moveSpeed * 0.8 * delta);
+                enemy.position.addScaledVector(toTarget, -data.moveSpeed * 0.8 * delta);
                 moving = true;
             }
         }
@@ -2367,13 +2395,13 @@ export class Game {
         }
 
         // Attacking.
-        if (!target || this.isDown) return;
+        if (!target) return;
         data.attackTimer -= delta;
 
         // Telegraph: rear back briefly before the blow lands.
         if (data.attackTimer < 0.35 && data.attackTimer > 0 && distance <= data.range + 0.6) {
             data.windup = 1 - data.attackTimer / 0.35;
-            enemy.position.addScaledVector(toPlayer, -data.windup * delta * 1.4);
+            enemy.position.addScaledVector(toTarget, -data.windup * delta * 1.4);
             enemy.scale.setScalar(data.baseScale * (1 + data.windup * 0.14));
         }
 
@@ -2385,25 +2413,32 @@ export class Game {
                 // Archers loose a real arrow that flies across the mine.
                 const from = enemy.position.clone();
                 from.y += data.baseY * 0.8;
-                this.combatFX.fireArrow(from, () => (this.isDown ? null : this.player.position.clone()), {
+                const rangedTarget = target;
+                this.combatFX.fireArrow(from, () => {
+                    if (rangedTarget === this.player) return this.isDown ? null : this.player.position.clone();
+                    if (!this.workers.includes(rangedTarget) || rangedTarget.userData.downTimer > 0) return null;
+                    return rangedTarget.position.clone();
+                }, {
                     color: data.tint,
                     speed: 22,
                     onHit: (impact) => {
                         this.combatFX.spawnSparks(impact, { color: data.tint, count: 10, speed: 4, height: 0 });
-                        this.damagePlayer(data.damage, enemy);
+                        if (rangedTarget === this.player) this.damagePlayer(data.damage, enemy);
+                        else this.damageWorker(rangedTarget, data.damage, enemy);
                     }
                 });
-                this.pushCombatFeed(`${data.name}이(가) 화살을 쏩니다!`, '#8fe4ff');
+                this.pushCombatFeed(`${data.name}이(가) ${target === this.player ? '리더' : '워커'}에게 화살을 쏩니다!`, '#8fe4ff');
             } else {
                 // Melee: lunge into the leader with a visible slash.
-                const lunge = toPlayer.clone().multiplyScalar(0.55);
+                const lunge = toTarget.clone().multiplyScalar(0.55);
                 enemy.position.add(lunge);
                 this.combatFX.spawnSlashArc(
-                    enemy.position.clone().addScaledVector(toPlayer, 0.9),
-                    toPlayer,
+                    enemy.position.clone().addScaledVector(toTarget, 0.9),
+                    toTarget,
                     { color: `#${data.tint.toString(16).padStart(6, '0')}`, radius: 1.1, height: data.baseY * 0.9 }
                 );
-                this.damagePlayer(data.damage, enemy);
+                if (target === this.player) this.damagePlayer(data.damage, enemy);
+                else this.damageWorker(target, data.damage, enemy);
             }
         }
     }
@@ -2912,6 +2947,7 @@ export class Game {
             retreating: (this.retreatTimer || 0) > 0,
             retreatIn: Math.max(0, this.retreatTimer || 0),
             enemiesLeft: this.enemies.filter((enemy) => !enemy.userData.dying).length,
+            workersDown: this.workers.filter((worker) => worker.userData.downTimer > 0).length,
             attackInterval: this.getPlayerAttackInterval(),
             target: target
                 ? {
@@ -3489,7 +3525,65 @@ export class Game {
         worker.position.y = worker.userData.baseY || 0.5;
     }
 
+    /** Worker damage is a downed-state system rather than an instant squad loss.
+     * A downed worker can be rescued by the leader or a defending squadmate;
+     * otherwise it is permanently lost when the bleed-out timer expires.
+     */
+    damageWorker(worker, amount, source) {
+        if (!worker || !this.workers.includes(worker) || worker.userData.downTimer > 0) return;
+        const damage = Math.max(1, Math.round(amount));
+        worker.userData.hp = Math.max(0, (worker.userData.hp ?? worker.userData.maxHp) - damage);
+        worker.userData.healthBar.visible = true;
+        this.updateHealthBar(worker.userData.healthBar, worker.userData.hp / worker.userData.maxHp);
+        this.combatFX.spawnDamageNumber(worker.position, damage, { color: '#ffb36b', text: `-${damage}` });
+        this.combatFX.spawnFlash(worker.position, 0xff9c5a, 18, 0.2);
+        this.app.addShake(0.16);
+        if (source) this.pushCombatFeed(`${source.userData.name}이(가) 워커를 공격합니다! -${damage}`, '#ffb36b');
+        if (worker.userData.hp <= 0) {
+            worker.userData.downTimer = 6;
+            worker.userData.isMining = false;
+            worker.userData.squadRole = 'downed';
+            worker.userData.miningTarget = null;
+            worker.userData.healthBar.visible = true;
+            this.combatFX.spawnBurst(worker.position, { color: 0xff9c5a, radius: 0.45, expand: 2.2, life: 0.45 });
+            this.pushCombatFeed('🚑 워커 슬라임이 쓰러졌습니다! 가까이 가서 구조하세요.', '#ffcf8a');
+        }
+    }
+
+    updateDownedWorker(worker, delta) {
+        if (!worker || worker.userData.downTimer <= 0) return false;
+        worker.userData.downTimer = Math.max(0, worker.userData.downTimer - delta);
+        worker.userData.isMining = false;
+        worker.userData.squadRole = 'downed';
+        worker.userData.healthBar.visible = true;
+        this.updateHealthBar(worker.userData.healthBar, 1);
+        const nearLeader = !this.isDown && worker.position.distanceTo(this.player.position) < 3.1;
+        const rescuer = this.workers.find(other => other !== worker && other.userData.downTimer <= 0
+            && other.position.distanceTo(worker.position) < 2.2
+            && other.userData.squadRole === 'defend');
+        if (nearLeader || rescuer) {
+            worker.userData.hp = Math.round(worker.userData.maxHp * 0.45);
+            worker.userData.downTimer = 0;
+            worker.userData.squadRole = this.squadCommand;
+            worker.userData.healthBar.visible = false;
+            this.combatFX.spawnShockwave(worker.position, { color: 0x8fd9a8, scale: 2.6 });
+            this.pushCombatFeed('💚 워커 슬라임을 구조했습니다!', '#8fd9a8');
+            return false;
+        }
+        if (worker.userData.downTimer <= 0) {
+            this.combatFX.spawnBurst(worker.position, { color: 0x8b1a1a, radius: 0.55, expand: 2.3, life: 0.5 });
+            this.removeWorker(worker);
+            this.pushCombatFeed('💀 워커 슬라임을 잃었습니다.', '#ff5a5a');
+            return true;
+        }
+        // Downed workers wobble in place and do not act.
+        worker.scale.setScalar((worker.userData.baseScale || 0.9) * 0.72);
+        worker.rotation.z = Math.sin(this.elapsed * 9) * 0.12;
+        return true;
+    }
+
     updateWorker(worker, index, delta) {
+        if (this.updateDownedWorker(worker, delta)) return;
         const formationAngle = (index / Math.max(1, this.workers.length)) * Math.PI * 2;
         let destination = this.player.position.clone();
         let enemy = null;
@@ -3721,7 +3815,12 @@ export class Game {
         const avgLevel = levels.length > 0
             ? Math.round((levels.reduce((sum, lv) => sum + lv, 0) / levels.length) * 10) / 10
             : 0;
-        return { count: this.workers.length, levels, avgLevel };
+        return {
+            count: this.workers.length,
+            levels,
+            avgLevel,
+            downed: this.workers.filter((worker) => worker.userData.downTimer > 0).length
+        };
     }
 
     // Compact loadout summary for the HUD.
