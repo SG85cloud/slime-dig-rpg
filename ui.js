@@ -1110,7 +1110,8 @@ export class UI {
             });
             choices.appendChild(button);
         });
-        this.mineEventOverlay.querySelector('.mine-event-hint').textContent = `현재 워커 ${workers}명 · 선택하면 즉시 결과가 적용됩니다.`;
+        const danger = Math.round(event.danger || 0);
+        this.mineEventOverlay.querySelector('.mine-event-hint').textContent = `현재 채굴 소음 ${danger} · 워커 ${workers}명 · 선택하면 즉시 결과가 적용됩니다.`;
         this.mineEventOverlay.style.display = 'flex';
     }
 
