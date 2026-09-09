@@ -1305,6 +1305,13 @@ export class Game {
             baseScale: config.scale,
             tint: config.tint,
             elite: config.elite,
+            pattern: config.pattern || 'basic',
+            patternTimer: 3.5 + Math.random() * 2.5,
+            patternCooldown: 2.5 + Math.random() * 1.5,
+            patternWindup: 0,
+            patternState: 'ready',
+            phase: 1,
+            enraged: false,
             xp: config.xp,
             isQuestEnemy: !!options.isQuestEnemy,
             isFieldEnemy: !!options.isFieldEnemy,
@@ -2505,7 +2512,104 @@ export class Game {
         return best;
     }
 
-    /** Per-frame monster brain: approach, keep range, wind up, strike. */
+    /** v11 combat patterns: readable telegraphs, area threats, and boss phases. */
+    getCombatTargetsInRadius(center, radius) {
+        const targets = [];
+        if (!this.isDown && this.player) {
+            const d = center.distanceTo(this.player.position);
+            if (d <= radius) targets.push(this.player);
+        }
+        this.workers.forEach(worker => {
+            if (worker.userData.downTimer > 0) return;
+            if (center.distanceTo(worker.position) <= radius) targets.push(worker);
+        });
+        return targets;
+    }
+
+    damageCombatTarget(target, amount, source) {
+        if (target === this.player) this.damagePlayer(amount, source);
+        else if (this.workers.includes(target)) this.damageWorker(target, amount, source);
+    }
+
+    triggerEnemyPattern(enemy) {
+        const d = enemy.userData;
+        if (d.dying || d.patternState !== 'ready') return false;
+        d.patternState = 'windup';
+        d.patternWindup = d.pattern === 'boss' ? 1.15 : 0.8;
+        this.combatFX.spawnFlash(enemy.position, d.tint, d.elite ? 42 : 26, 0.28);
+        return true;
+    }
+
+    resolveEnemyPattern(enemy) {
+        const d = enemy.userData;
+        const pos = enemy.position.clone();
+        pos.y = d.baseY;
+        const target = this.acquireEnemyTarget(enemy);
+        const dir = target
+            ? new THREE.Vector3().subVectors(target.position, enemy.position).setY(0).normalize()
+            : new THREE.Vector3(0, 0, 1);
+        let radius = 0;
+        let damage = d.damage;
+        let label = '';
+
+        if (d.pattern === 'lunge') {
+            enemy.position.addScaledVector(dir, 1.15);
+            radius = 2.15;
+            damage = Math.round(d.damage * 1.35);
+            label = '돌진';
+            this.combatFX.spawnSlashArc(pos, dir, { color: `#${d.tint.toString(16).padStart(6,'0')}`, radius: 1.7, height: d.baseY * 0.7 });
+        } else if (d.pattern === 'slam') {
+            radius = 3.2;
+            damage = Math.round(d.damage * 1.15);
+            label = '지면 강타';
+            this.combatFX.spawnShockwave(pos, { color: d.tint, scale: 5.5 });
+        } else if (d.pattern === 'volley') {
+            // A three-shot radial volley. Each projectile is a warning rather than instant damage.
+            radius = 0;
+            label = '삼연발';
+            const targets = this.getCombatTargetsInRadius(pos, 13);
+            targets.slice(0, 3).forEach((victim, i) => {
+                const from = pos.clone(); from.y += d.baseY * 0.75;
+                this.combatFX.fireArrow(from, () => {
+                    if (victim === this.player) return this.isDown ? null : this.player.position.clone();
+                    if (!this.workers.includes(victim) || victim.userData.downTimer > 0) return null;
+                    return victim.position.clone();
+                }, {
+                    color: d.tint, speed: 20 + i * 2,
+                    onHit: (impact) => {
+                        this.combatFX.spawnSparks(impact, { color: d.tint, count: 8, speed: 4, height: 0 });
+                        this.damageCombatTarget(victim, Math.round(d.damage * 0.7), enemy);
+                    }
+                });
+            });
+        } else if (d.pattern === 'boss') {
+            const hpRatio = d.hp / Math.max(1, d.maxHp);
+            if (hpRatio <= 0.5 && !d.enraged) {
+                d.enraged = true;
+                d.phase = 2;
+                d.moveSpeed *= 1.18;
+                d.attackInterval *= 0.72;
+                this.combatFX.spawnShockwave(pos, { color: 0xff4d55, scale: 10 });
+                this.combatFX.spawnFlash(pos, 0xff4d55, 70, 0.7);
+                this.pushCombatFeed('🔥 광산 점령자가 폭주합니다! 공격 속도가 상승했습니다.', '#ff5a5a');
+            }
+            radius = d.enraged ? 5.2 : 4.1;
+            damage = Math.round(d.damage * (d.enraged ? 1.45 : 1.25));
+            label = d.enraged ? '폭주 지면분쇄' : '지면분쇄';
+            this.combatFX.spawnShockwave(pos, { color: d.enraged ? 0xff4d55 : 0xff9c4a, scale: d.enraged ? 10 : 7 });
+            this.app.addShake(d.enraged ? 1.0 : 0.65);
+        }
+
+        if (radius > 0) {
+            this.getCombatTargetsInRadius(pos, radius).forEach(victim => this.damageCombatTarget(victim, damage, enemy));
+        }
+        if (label) this.pushCombatFeed(`⚠ ${d.name} · ${label}!`, d.enraged ? '#ff5a5a' : '#ffcf8a');
+        d.patternState = 'cooldown';
+        d.patternCooldown = d.pattern === 'boss' ? (d.enraged ? 3.2 : 4.2) : 5.2;
+        d.patternTimer = d.pattern === 'boss' ? (d.enraged ? 3.0 : 4.5) : 4.0 + Math.random() * 2.0;
+    }
+
+    /** Per-frame monster brain: approach, keep range, telegraph, and strike. */
     updateEnemy(enemy, delta) {
         const data = enemy.userData;
 
@@ -2532,6 +2636,28 @@ export class Game {
                         .lerp(new THREE.Color(0xffffff), data.hitFlash * 0.85);
                 }
             });
+        }
+
+        // Pattern timer is independent from basic attacks. The orange/red telegraph gives
+        // the player a short reaction window instead of turning combat into pure DPS racing.
+        if (data.patternState === 'cooldown') {
+            data.patternCooldown -= delta;
+            if (data.patternCooldown <= 0) data.patternState = 'ready';
+        }
+        if (data.patternState === 'ready' && data.patternTimer > 0) data.patternTimer -= delta;
+        if (data.patternState === 'ready' && data.patternTimer <= 0) {
+            const activeTarget = this.acquireEnemyTarget(enemy);
+            if (activeTarget && enemy.position.distanceTo(activeTarget.position) <= (data.pattern === 'volley' ? 13 : 8)) {
+                this.triggerEnemyPattern(enemy);
+            } else {
+                data.patternTimer = 1.5;
+            }
+        }
+        if (data.patternState === 'windup') {
+            data.patternWindup -= delta;
+            const pulse = Math.sin(Math.max(0, data.patternWindup) * 18) > 0 ? 1.08 : 1;
+            enemy.scale.setScalar(data.baseScale * pulse);
+            if (data.patternWindup <= 0) this.resolveEnemyPattern(enemy);
         }
 
         data.bob += delta * (data.style === 'melee' ? 5.5 : 3.4);
@@ -3135,7 +3261,11 @@ export class Game {
                     name: target.userData.name,
                     hp: Math.max(0, target.userData.hp),
                     maxHp: target.userData.maxHp,
-                    elite: target.userData.elite
+                    elite: target.userData.elite,
+                    pattern: target.userData.pattern || 'basic',
+                    patternState: target.userData.patternState || 'ready',
+                    patternWindup: Math.max(0, target.userData.patternWindup || 0),
+                    enraged: !!target.userData.enraged
                 }
                 : null,
             feed: this.combatFeed.slice(0, 4)

@@ -1893,6 +1893,7 @@ export class UI {
             <div style="height:9px; margin-top:7px; border-radius:999px; overflow:hidden; background:#2a1119; border:1px solid #8c4353;">
                 <div class="target-bar" style="height:100%; width:100%; background:linear-gradient(90deg,#ff5b61,#ffb06b); transition:width .12s linear;"></div>
             </div>
+            <div class="target-pattern" style="margin-top:6px; font-size:10.5px; color:#c9b7cf;"></div>
         `;
         this.container.appendChild(this.targetPlate);
 
@@ -2152,6 +2153,24 @@ export class UI {
             this.targetPlate.querySelector('.target-hp').textContent =
                 `${Math.ceil(combat.target.hp)} / ${combat.target.maxHp}`;
             this.targetPlate.querySelector('.target-bar').style.width = `${ratio * 100}%`;
+            const pattern = combat.target.pattern || 'basic';
+            const patternNames = { lunge:'돌진', slam:'지면 강타', volley:'삼연발', boss:'지면분쇄' };
+            const patternEl = this.targetPlate.querySelector('.target-pattern');
+            if (patternEl) {
+                if (combat.target.patternState === 'windup') {
+                    patternEl.textContent = `⚠ ${patternNames[pattern] || '특수 공격'} 준비 중 · ${combat.target.patternWindup.toFixed(1)}초`;
+                    patternEl.style.color = '#ff6b5e';
+                    patternEl.style.fontWeight = '800';
+                } else if (combat.target.enraged) {
+                    patternEl.textContent = '🔥 폭주 상태 · 공격 패턴 강화';
+                    patternEl.style.color = '#ff6b5e';
+                    patternEl.style.fontWeight = '800';
+                } else {
+                    patternEl.textContent = pattern === 'basic' ? '기본 공격' : `특수 패턴 · ${patternNames[pattern] || pattern}`;
+                    patternEl.style.color = '#c9b7cf';
+                    patternEl.style.fontWeight = '600';
+                }
+            }
             this.targetPlate.style.borderColor = combat.target.elite ? '#e0a24a' : '#a2495a';
         } else {
             this.targetPlate.style.display = 'none';

@@ -27,7 +27,8 @@ export const ENEMY_TYPES = {
         style: 'melee',
         tint: 0xb98cff,
         xp: 6,
-        elite: false
+        elite: false,
+        pattern: 'lunge'
     },
     brute: {
         id: 'brute',
@@ -43,7 +44,8 @@ export const ENEMY_TYPES = {
         style: 'melee',
         tint: 0xff9c7a,
         xp: 16,
-        elite: false
+        elite: false,
+        pattern: 'slam'
     },
     archer: {
         id: 'archer',
@@ -60,7 +62,8 @@ export const ENEMY_TYPES = {
         style: 'ranged',
         tint: 0x8fe4ff,
         xp: 12,
-        elite: false
+        elite: false,
+        pattern: 'volley'
     },
     overlord: {
         id: 'overlord',
@@ -76,7 +79,8 @@ export const ENEMY_TYPES = {
         style: 'melee',
         tint: 0xff7a4a,
         xp: 90,
-        elite: true
+        elite: true,
+        pattern: 'boss'
     }
 };
 
