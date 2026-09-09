@@ -230,6 +230,9 @@ export class Game {
         // Floor quota met, but ascending is now a deliberate click rather
         // than automatic — the player keeps mining leftovers until ready.
         this.floorReadyToAscend = false;
+        // v7 greed loop: extra post-quota seams create optional high-value haul.
+        this.unstableHaul = 0;
+        this.greedSeams = 0;
 
         // ------------------------------------------------------ surface loop
         // Reaching daylight is a decisive battle, not a quiet stop: the mine's
@@ -492,6 +495,8 @@ export class Game {
         }
         const cleared = Number(saved.floorNodesCleared);
         if (Number.isFinite(cleared) && cleared >= 0) this.floorNodesCleared = Math.floor(cleared);
+        this.unstableHaul = Math.max(0, Number(saved.unstableHaul) || 0);
+        this.greedSeams = Math.max(0, Number(saved.greedSeams) || 0);
         const deepest = Number(saved.deepestReached);
         this.deepestReached = Number.isFinite(deepest) ? Math.floor(deepest) : this.depth;
 
@@ -539,6 +544,8 @@ export class Game {
             cycle: this.cycle,
             surfaceConquered: this.surfaceConquered,
             floorReadyToAscend: this.floorReadyToAscend,
+            unstableHaul: this.unstableHaul || 0,
+            greedSeams: this.greedSeams || 0,
             workerCount: this.workers.length,
             workerXp: this.workers.map((worker) => worker.userData.workerXp || 0),
             workerRoles: this.workers.map((worker) => worker.userData.workerRole || 'miner'),
@@ -871,7 +878,10 @@ export class Game {
 
     /** Player-clicked confirmation once the floor quota is met. */
     requestAscend() {
-        if (!this.floorReadyToAscend) return { ok: false };
+        if (!this.floorReadyToAscend) return { ok: false, reason: '아직 이 층의 채굴 목표를 달성하지 못했습니다.' };
+        if (this.isDown || this.enemies.some((enemy) => !enemy.userData.dying)) {
+            return { ok: false, reason: '전투가 끝난 뒤에 안전하게 상승하세요.' };
+        }
         this.ascendFloor();
         return { ok: true };
     }
@@ -886,9 +896,16 @@ export class Game {
         this.ascending = true;
 
         const from = this.depth;
+        const bankedGreed = Math.max(0, Math.round(this.unstableHaul || 0));
+        if (bankedGreed > 0) {
+            this.inventory.gold += bankedGreed;
+            this.pushCombatFeed(`🏦 욕심 채굴 보너스 ${bankedGreed}을(를) 안전하게 확보했습니다!`, '#ffd166');
+        }
         this.depth = Math.max(0, this.depth - 1);
         this.floorNodesCleared = 0;
         this.floorReadyToAscend = false;
+        this.unstableHaul = 0;
+        this.greedSeams = 0;
         this.floorTheme = FLOOR_THEMES[this.depth] || null;
 
         // Clear the stripped floor.
@@ -2286,6 +2303,13 @@ export class Game {
             this.pushCombatFeed(`💢 몬스터에게 당해 광석을 빼앗겼습니다: ${summary}`, '#ff9c9c');
         }
 
+        if ((this.unstableHaul || 0) > 0) {
+            const lostBonus = Math.round(this.unstableHaul);
+            this.unstableHaul = 0;
+            this.greedSeams = 0;
+            this.pushCombatFeed(`💥 욕심 채굴 보너스 ${lostBonus}을(를) 모두 잃었습니다.`, '#ff7d6b');
+        }
+
         if (this.workers.length > 0) {
             // The least experienced worker takes the fall for the squad.
             const fallen = this.workers.reduce((weakest, worker) => (
@@ -2976,6 +3000,8 @@ export class Game {
             nextWave: Math.max(0, this.wave) + 1,
             maxSelectableWave: this.getMaxSelectableWave(),
             miningNoise: Math.round(this.miningNoise || 0),
+            unstableHaul: Math.round(this.unstableHaul || 0),
+            greedSeams: this.greedSeams || 0,
             retreating: (this.retreatTimer || 0) > 0,
             retreatIn: Math.max(0, this.retreatTimer || 0),
             enemiesLeft: this.enemies.filter((enemy) => !enemy.userData.dying).length,
@@ -3873,6 +3899,25 @@ export class Game {
         };
     }
 
+    /** Optional post-quota mining. Extra seams create an unstable bonus that is
+     * banked by ascending and wiped by a field death. This is the v7 greed loop. */
+    addGreedHaul(node, minedOre, amount) {
+        if (!this.floorReadyToAscend || this.depth <= 0) return;
+        const rarity = this.oreConfig[minedOre]?.rarity || 0;
+        const veinRarity = this.oreConfig[node?.userData?.oreType]?.rarity || 0;
+        const lucky = rarity > veinRarity;
+        const base = 3 + rarity * 4 + Math.min(4, Math.max(0, amount - 1) * 2);
+        const bonus = Math.max(2, Math.round(base * (1 + this.greedSeams * 0.12)));
+        this.unstableHaul = Math.min(999, (this.unstableHaul || 0) + bonus);
+        this.greedSeams = (this.greedSeams || 0) + 1;
+        if (lucky || rarity >= 2) {
+            this.pushCombatFeed(`🔥 욕심 채굴! ${this.oreConfig[minedOre].label} 발견으로 보너스 +${bonus}`, '#ffd166');
+        } else {
+            this.pushCombatFeed(`💰 욕심 채굴 보너스 +${bonus} · 더 캐면 더 커집니다.`, '#d8c1ff');
+        }
+        this.persist();
+    }
+
     // One pickaxe swing. The vein only yields an item once enough swings land,
     // and it keeps producing until its reserves run out.
     swingAtNode(node) {
@@ -3910,6 +3955,7 @@ export class Game {
         this.playSound('mining-hit');
 
         if (node.userData.reserves <= 0) {
+            this.addGreedHaul(node, minedOre, amount);
             this.scene.remove(node);
             this.nodes = this.nodes.filter((entry) => entry !== node);
             if (this.playerData.miningTarget === node) this.playerData.miningTarget = null;
@@ -3951,7 +3997,9 @@ export class Game {
             quota,
             hardness: this.getDepthHardness(),
             surface: this.depth <= 0,
-            readyToAscend: this.floorReadyToAscend
+            readyToAscend: this.floorReadyToAscend,
+            unstableHaul: this.unstableHaul || 0,
+            greedSeams: this.greedSeams || 0
         };
     }
 

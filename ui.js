@@ -973,6 +973,7 @@ export class UI {
                 <div class="depth-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#4d7fa0,#9fe0ff); transition:width .3s;"></div>
             </div>
             <div class="depth-progress" style="margin-top:6px; font-size:11.5px; color:#9fc4d8;">광맥 0 / 8 채굴 완료 · 모두 캐면 위층으로</div>
+            <div class="greed-status" style="display:none; margin-top:6px; font-size:11px; line-height:1.4; color:#ffd166;"></div>
             <div class="depth-warning" style="display:none; margin-top:6px; font-size:11px; line-height:1.4; color:#ff9c9c;">⚠ 위층일수록 필드 몬스터가 강해져 사망할 수 있습니다. 사망 시 워커가 있으면 1명이 영구 사망하고, 없으면 막대한 금광석을 부활 비용으로 잃습니다.</div>
             <button class="depth-ascend" type="button" style="
                 display:none; margin-top:9px; width:100%; padding:8px 9px; pointer-events:auto;
@@ -1002,6 +1003,7 @@ export class UI {
 
         const ascendBtn = this.depthPanel.querySelector('.depth-ascend');
         const warning = this.depthPanel.querySelector('.depth-warning');
+        const greed = this.depthPanel.querySelector('.greed-status');
 
         if (depth.surface) {
             label.textContent = '☀ 지상';
@@ -1013,6 +1015,7 @@ export class UI {
             this.depthPanel.style.borderColor = '#c99b4e';
             ascendBtn.style.display = 'none';
             warning.style.display = 'none';
+            if (greed) greed.style.display = 'none';
             return;
         }
 
@@ -1025,6 +1028,14 @@ export class UI {
             : `광맥 ${depth.cleared} / ${depth.quota} 채굴 완료 · 모두 캐면 위층으로`;
         ascendBtn.style.display = depth.readyToAscend ? 'block' : 'none';
         warning.style.display = depth.readyToAscend ? 'block' : 'none';
+        if (greed) {
+            const haul = Math.round(depth.unstableHaul || 0);
+            const seams = depth.greedSeams || 0;
+            greed.style.display = depth.readyToAscend || haul > 0 ? 'block' : 'none';
+            greed.innerHTML = haul > 0
+                ? `🔥 <b>욕심 채굴 ${seams}회</b> · 안전 확보 보너스 <b>${haul}</b><br><span style="color:#a99bb8;">▲ 다음 층으로 올라가면 보너스 확정 · 죽으면 전부 잃습니다.</span>`
+                : '🔥 목표 달성 후 더 캐면 위험 보너스가 쌓입니다. 욕심낼수록 손실 위험도 커집니다.';
+        }
     }
 
     // --------------------------------------------------------- wave reward
@@ -1977,6 +1988,9 @@ export class UI {
                 : noise >= 40
                     ? '⚠ 위험 증가 — 계속 캐면 몬스터가 찾아옵니다.'
                     : '현재는 비교적 조용합니다.';
+            if ((combat.unstableHaul || 0) > 0) {
+                risk.querySelector('.risk-hint').textContent += ` · 욕심 보너스 ${Math.round(combat.unstableHaul)} (사망 시 소실)`;
+            }
         }
         if (combat.isDown) {
             status.innerHTML = `<span style="color:#ff7d6b; font-weight:700;">리더 전투불능 · ${combat.reviveIn.toFixed(1)}초 후 부활</span>`;
