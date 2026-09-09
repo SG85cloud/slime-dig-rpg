@@ -1809,6 +1809,7 @@ export class UI {
                 </div>
             </div>
             <div class="combat-status" style="margin-top:9px; font-size:12.5px; color:#d7cbe1; line-height:1.5;"></div>
+            <button class="retreat-button" type="button">↩ 긴급 철수</button>
             <div class="mining-risk" style="margin-top:8px; display:none;">
                 <div style="display:flex; justify-content:space-between; font-size:10.5px; color:#cdbfd7;">
                     <span>⛏ 채굴 소음</span><b class="risk-value" style="font-family:Orbitron,sans-serif;"></b>
@@ -1851,6 +1852,17 @@ export class UI {
         });
 
         // Opt-in mine defence. Waves never start on their own any more.
+        const retreatButton = this.combatPanel.querySelector('.retreat-button');
+        retreatButton.style.cssText = `
+            margin-top:7px; width:100%; padding:8px 9px; border:1px solid #5d9fc0;
+            border-radius:7px; background:linear-gradient(180deg,#254c61,#172d39); color:#dff6ff;
+            font:800 11.5px Inter, sans-serif; cursor:pointer;
+        `;
+        retreatButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.retreatHandler) this.retreatHandler();
+        });
+
         const waveStart = this.combatPanel.querySelector('.wave-start');
         waveStart.style.cssText = `
             margin-top:10px; width:100%; padding:10px 9px; border:1px solid #6fb8d1;
@@ -1883,6 +1895,10 @@ export class UI {
             <div class="wave-sub" style="margin-top:8px; font-size:14px; color:#e4d3e8; text-shadow:0 2px 10px rgba(0,0,0,.9);"></div>
         `;
         this.container.appendChild(this.waveBanner);
+    }
+
+    setRetreatHandler(handler) {
+        this.retreatHandler = handler;
     }
 
     setWaveStartHandler(handler) {
@@ -1963,6 +1979,8 @@ export class UI {
         }
         if (combat.isDown) {
             status.innerHTML = `<span style="color:#ff7d6b; font-weight:700;">리더 전투불능 · ${combat.reviveIn.toFixed(1)}초 후 부활</span>`;
+        } else if (combat.retreating) {
+            status.innerHTML = `<span style="color:#8fe4ff; font-weight:700;">↩ 철수 중 · ${combat.retreatIn.toFixed(1)}초</span><br><span style="color:#a99bb8;">채굴 소음이 빠르게 감소합니다.</span>`;
         } else if (combat.waveActive || combat.enemiesLeft > 0) {
             status.innerHTML = `웨이브 <b style="color:#fff1d1;">${combat.wave}</b> 교전 중 ·
                                 남은 몬스터 <b style="color:#ff9c9c;">${combat.enemiesLeft}</b>마리`;
@@ -1972,6 +1990,18 @@ export class UI {
                                 <span style="color:#a99bb8;">준비되면 아래 버튼으로 시작하세요.</span>`;
         } else {
             status.innerHTML = `<span style="color:#a99bb8;">퀘스트를 진행하면 광산 방어가 열립니다.</span>`;
+        }
+
+        const retreatButton = this.combatPanel.querySelector('.retreat-button');
+        if (retreatButton) {
+            const canRetreat = !combat.isDown && combat.enemiesLeft > 0 && !combat.retreating && this.lastWorkerCount > 0;
+            retreatButton.style.display = combat.retreating ? 'block' : (this.lastWorkerCount > 0 ? 'block' : 'none');
+            retreatButton.disabled = !canRetreat;
+            retreatButton.style.opacity = canRetreat ? '1' : '.45';
+            retreatButton.style.cursor = canRetreat ? 'pointer' : 'not-allowed';
+            retreatButton.textContent = combat.retreating
+                ? `↩ 철수 중 · ${combat.retreatIn.toFixed(1)}초`
+                : '↩ 긴급 철수 — 채굴 중단';
         }
 
         // Start button reflects whether a defence run can be launched now.

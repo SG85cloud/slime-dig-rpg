@@ -180,6 +180,7 @@ export class Game {
         // requiring a separate wave UI.
         this.miningNoise = 0;
         this.miningDangerFlash = 0;
+        this.retreatTimer = 0;
         this.quest = {
             stage: 'coal',
             coalGoal: 10,
@@ -1411,6 +1412,7 @@ export class Game {
         this.app.ui.setMetaHandler((key) => this.buyMetaUpgrade(key));
         this.app.ui.setAutoCombatHandler(() => this.toggleAutoCombat());
         this.app.ui.setAutoMineHandler(() => this.toggleAutoMine());
+        this.app.ui.setRetreatHandler(() => this.startEmergencyRetreat());
         // Mine defence waves are launched by the player from the combat menu.
         this.app.ui.setWaveStartHandler(() => {
             const result = this.startDefenceWave();
@@ -1908,6 +1910,34 @@ export class Game {
         this.autoMine = !this.autoMine;
         this.persist();
         return this.autoMine;
+    }
+
+    /**
+     * Emergency retreat is the first explicit greed-vs-safety decision: stop
+     * digging, pull the squad back into a defensive ring, and let mining noise
+     * fall quickly. It does not erase danger or heal the leader, so retreating
+     * is a reset of pressure rather than a free escape.
+     */
+    startEmergencyRetreat() {
+        if (this.isDown || this.workers.length === 0) {
+            return { ok: false, reason: this.isDown ? '리더가 쓰러져 있습니다.' : '지휘할 워커가 없습니다.' };
+        }
+
+        this.autoMine = false;
+        this.playerData.miningTarget = null;
+        this.playerTarget = null;
+        this.squadCommand = 'defend';
+        this.workers.forEach((worker) => {
+            worker.userData.squadRole = 'defend';
+            worker.userData.miningTarget = null;
+            worker.userData.attackCooldown = 0;
+        });
+        this.retreatTimer = 6;
+        this.miningNoise = Math.max(0, (this.miningNoise || 0) * 0.72);
+        this.pushCombatFeed('↩ 긴급 철수! 채굴을 중단하고 분대를 리더 곁으로 집결시킵니다.', '#8fe4ff');
+        this.app.ui.showBanner('↩ 긴급 철수', '채굴을 멈추고 분대를 방어 태세로 전환합니다.', '#8fe4ff');
+        this.persist();
+        return { ok: true };
     }
 
     getPlayerAttackInterval() {
@@ -2591,7 +2621,10 @@ export class Game {
         // seams at once therefore make an encounter arrive much sooner.
         const activeMiners = this.workers.filter((worker) => worker.userData.isMining).length
             + (this.player?.userData.isMining ? 1 : 0);
-        const decay = activeMiners > 0 ? 0.75 : 2.4;
+        this.retreatTimer = Math.max(0, (this.retreatTimer || 0) - delta);
+        const decay = this.retreatTimer > 0
+            ? 7.5
+            : activeMiners > 0 ? 0.75 : 2.4;
         this.miningNoise = Math.max(0, (this.miningNoise || 0) - delta * decay);
         this.miningDangerFlash = Math.max(0, (this.miningDangerFlash || 0) - delta);
 
@@ -2876,6 +2909,8 @@ export class Game {
             nextWave: Math.max(0, this.wave) + 1,
             maxSelectableWave: this.getMaxSelectableWave(),
             miningNoise: Math.round(this.miningNoise || 0),
+            retreating: (this.retreatTimer || 0) > 0,
+            retreatIn: Math.max(0, this.retreatTimer || 0),
             enemiesLeft: this.enemies.filter((enemy) => !enemy.userData.dying).length,
             attackInterval: this.getPlayerAttackInterval(),
             target: target
