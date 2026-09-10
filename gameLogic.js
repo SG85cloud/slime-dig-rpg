@@ -233,14 +233,12 @@ export class Game {
             rewardReady: false,
             // Craft count toward the 'craft3' step specifically.
             craftCount: 0,
-            // Repeatable side contracts. These are deliberately different from
-            // the tutorial chain: they create a reason to play each floor
-            // differently instead of only following one checklist.
+            // v20 cleanup: repeatable 3-contract side quests removed.
+            // Keep empty compatibility fields so old save data loads safely.
             contractStats: { kills: 0, oreMined: 0, greedSeams: 0, rescues: 0,
                 retreats: 0, rareFinds: 0, floorAscends: 0 },
             contracts: []
         };
-        this.ensureQuestContracts();
 
         // Leader stats: strength lowers the swings needed per ore, speed shortens
         // the swing interval, and luck improves the rare-ore roll.
@@ -1870,6 +1868,7 @@ export class Game {
         worker.userData.attackCooldown = 0;
         worker.userData.maxHp = this.getWorkerMaxHp(worker);
         worker.userData.hp = worker.userData.maxHp;
+        worker.userData.regenTimer = 0;
         worker.userData.downTimer = 0;
         worker.userData.healthBar = this.createHealthBar(0.95, 0x66d9a8);
         worker.userData.healthBar.position.set(0, 1.15, 0);
@@ -1893,10 +1892,11 @@ export class Game {
         return true;
     }
 
-    // Level 1 at 0 XP, +1 every 40 XP, capped at 10 so late-game squads don't
-    // dwarf the leader's own growth.
+    // Worker progression: Lv.1 at 0 XP, +1 every 50 XP, capped at 100.
+    // Workers are long-term companions, so their growth should remain meaningful
+    // well beyond the early mine floors without becoming literally uncapped.
     getWorkerLevel(worker) {
-        return Math.min(10, 1 + Math.floor((worker.userData.workerXp || 0) / 40));
+        return Math.min(100, 1 + Math.floor((worker.userData.workerXp || 0) / 50));
     }
 
     /** Grants worker XP and announces it the moment a level threshold is crossed. */
@@ -1913,7 +1913,7 @@ export class Game {
     }
 
     getWorkerLevelMult(worker) {
-        return 1 + (this.getWorkerLevel(worker) - 1) * 0.05;
+        return 1 + (this.getWorkerLevel(worker) - 1) * 0.025;
     }
 
     getWorkerMaxHp(worker) {
@@ -1971,7 +1971,6 @@ export class Game {
         this.app.ui.setWaveRewardHandler((choiceId) => this.claimWaveReward(choiceId));
         // Tutorial-quest "claim reward" button in the quest panel.
         this.app.ui.setQuestRewardHandler(() => this.claimQuestReward());
-        this.app.ui.setContractClaimHandler?.((id) => this.claimContract(id));
         this.app.ui.setMineEventHandler?.((choiceId) => this.resolveMineEvent(choiceId));
         this.app.ui.setBossRewardHandler?.((choiceId) => this.claimBossReward(choiceId));
         // Status window: spend a ticket to reroll the leader's innate trait.
@@ -2103,67 +2102,14 @@ export class Game {
         return nodePosition.clone().add(approach.multiplyScalar(2.35));
     }
 
-    getContractDefinitions() {
-        const d = this.depth;
-        const cycle = this.cycle || 0;
-        const difficulty = Math.max(0, Math.floor((this.startDepth - d) / 3) + cycle * 2);
-        return [
-            { type: 'kills', icon: '⚔', title: '갱도 소탕', description: `몬스터 ${8 + difficulty * 2}마리를 처치하세요.`, target: 8 + difficulty * 2, rewardGold: 8 + difficulty * 2, accent: '#ff9c9c' },
-            { type: 'oreMined', icon: '⛏', title: '광부의 하루', description: `광석 ${18 + difficulty * 3}개를 직접 채굴하세요.`, target: 18 + difficulty * 3, rewardGold: 10 + difficulty * 2, accent: '#8fe4ff' },
-            { type: 'greedSeams', icon: '🔥', title: '한 번만 더', description: `욕심 채굴 ${2 + Math.min(4, difficulty)}회에 도전하세요.`, target: 2 + Math.min(4, difficulty), rewardGold: 16 + difficulty * 3, accent: '#ffd166' },
-            { type: 'rescues', icon: '🚑', title: '동료를 버리지 마', description: '쓰러진 워커를 2명 구조하세요.', target: 2, rewardGold: 18, accent: '#8fd9a8' },
-            { type: 'rareFinds', icon: '💎', title: '빛나는 광맥', description: `금광석 또는 미스릴을 ${3 + Math.min(3, difficulty)}개 발견하세요.`, target: 3 + Math.min(3, difficulty), rewardGold: 20 + difficulty * 2, accent: '#d7b8ff' },
-            { type: 'retreats', icon: '↩', title: '살아서 돌아오기', description: '긴급 철수를 1회 사용하세요.', target: 1, rewardGold: 7 + difficulty, accent: '#b7f3ff' },
-            { type: 'floorAscends', icon: '⬆', title: '한 층 더', description: '다음 층으로 안전하게 상승하세요.', target: 1, rewardGold: 12 + difficulty * 2, accent: '#c7a3ef' }
-        ];
-    }
-
+    // v20: repeatable side contracts were removed. Story/tutorial quests remain.
+    getContractDefinitions() { return []; }
     ensureQuestContracts() {
-        if (!this.quest) return;
-        if (!Array.isArray(this.quest.contracts)) this.quest.contracts = [];
-        const defs = this.getContractDefinitions();
-        const used = new Set(this.quest.contracts.map(c => c.type));
-        while (this.quest.contracts.length < 3) {
-            const pool = defs.filter(d => !used.has(d.type));
-            if (!pool.length) break;
-            const def = pool[Math.floor(Math.random() * pool.length)];
-            this.quest.contracts.push({ id: `${def.type}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, type: def.type, title: def.title, icon: def.icon, target: def.target, rewardGold: def.rewardGold, accent: def.accent, claimed: false, baseProgress: this.quest.contractStats[def.type] || 0 });
-            used.add(def.type);
-        }
+        if (this.quest) this.quest.contracts = [];
     }
-
-    getQuestContractData() {
-        this.ensureQuestContracts();
-        return this.quest.contracts.map(c => {
-            const def = this.getContractDefinitions().find(d => d.type === c.type) || c;
-            const base = Number(c.baseProgress) || 0;
-            const current = Math.max(0, (this.quest.contractStats[c.type] || 0) - base);
-            return { ...c, description: def.description, progress: Math.min(c.target, current), ready: current >= c.target, claimed: !!c.claimed };
-        });
-    }
-
-    claimContract(id) {
-        const contract = this.quest.contracts.find(c => c.id === id);
-        if (!contract) return { ok: false, reason: '의뢰를 찾을 수 없습니다.' };
-        const data = this.getQuestContractData().find(c => c.id === id);
-        if (!data?.ready || contract.claimed) return { ok: false, reason: '아직 완료되지 않은 의뢰입니다.' };
-        const reward = Math.max(1, Number(contract.rewardGold) || 1);
-        this.inventory.gold += reward;
-        contract.claimed = true;
-        this.quest.contracts = this.quest.contracts.filter(c => c.id !== id);
-        this.ensureQuestContracts();
-        this.pushCombatFeed(`📜 의뢰 완료! ${contract.title} · 금광석 ${reward} 획득`, '#8fd9a8');
-        this.app.ui.showBanner('의뢰 완료', `${contract.title} · 금광석 ${reward}`, '#8fd9a8');
-        this.persist();
-        return { ok: true };
-    }
-
-    bumpQuestStat(type, amount = 1) {
-        if (!this.quest?.contractStats || !Object.prototype.hasOwnProperty.call(this.quest.contractStats, type)) return;
-        this.quest.contractStats[type] += Math.max(0, Math.floor(amount));
-        this.ensureQuestContracts();
-        this.persist();
-    }
+    getQuestContractData() { return []; }
+    claimContract(id) { return { ok: false, reason: '반복 의뢰는 제거되었습니다.' }; }
+    bumpQuestStat(type, amount = 1) { /* legacy save compatibility: no side-contract progression */ }
 
     getStoryQuestData() {
         // The dragon's hoard always takes priority: a leader standing on
@@ -4697,6 +4643,8 @@ export class Game {
         if (!worker || !this.workers.includes(worker) || worker.userData.downTimer > 0) return;
         const damage = Math.max(1, Math.round(amount));
         worker.userData.hp = Math.max(0, (worker.userData.hp ?? worker.userData.maxHp) - damage);
+        // Damage pauses passive worker regeneration for a short moment.
+        worker.userData.regenTimer = 4;
         worker.userData.healthBar.visible = true;
         this.updateHealthBar(worker.userData.healthBar, worker.userData.hp / worker.userData.maxHp);
         this.combatFX.spawnDamageNumber(worker.position, damage, { color: '#ffb36b', text: `-${damage}` });
@@ -4728,6 +4676,7 @@ export class Game {
             && other.userData.squadRole === 'defend');
         if (nearLeader || rescuer) {
             worker.userData.hp = Math.round(worker.userData.maxHp * 0.45);
+            worker.userData.regenTimer = 3;
             worker.userData.downTimer = 0;
             worker.userData.squadRole = this.squadCommand;
             worker.userData.healthBar.visible = false;
@@ -4750,6 +4699,22 @@ export class Game {
 
     updateWorker(worker, index, delta) {
         if (this.updateDownedWorker(worker, delta)) return;
+
+        // v21: workers now recover HP naturally instead of staying injured
+        // forever. Taking damage starts a 4s recovery delay; after that they
+        // regenerate slowly during combat and faster while the squad is safe.
+        const maxHp = worker.userData.maxHp || 1;
+        const hp = worker.userData.hp ?? maxHp;
+        worker.userData.regenTimer = Math.max(0, (worker.userData.regenTimer || 0) - delta);
+        if (hp < maxHp && worker.userData.regenTimer <= 0) {
+            const regenRate = this.arenaActive || this.enemies.length > 0 ? 2.5 : 5;
+            worker.userData.hp = Math.min(maxHp, hp + delta * regenRate);
+            if (worker.userData.healthBar) {
+                worker.userData.healthBar.visible = worker.userData.hp < maxHp - 0.5;
+                this.updateHealthBar(worker.userData.healthBar, worker.userData.hp / maxHp);
+            }
+        }
+
         if (this.mineEvent) {
             worker.userData.isMining = false;
             return;
@@ -5003,7 +4968,9 @@ export class Game {
             levels,
             avgLevel,
             downed: this.workers.filter((worker) => worker.userData.downTimer > 0).length,
-            roles: this.workers.map((worker) => ({ role: worker.userData.workerRole || 'miner', label: this.getWorkerRoleLabel(worker.userData.workerRole || 'miner') }))
+            roles: this.workers.map((worker) => ({ role: worker.userData.workerRole || 'miner', label: this.getWorkerRoleLabel(worker.userData.workerRole || 'miner') })),
+            xp: this.workers.map((worker) => Math.max(0, Math.floor(worker.userData.workerXp || 0))),
+            maxLevel: 100
         };
     }
 
