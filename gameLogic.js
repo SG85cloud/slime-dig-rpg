@@ -193,6 +193,16 @@ export class Game {
         // the arena feels like a survivor-action game instead of pure auto-DPS.
         this.skillCooldowns = { lightning: 0, nova: 0, meteor: 0 };
         this.skillMaxCooldowns = { lightning: 8, nova: 12, meteor: 18 };
+        // v19: survivor-style experience gems and level-up choices.
+        this.skillLevels = { lightning: 1, nova: 1, meteor: 1 };
+        this.skillCooldownMultiplier = 1;
+        this.playerLevel = 1;
+        this.playerXp = 0;
+        this.playerXpNext = 24;
+        this.xpGems = [];
+        this.xpMagnetRadius = 3.2;
+        this.levelUpPending = false;
+        this.levelUpChoices = [];
         this.combatFeed = [];
         this.lastCombatMoment = 0;
         this.regenTimer = 0;
@@ -312,6 +322,9 @@ export class Game {
         this.pendingWorkerCount = 0;
         this.pendingWorkerXp = [];
         this.hasSavedRun = false;
+        // Prevent beforeunload/visibilitychange from writing the old run back
+        // after an intentional reset followed by a page reload.
+        this.isResettingProgress = false;
 
         // Innate traits are rolled once per leader and drive real gameplay
         // modifiers; a returning leader keeps the traits it was born with.
@@ -397,8 +410,12 @@ export class Game {
         this.persist();
 
         // Save before the tab closes so nothing is lost mid-session.
-        window.addEventListener('beforeunload', () => this.persist());
+        window.addEventListener('beforeunload', () => {
+            if (this.isResettingProgress) return;
+            this.persist();
+        });
         document.addEventListener('visibilitychange', () => {
+            if (this.isResettingProgress) return;
             if (document.visibilityState === 'hidden') this.persist();
         });
 
@@ -579,6 +596,20 @@ export class Game {
         if (Number.isFinite(wave) && wave > 0) this.wave = Math.floor(wave);
         if (typeof saved.autoCombat === 'boolean') this.autoCombat = saved.autoCombat;
         if (typeof saved.autoMine === 'boolean') this.autoMine = saved.autoMine;
+        const savedLevel = Number(saved.playerLevel);
+        if (Number.isFinite(savedLevel) && savedLevel >= 1) this.playerLevel = Math.floor(savedLevel);
+        const savedXp = Number(saved.playerXp);
+        if (Number.isFinite(savedXp) && savedXp >= 0) this.playerXp = savedXp;
+        const savedNext = Number(saved.playerXpNext);
+        if (Number.isFinite(savedNext) && savedNext > 0) this.playerXpNext = savedNext;
+        const savedCdMult = Number(saved.skillCooldownMultiplier);
+        if (Number.isFinite(savedCdMult) && savedCdMult > 0) this.skillCooldownMultiplier = Math.max(0.45, Math.min(1, savedCdMult));
+        if (saved.skillLevels && typeof saved.skillLevels === 'object') {
+            Object.keys(this.skillLevels).forEach((key) => {
+                const lv = Number(saved.skillLevels[key]);
+                if (Number.isFinite(lv) && lv >= 1) this.skillLevels[key] = Math.min(8, Math.floor(lv));
+            });
+        }
 
         // Which floor of the shaft the leader had climbed to.
         const depth = Number(saved.depth);
@@ -677,6 +708,11 @@ export class Game {
             wave: this.wave,
             autoCombat: this.autoCombat,
             autoMine: this.autoMine,
+            playerLevel: this.playerLevel,
+            playerXp: this.playerXp,
+            playerXpNext: this.playerXpNext,
+            skillLevels: { ...this.skillLevels },
+            skillCooldownMultiplier: this.skillCooldownMultiplier || 1,
             depth: this.depth,
             floorNodesCleared: this.floorNodesCleared,
             deepestReached: this.deepestReached,
@@ -732,6 +768,7 @@ export class Game {
 
     resetProgress() {
         this.awardLegacyRunPoints();
+        this.isResettingProgress = true;
         clearProgress(this.profileId);
         window.location.reload();
     }
@@ -740,7 +777,19 @@ export class Game {
     // awarding legacy points. Permanent legacy upgrades remain intact, so this
     // is useful for repeatedly testing the opening section of the game.
     restartFromB30Admin() {
+        // IMPORTANT: reload fires beforeunload. Without the guard below, that
+        // handler can call persist() and immediately recreate the old save we
+        // just deleted.
+        this.isResettingProgress = true;
         clearProgress(this.profileId);
+        try {
+            // Also remove the save directly in case a browser fires lifecycle
+            // events in an unusual order during reload.
+            const key = `gothic-slime-mine:save:${this.profileId}`;
+            window.localStorage.removeItem(key);
+        } catch (error) {
+            console.warn('[admin] 진행 초기화 저장소 정리에 실패했습니다.', error);
+        }
         window.location.reload();
     }
 
@@ -1424,6 +1473,7 @@ export class Game {
             xp: config.xp,
             isQuestEnemy: !!options.isQuestEnemy,
             isFieldEnemy: !!options.isFieldEnemy,
+            isArenaEnemy: !!options.isArenaEnemy,
             healthBar: bar,
             bob: Math.random() * Math.PI * 2,
             windup: 0,
@@ -1625,6 +1675,8 @@ export class Game {
 
     updateCombatArena(delta) {
         if (!this.arenaActive) return;
+        // Level-up choice freezes the survival clock and enemy spawning.
+        if (this.levelUpPending) return;
         const isBoss = !!this.finalBossActive;
         if (!isBoss) {
             this.arenaTime = Math.max(0, this.arenaTime - delta);
@@ -1908,6 +1960,7 @@ export class Game {
         this.app.ui.setRetreatHandler(() => this.startEmergencyRetreat());
         this.app.ui.setDodgeHandler?.(() => this.startDodge());
         this.app.ui.setSkillHandler?.((skill) => this.castSkill(skill));
+        this.app.ui.setLevelUpHandler?.((choiceId) => this.claimLevelUp(choiceId));
         // Mine defence waves are launched by the player from the combat menu.
         this.app.ui.setWaveStartHandler(() => {
             const result = this.startDefenceWave();
@@ -2722,6 +2775,9 @@ export class Game {
             this.pushCombatFeed('💥 불안정 정예가 폭발했습니다!', '#9fffd0');
         }
         this.grantKillReward(enemy);
+        if (!enemy.userData.isFinalBoss && (enemy.userData.isArenaEnemy || this.arenaActive)) {
+            this.spawnXpGem(enemy.position, enemy.userData.xp || 5);
+        }
         this.bumpQuestStat('kills', 1);
         if (this.arenaActive && enemy.userData.isArenaEnemy) {
             this.arenaKills += 1;
@@ -3250,6 +3306,124 @@ export class Game {
         }
     }
 
+    // ---------------------------------------------------- v19 survivor XP
+    createXpGem(value) {
+        const group = new THREE.Group();
+        const amount = Math.max(1, Math.round(value || 1));
+        const hue = amount >= 30 ? 0.12 : amount >= 15 ? 0.48 : 0.58;
+        const mat = new THREE.MeshStandardMaterial({
+            color: new THREE.Color().setHSL(hue, 0.88, 0.64),
+            emissive: new THREE.Color().setHSL(hue, 0.9, 0.35),
+            emissiveIntensity: 2.0,
+            metalness: 0.25,
+            roughness: 0.28
+        });
+        const gem = new THREE.Mesh(new THREE.OctahedronGeometry(amount >= 30 ? 0.34 : 0.26, 0), mat);
+        gem.rotation.x = 0.4;
+        gem.rotation.z = 0.25;
+        group.add(gem);
+        const halo = new THREE.Mesh(
+            new THREE.TorusGeometry(amount >= 30 ? 0.46 : 0.36, 0.035, 6, 20),
+            new THREE.MeshBasicMaterial({ color: mat.color, transparent: true, opacity: 0.7 })
+        );
+        halo.rotation.x = Math.PI / 2;
+        group.add(halo);
+        group.userData = { type: 'xpGem', xp: amount, age: 0, baseY: 0.45, phase: Math.random() * Math.PI * 2 };
+        return group;
+    }
+
+    spawnXpGem(position, value) {
+        const gem = this.createXpGem(value);
+        gem.position.copy(position);
+        gem.position.y = 0.45;
+        this.scene.add(gem);
+        this.xpGems.push(gem);
+        return gem;
+    }
+
+    getLevelUpChoices() {
+        const defs = [
+            { id: 'lightning', icon: '⚡', title: '천둥폭우 강화', desc: '번개 피해 +28%', apply: () => { this.skillLevels.lightning = Math.min(8, this.skillLevels.lightning + 1); } },
+            { id: 'nova', icon: '✦', title: '대폭발 강화', desc: '폭발 범위 +18% · 피해 +12%', apply: () => { this.skillLevels.nova = Math.min(8, this.skillLevels.nova + 1); } },
+            { id: 'meteor', icon: '☄', title: '지옥 운석 강화', desc: '운석 피해 +30%', apply: () => { this.skillLevels.meteor = Math.min(8, this.skillLevels.meteor + 1); } },
+            { id: 'haste', icon: '⏱', title: '마력 가속', desc: '모든 스킬 쿨타임 -10%', apply: () => { this.skillCooldownMultiplier = Math.max(0.45, (this.skillCooldownMultiplier || 1) * 0.9); } },
+            { id: 'magnet', icon: '🧲', title: '마력 자석', desc: '경험치 획득 범위 +2.2m', apply: () => { this.xpMagnetRadius += 2.2; } },
+            { id: 'vitality', icon: '💚', title: '슬라임 활력', desc: '최대 HP +15 · 즉시 회복', apply: () => { this.maxPlayerHp += 15; this.playerData.hp = Math.min(this.maxPlayerHp, this.playerData.hp + 15); } },
+            { id: 'fury', icon: '🔥', title: '전투 본능', desc: '기본 공격력 +8%', apply: () => { this.attackPower = Math.round(this.attackPower * 1.08); } },
+        ];
+        const pool = defs.slice().sort(() => Math.random() - 0.5);
+        // Avoid offering an already maxed skill when alternatives exist.
+        const filtered = pool.filter((d) => !['lightning','nova','meteor'].includes(d.id) || this.skillLevels[d.id] < 8);
+        return (filtered.length >= 3 ? filtered : pool).slice(0, 3).map(d => ({ id: d.id, icon: d.icon, title: d.title, desc: d.desc }));
+    }
+
+    gainPlayerXp(amount) {
+        if (this.isDown) return;
+        let xp = Math.max(0, Number(amount) || 0);
+        if (!xp) return;
+        this.playerXp += xp;
+        while (this.playerXp >= this.playerXpNext && !this.levelUpPending) {
+            this.playerXp -= this.playerXpNext;
+            this.playerLevel += 1;
+            this.playerXpNext = Math.round(24 + (this.playerLevel - 1) * 13 + Math.pow(this.playerLevel - 1, 1.25) * 2.5);
+            this.levelUpPending = true;
+            this.levelUpChoices = this.getLevelUpChoices();
+            this.pushCombatFeed(`✨ 레벨 ${this.playerLevel}! 스킬을 선택하세요.`, '#ffe39a');
+            this.app.ui.showLevelUp?.({ level: this.playerLevel, xp: this.playerXp, next: this.playerXpNext, choices: this.levelUpChoices });
+            break;
+        }
+        this.persist();
+    }
+
+    claimLevelUp(choiceId) {
+        if (!this.levelUpPending) return { ok: false, reason: '레벨업 선택이 없습니다.' };
+        const choice = this.levelUpChoices.find(c => c.id === choiceId);
+        if (!choice) return { ok: false, reason: '잘못된 선택입니다.' };
+        const defs = this.getLevelUpChoices().concat([]); // descriptions only; apply by id below
+        const apply = {
+            lightning: () => { this.skillLevels.lightning = Math.min(8, this.skillLevels.lightning + 1); },
+            nova: () => { this.skillLevels.nova = Math.min(8, this.skillLevels.nova + 1); },
+            meteor: () => { this.skillLevels.meteor = Math.min(8, this.skillLevels.meteor + 1); },
+            haste: () => { this.skillCooldownMultiplier = Math.max(0.45, (this.skillCooldownMultiplier || 1) * 0.9); },
+            magnet: () => { this.xpMagnetRadius += 2.2; },
+            vitality: () => { this.maxPlayerHp += 15; this.playerData.hp = Math.min(this.maxPlayerHp, this.playerData.hp + 15); },
+            fury: () => { this.attackPower = Math.round(this.attackPower * 1.08); }
+        }[choice.id];
+        if (apply) apply();
+        this.levelUpPending = false;
+        this.levelUpChoices = [];
+        this.pushCombatFeed(`${choice.icon} ${choice.title} 선택!`, '#d8b8ff');
+        this.persist();
+        return { ok: true };
+    }
+
+    updateXpGems(delta) {
+        if (!this.xpGems.length || !this.player) return;
+        const magnet = Math.max(1.5, this.xpMagnetRadius || 3.2);
+        this.xpGems.slice().forEach((gem) => {
+            if (!this.xpGems.includes(gem)) return;
+            const d = gem.position.distanceTo(this.player.position);
+            gem.userData.age += delta;
+            gem.rotation.y += delta * 3.5;
+            gem.position.y = 0.45 + Math.sin(gem.userData.age * 5 + gem.userData.phase) * 0.16;
+            const collectRadius = magnet + (this.arenaActive ? 1.5 : 0);
+            if (d < collectRadius) {
+                const dir = new THREE.Vector3().subVectors(this.player.position, gem.position).setY(0);
+                if (dir.lengthSq() > 0.01) {
+                    dir.normalize();
+                    gem.position.addScaledVector(dir, Math.min(delta * 14, d));
+                }
+            }
+            if (d < 0.95) {
+                const xp = gem.userData.xp || 1;
+                this.scene.remove(gem);
+                this.xpGems = this.xpGems.filter(g => g !== gem);
+                this.gainPlayerXp(xp);
+                this.combatFX.spawnBurst(this.player.position, { color: 0x8fe8ff, radius: 0.25, expand: 1.8, life: 0.22, height: 0.6 });
+            }
+        });
+    }
+
     // ---------------------------------------------------------------- skills / VFX
     /** v17: three big active skills designed to read instantly in the arena. */
     castSkill(skillId) {
@@ -3266,6 +3440,10 @@ export class Game {
         const p = this.player.position.clone();
         const color = skillId === 'lightning' ? 0x8fe8ff : skillId === 'nova' ? 0xb98cff : 0xff8a4d;
         const power = this.getTotalAttack();
+        const cooldownMult = this.skillCooldownMultiplier || 1;
+        const lightningLv = this.skillLevels.lightning || 1;
+        const novaLv = this.skillLevels.nova || 1;
+        const meteorLv = this.skillLevels.meteor || 1;
 
         if (skillId === 'lightning') {
             const targets = live.sort((a,b) => p.distanceTo(a.position)-p.distanceTo(b.position)).slice(0, 6);
@@ -3274,18 +3452,18 @@ export class Game {
                 const strike = enemy.position.clone();
                 this.combatFX.spawnLightningStrike(strike, { color: 0x9ff6ff, delay: i * 0.045, height: enemy.userData.baseY });
                 setTimeout(() => {
-                    if (!enemy.userData.dying) this.damageEnemy(enemy, Math.round(power * 1.05), { color: '#9ff6ff', knockback: 0.9, from: p });
+                    if (!enemy.userData.dying) this.damageEnemy(enemy, Math.round(power * 1.05 * (1 + (lightningLv - 1) * 0.28)), { color: '#9ff6ff', knockback: 0.9, from: p });
                 }, i * 45);
             });
             this.combatFX.spawnShockwave(p, { color: 0x8fe8ff, scale: 4.5, life: 0.45 });
             this.app.addShake(0.65);
             this.pushCombatFeed('⚡ 천둥폭우 발동!', '#9ff6ff');
         } else if (skillId === 'nova') {
-            const radius = 6.2;
+            const radius = 6.2 * (1 + (novaLv - 1) * 0.18);
             this.combatFX.spawnSkillNova(p, { color: 0xc58cff, radius, life: 0.75 });
             live.forEach(enemy => {
                 const d = p.distanceTo(enemy.position);
-                if (d <= radius) this.damageEnemy(enemy, Math.round(power * 1.45), { color: '#d6b5ff', knockback: 3.2, from: p });
+                if (d <= radius) this.damageEnemy(enemy, Math.round(power * 1.45 * (1 + (novaLv - 1) * 0.12)), { color: '#d6b5ff', knockback: 3.2, from: p });
             });
             this.combatFX.spawnSparks(p, { color: 0xe2c8ff, count: 48, speed: 10, life: 0.85, height: 0.7 });
             this.combatFX.spawnFlash(p, 0xc58cff, 100, 0.5);
@@ -3298,7 +3476,7 @@ export class Game {
             const radius = 4.5;
             this.combatFX.spawnMeteor(impact, { color: 0xff8a4d, radius, life: 1.0 });
             live.forEach(enemy => {
-                if (impact.distanceTo(enemy.position) <= radius) this.damageEnemy(enemy, Math.round(power * 2.6), { color: '#ffd08a', crit: true, knockback: 2.6, from: impact });
+                if (impact.distanceTo(enemy.position) <= radius) this.damageEnemy(enemy, Math.round(power * 2.6 * (1 + (meteorLv - 1) * 0.30)), { color: '#ffd08a', crit: true, knockback: 2.6, from: impact });
             });
             this.combatFX.spawnShockwave(impact, { color: 0xff5b35, scale: 11, life: 0.75 });
             this.combatFX.spawnSparks(impact, { color: 0xffd28a, count: 64, speed: 13, life: 1.0, height: 0.8 });
@@ -3307,7 +3485,7 @@ export class Game {
             this.pushCombatFeed('☄️ 지옥 운석 낙하!', '#ffb36b');
         }
 
-        this.skillCooldowns[skillId] = this.skillMaxCooldowns[skillId];
+        this.skillCooldowns[skillId] = this.skillMaxCooldowns[skillId] * cooldownMult;
         this.persist();
         return { ok: true };
     }
@@ -3321,7 +3499,9 @@ export class Game {
             lightning: Math.max(0, this.skillCooldowns.lightning),
             nova: Math.max(0, this.skillCooldowns.nova),
             meteor: Math.max(0, this.skillCooldowns.meteor),
-            max: { ...this.skillMaxCooldowns }
+            max: { ...this.skillMaxCooldowns },
+            levels: { ...this.skillLevels },
+            cooldownMultiplier: this.skillCooldownMultiplier || 1
         };
     }
 
@@ -3916,6 +4096,12 @@ export class Game {
             finalBoss: !!this.finalBossActive,
             dodging: (this.dodgeTimer || 0) > 0,
             skills: this.getSkillData(),
+            playerLevel: this.playerLevel,
+            playerXp: this.playerXp,
+            playerXpNext: this.playerXpNext,
+            levelUpPending: !!this.levelUpPending,
+            skillLevels: { ...this.skillLevels },
+            skillCooldownMultiplier: this.skillCooldownMultiplier || 1,
             target: target
                 ? {
                     name: target.userData.name,
@@ -4676,6 +4862,7 @@ export class Game {
 
         this.updateQuestProgress();
         this.updateWaves(delta);
+        this.updateXpGems(delta);
         this.updateFieldEncounters(delta);
         this.nodes.forEach((node) => {
             const pulse = node.userData.hitPulse || 0;

@@ -1214,6 +1214,39 @@ export class UI {
         this.rewardOverlay.style.display = 'flex';
     }
 
+    showLevelUp(data = {}) {
+        if (!this.levelUpOverlay) {
+            this.levelUpOverlay = document.createElement('div');
+            this.levelUpOverlay.style.cssText = `position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:radial-gradient(circle at 50% 42%,rgba(31,22,55,.72),rgba(5,5,10,.96));backdrop-filter:blur(7px);pointer-events:auto;z-index:130;`;
+            this.levelUpOverlay.innerHTML = `<div style="width:min(980px,100%);max-height:100%;overflow:auto;text-align:center;font-family:Inter,sans-serif;"><div style="font:800 12px Orbitron,sans-serif;letter-spacing:4px;color:#9ff6ff;text-shadow:0 0 18px #69dfff;">LEVEL UP</div><div class="levelup-title" style="margin-top:7px;font:900 clamp(28px,5vw,48px) Orbitron,sans-serif;color:#fff;">LEVEL 2</div><div style="margin-top:5px;color:#bdb1ce;font-size:13px;">성장할 능력 하나를 선택하세요 · 전투 시간은 잠시 멈춥니다.</div><div class="levelup-cards" style="margin-top:22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:13px;"></div></div>`;
+            this.container.appendChild(this.levelUpOverlay);
+        }
+        this.levelUpOverlay.style.display='flex';
+        this.rewardOpen = true;
+        this.closeCraftWorkshop(); this.closeStatusWindow(); this.closeDockPanels();
+        this.levelUpOverlay.querySelector('.levelup-title').textContent = `LEVEL ${data.level || 2}`;
+        const cards=this.levelUpOverlay.querySelector('.levelup-cards'); cards.innerHTML='';
+        const colors=['#8fe8ff','#c58cff','#ffb36b'];
+        (data.choices||[]).forEach((choice,i)=>{
+            const card=document.createElement('button'); card.type='button';
+            const color=colors[i%colors.length];
+            card.style.cssText=`min-height:190px;padding:20px 16px;border:2px solid ${color};border-radius:15px;background:linear-gradient(160deg,rgba(29,22,48,.98),rgba(10,9,17,.98));color:#fff;cursor:pointer;font:inherit;box-shadow:0 0 26px ${color}44;transition:transform .12s,box-shadow .12s;`;
+            card.innerHTML=`<div style="font-size:40px;filter:drop-shadow(0 0 10px ${color});">${choice.icon}</div><div style="margin-top:9px;font:900 15px Orbitron,sans-serif;color:${color};">${choice.title}</div><div style="margin-top:12px;font-size:13px;line-height:1.6;color:#d8cde4;">${choice.desc}</div><div style="margin-top:18px;font-size:10px;font-weight:800;letter-spacing:2px;color:#8e829e;">SELECT ▸</div>`;
+            card.addEventListener('pointerenter',()=>{card.style.transform='translateY(-5px)';card.style.boxShadow=`0 0 34px ${color}66`;});
+            card.addEventListener('pointerleave',()=>{card.style.transform='none';card.style.boxShadow=`0 0 26px ${color}44`;});
+            card.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();if(this.levelUpHandler)this.levelUpHandler(choice.id);this.closeLevelUp();});
+            cards.appendChild(card);
+        });
+    }
+
+    closeLevelUp() {
+        if (!this.levelUpOverlay) return;
+        this.levelUpOverlay.style.display='none';
+        this.rewardOpen=false;
+    }
+
+    setLevelUpHandler(handler) { this.levelUpHandler=handler; }
+
     setBossRewardHandler(handler) {
         this.bossRewardHandler = handler;
     }
@@ -2355,7 +2388,7 @@ export class UI {
             status.innerHTML = `<span style="color:#ffb3a6;font-weight:800;">🔥 전투 구역 · 생존 ${timeText}</span><br>
                                 처치 <b style="color:#ffe39a;">${combat.arenaKills || 0}</b> ·
                                 잔류 <b style="color:#ff9c9c;">${combat.arenaEnemies || 0}</b> ·
-                                <span style="color:#a99bb8;">SPACE 회피 가능</span>`;
+                                <span style="color:#a99bb8;">SPACE 회피 가능</span><div style="margin-top:6px;display:flex;justify-content:space-between;color:#cfc1dd;font-size:10px;"><span>✨ Lv.${combat.playerLevel || 1}</span><span>${Math.floor(combat.playerXp || 0)} / ${Math.floor(combat.playerXpNext || 24)} XP</span></div><div style="height:5px;margin-top:3px;background:#17131c;border:1px solid #493b57;border-radius:999px;overflow:hidden;"><div style="height:100%;width:${Math.min(100,((combat.playerXp||0)/Math.max(1,combat.playerXpNext||24))*100)}%;background:linear-gradient(90deg,#65dfff,#b98cff);"></div></div>`;
         } else if (combat.isDown) {
             status.innerHTML = `<span style="color:#ff7d6b; font-weight:700;">리더 전투불능 · ${combat.reviveIn.toFixed(1)}초 후 부활</span>`;
         } else if (combat.retreating) {
