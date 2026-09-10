@@ -1247,6 +1247,35 @@ export class UI {
 
     setLevelUpHandler(handler) { this.levelUpHandler=handler; }
 
+    showWorkerPromotion(data = {}) {
+        if (!this.workerPromotionOverlay) {
+            this.workerPromotionOverlay = document.createElement('div');
+            this.workerPromotionOverlay.style.cssText = `position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:radial-gradient(circle at 50% 40%,rgba(55,38,18,.78),rgba(5,5,10,.97));backdrop-filter:blur(8px);pointer-events:auto;z-index:140;`;
+            this.workerPromotionOverlay.innerHTML = `<div style="width:min(900px,100%);text-align:center;font-family:Inter,sans-serif;"><div style="font:800 11px Orbitron,sans-serif;letter-spacing:4px;color:#ffe39a;">WORKER PROMOTION</div><div class="worker-promo-title" style="margin-top:8px;font:900 clamp(25px,5vw,44px) Orbitron,sans-serif;color:#fff;">워커 1번 · Lv.20</div><div style="margin-top:6px;color:#bdb1ce;font-size:13px;">워커가 새로운 단계에 도달했습니다. 능력을 하나 선택하세요.</div><div class="worker-promo-cards" style="margin-top:22px;display:grid;grid-template-columns:repeat(3,1fr);gap:13px;"></div></div>`;
+            this.container.appendChild(this.workerPromotionOverlay);
+        }
+        this.workerPromotionOverlay.style.display='flex';
+        this.rewardOpen = true;
+        this.closeCraftWorkshop(); this.closeStatusWindow(); this.closeDockPanels();
+        this.workerPromotionOverlay.querySelector('.worker-promo-title').textContent = `워커 ${data.worker || 1}번 · Lv.${data.level || 20}`;
+        const cards=this.workerPromotionOverlay.querySelector('.worker-promo-cards'); cards.innerHTML='';
+        (data.choices||[]).forEach((choice)=>{
+            const card=document.createElement('button'); card.type='button';
+            card.style.cssText=`min-height:210px;padding:20px 16px;border:2px solid ${choice.color};border-radius:15px;background:linear-gradient(160deg,rgba(29,22,48,.98),rgba(10,9,17,.98));color:#fff;cursor:pointer;font:inherit;box-shadow:0 0 28px ${choice.color}33;`;
+            card.innerHTML=`<div style="font-size:42px;filter:drop-shadow(0 0 12px ${choice.color});">${choice.icon}</div><div style="margin-top:10px;font:900 15px Orbitron,sans-serif;color:${choice.color};">${choice.title}</div><div style="margin-top:12px;font-size:13px;line-height:1.6;color:#d8cde4;">${choice.desc}</div><div style="margin-top:18px;font-size:10px;font-weight:800;letter-spacing:2px;color:#8e829e;">PROMOTE ▸</div>`;
+            card.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();this.workerPromotionHandler?.(choice.id);});
+            cards.appendChild(card);
+        });
+    }
+
+    closeWorkerPromotion() {
+        if (!this.workerPromotionOverlay) return;
+        this.workerPromotionOverlay.style.display='none';
+        this.rewardOpen=false;
+    }
+
+    setWorkerPromotionHandler(handler) { this.workerPromotionHandler=handler; }
+
     setBossRewardHandler(handler) {
         this.bossRewardHandler = handler;
     }

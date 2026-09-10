@@ -156,6 +156,9 @@ export class Game {
         this.squadCommand = 'mine';
         this.workerRoles = ['miner', 'fighter', 'guard', 'prospector'];
         this.pendingWorkerRoles = [];
+        this.pendingWorkerPromotions = [];
+        this.workerPromotionQueue = [];
+        this.workerPromotionChoices = null;
         this.elapsed = 0;
         this.baseMaxHp = 100;
         this.maxPlayerHp = 100;
@@ -164,6 +167,8 @@ export class Game {
         this.wave = 0;
         this.groundOffsets = {};
         this.waveActive = false;
+        // v24: failed defence remains retryable at the same wave.
+        this.waveFailed = false;
         // v16: formal defence is a dedicated survivor-style combat arena.
         this.arenaActive = false;
         this.arenaTime = 0;
@@ -370,6 +375,13 @@ export class Game {
         // each rejoining at the individual level it had earned.
         for (let i = 0; i < this.pendingWorkerCount; i++) {
             this.addWorker(this.pendingWorkerXp[i] || 0, this.pendingWorkerRoles[i] || this.workerRoles[i % this.workerRoles.length]);
+            const restoredTalent = this.pendingWorkerPromotions[i];
+            if (restoredTalent && this.workers[i]) {
+                this.workers[i].userData.workerTalents = { attack: Number(restoredTalent.attack) || 1, mining: Number(restoredTalent.mining) || 1, hp: Number(restoredTalent.hp) || 1, rare: Number(restoredTalent.rare) || 0 };
+                this.workers[i].userData.workerPromotionTier = Number(restoredTalent.tier) || 0;
+                this.workers[i].userData.maxHp = this.getWorkerMaxHp(this.workers[i]);
+                this.workers[i].userData.hp = this.workers[i].userData.maxHp;
+            }
         }
         this.setSquadCommand(this.savedCommand || this.squadCommand);
 
@@ -577,6 +589,7 @@ export class Game {
         if (Array.isArray(saved.workerRoles)) {
             this.pendingWorkerRoles = saved.workerRoles.map((role) => this.workerRoles.includes(role) ? role : 'miner');
         }
+        if (Array.isArray(saved.workerPromotions)) this.pendingWorkerPromotions = saved.workerPromotions;
 
         if (['mine', 'attack', 'defend', 'focus'].includes(saved.squadCommand)) {
             this.savedCommand = saved.squadCommand;
@@ -641,6 +654,8 @@ export class Game {
             this.rewardPending = pending;
         }
 
+        this.waveFailed = !!saved.waveFailed;
+
         // v16: a saved survivor run resumes as an active arena after the world
         // and player meshes have been rebuilt.
         if (saved.arenaActive) {
@@ -696,6 +711,7 @@ export class Game {
             workerCount: this.workers.length,
             workerXp: this.workers.map((worker) => worker.userData.workerXp || 0),
             workerRoles: this.workers.map((worker) => worker.userData.workerRole || 'miner'),
+            workerPromotions: this.workers.map((worker) => ({ ...(worker.userData.workerTalents || { attack: 1, mining: 1, hp: 1, rare: 0 }), tier: worker.userData.workerPromotionTier || 0 })),
             squadCommand: this.squadCommand,
             totalOreMined: this.totalOreMined || 0,
             equipped: this.equipped,
@@ -704,6 +720,7 @@ export class Game {
             recipeBook: this.recipeBook,
             totalCrafted: this.totalCrafted || 0,
             wave: this.wave,
+            waveFailed: !!this.waveFailed,
             autoCombat: this.autoCombat,
             autoMine: this.autoMine,
             playerLevel: this.playerLevel,
@@ -1736,6 +1753,13 @@ export class Game {
         this.arenaTime = 0;
         this.exitCombatArena();
         this.rewardPending = { wave: clearedWave, choices: this.buildRewardChoices(clearedWave) };
+        // v25: the first formal defence quest must also complete when the
+        // survivor-style arena is cleared. The old fixed-wave code handled
+        // this in updateWaves(), but v16+ completes through completeCombatArena().
+        if (this.quest.stage === 'waveDefense' && !this.quest.rewardReady) {
+            this.quest.rewardReady = true;
+            this.pushCombatFeed('🎯 첫 방어전 클리어! 퀘스트 보상을 받으세요.', '#8fd9a8');
+        }
         this.pushCombatFeed(`🏆 생존 성공! ${clearedWave} 웨이브 · ${kills}처치 · 보상을 선택하세요.`, '#8fd9a8');
         this.app.multiplayer.broadcastEvent?.('wave_clear', { wave: clearedWave, kills });
         this.app.ui.showWaveCleared(clearedWave);
@@ -1752,10 +1776,25 @@ export class Game {
             this.player.position.copy(this.arenaSavedPosition);
             this.playerData.targetPos.copy(this.player.position);
         }
+        // Anyone still downed was only kept alive by the arena-only guard in
+        // updateDownedWorker(); patch them back up now instead of letting them
+        // die the instant arenaActive flips off on the next frame.
+        let revivedCount = 0;
         this.workers.forEach(worker => {
+            if (worker.userData.downTimer > 0 || (worker.userData.hp ?? worker.userData.maxHp) <= 0) {
+                worker.userData.hp = Math.round(worker.userData.maxHp * 0.45);
+                worker.userData.regenTimer = 3;
+                worker.userData.downTimer = 0;
+                worker.userData.squadRole = this.arenaSavedCommand || 'mine';
+                if (worker.userData.healthBar) worker.userData.healthBar.visible = false;
+                revivedCount += 1;
+            }
             const a = Math.random() * Math.PI * 2;
             worker.position.set(this.player.position.x + Math.cos(a) * (2 + Math.random()), worker.position.y, this.player.position.z + Math.sin(a) * (2 + Math.random()));
         });
+        if (revivedCount > 0) {
+            this.pushCombatFeed(`💚 전투 구역에서 쓰러졌던 워커 ${revivedCount}명을 수습했습니다.`, '#8fd9a8');
+        }
         this.playerData.miningTarget = null;
         this.playerTarget = null;
         this.autoMine = this.arenaSavedAutoMine;
@@ -1881,6 +1920,8 @@ export class Game {
         // Individual growth: a worker gets a little sharper the more it mines
         // and fights, on top of the global trait/boon/facility multipliers.
         worker.userData.workerXp = Math.max(0, initialXp);
+        worker.userData.workerTalents = { attack: 1, mining: 1, hp: 1, rare: 0 };
+        worker.userData.workerPromotionTier = 0;
         worker.traverse((child) => {
             child.castShadow = true;
         });
@@ -1899,7 +1940,7 @@ export class Game {
         return Math.min(100, 1 + Math.floor((worker.userData.workerXp || 0) / 50));
     }
 
-    /** Grants worker XP and announces it the moment a level threshold is crossed. */
+    /** Grants worker XP and opens a promotion choice at Lv.20/40/60/80/100. */
     addWorkerXp(worker, amount) {
         const before = this.getWorkerLevel(worker);
         worker.userData.workerXp = (worker.userData.workerXp || 0) + amount;
@@ -1909,18 +1950,77 @@ export class Game {
             this.combatFX.spawnFlash(worker.position, 0x8fd9a8, 24, 0.3);
             this.combatFX.spawnBurst(worker.position, { color: 0x8fd9a8, radius: 0.4, expand: 2, life: 0.4, height: worker.userData.baseY });
             this.pushCombatFeed(`🌱 워커 ${index + 1}번이 레벨업했습니다! Lv.${after}`, '#8fd9a8');
+            [20,40,60,80,100].forEach(tier => {
+                if (before < tier && after >= tier && (worker.userData.workerPromotionTier || 0) < tier) {
+                    this.workerPromotionQueue.push({ worker, index, tier });
+                }
+            });
+            this.processWorkerPromotionQueue();
         }
     }
 
     getWorkerLevelMult(worker) {
-        return 1 + (this.getWorkerLevel(worker) - 1) * 0.025;
+        return (1 + (this.getWorkerLevel(worker) - 1) * 0.025) * (worker.userData.workerTalents?.attack || 1);
+    }
+
+    getWorkerMiningMult(worker) {
+        return (worker.userData.workerTalents?.mining || 1);
+    }
+
+    processWorkerPromotionQueue() {
+        if (this.workerPromotionChoices || !this.workerPromotionQueue.length) return;
+        const entry = this.workerPromotionQueue.shift();
+        if (!entry?.worker || !this.workers.includes(entry.worker)) return this.processWorkerPromotionQueue();
+        this.workerPromotionChoices = entry;
+        this.app.ui.showWorkerPromotion?.({ worker: entry.index + 1, level: entry.tier, choices: this.getWorkerPromotionChoices(entry.worker, entry.tier) });
+        this.persist();
+    }
+
+    getWorkerPromotionChoices(worker, tier) {
+        const role = worker.userData.workerRole || 'miner';
+        const common = [
+            { id:'power', icon:'⚔️', title:'강철 심장', desc:'공격력 성장 +15%', color:'#ff8f8f', effect:'attack' },
+            { id:'fortress', icon:'🛡️', title:'철벽', desc:'최대 HP +25%', color:'#8fd9ff', effect:'hp' },
+            { id:'master', icon:'⛏️', title:'숙련 광부', desc:'채굴 속도 +18%', color:'#ffd27a', effect:'mining' }
+        ];
+        if (role === 'prospector') common[2] = { id:'fortune', icon:'💎', title:'행운의 손', desc:'희귀 광석 발견 보정 +8%', color:'#d4a6ff', effect:'rare' };
+        if (tier === 100) {
+            common[0].title='전설의 전사'; common[0].desc='공격력 성장 +30%';
+            common[1].title='불멸의 수호자'; common[1].desc='최대 HP +50%';
+            common[2] = role === 'prospector' ? { id:'fortune', icon:'💎', title:'광산의 축복', desc:'희귀 광석 발견 보정 +18%', color:'#d4a6ff', effect:'rare' } : { id:'master', icon:'⛏️', title:'광산의 달인', desc:'채굴 속도 +35%', color:'#ffd27a', effect:'mining' };
+        }
+        return common;
+    }
+
+    claimWorkerPromotion(choiceId) {
+        const entry = this.workerPromotionChoices;
+        if (!entry) return { ok:false, reason:'승급 선택이 없습니다.' };
+        const choice = this.getWorkerPromotionChoices(entry.worker, entry.tier).find(c => c.id === choiceId);
+        if (!choice) return { ok:false, reason:'잘못된 승급 선택입니다.' };
+        const w = entry.worker;
+        const t = w.userData.workerTalents || (w.userData.workerTalents = { attack:1, mining:1, hp:1, rare:0 });
+        if (choice.effect === 'attack') t.attack *= entry.tier === 100 ? 1.30 : 1.15;
+        if (choice.effect === 'mining') t.mining *= entry.tier === 100 ? 1.35 : 1.18;
+        if (choice.effect === 'hp') t.hp *= entry.tier === 100 ? 1.50 : 1.25;
+        if (choice.effect === 'rare') t.rare += entry.tier === 100 ? 0.18 : 0.08;
+        w.userData.workerPromotionTier = entry.tier;
+        w.userData.maxHp = this.getWorkerMaxHp(w);
+        w.userData.hp = w.userData.maxHp;
+        this.combatFX.spawnFlash(w.position, 0xffe28a, 45, 0.5);
+        this.combatFX.spawnBurst(w.position, { color:0xffd166, radius:0.65, expand:3.4, life:0.75, height:w.userData.baseY });
+        this.pushCombatFeed(`★ 워커 ${entry.index + 1}번 승급: ${choice.title}`, '#ffe39a');
+        this.workerPromotionChoices = null;
+        this.app.ui.closeWorkerPromotion?.();
+        this.persist();
+        setTimeout(() => this.processWorkerPromotionQueue(), 120);
+        return { ok:true };
     }
 
     getWorkerMaxHp(worker) {
         const role = worker?.userData?.workerRole || 'miner';
         const roleMult = { miner: 0.9, fighter: 1.0, guard: 1.35, prospector: 0.95 }[role] || 1;
         const relicHpMult = this.bossRelics.reduce((m, r) => m * (r.workerHpMult || 1), 1);
-        return Math.round((55 + this.getWorkerLevel(worker) * 5) * roleMult * relicHpMult);
+        return Math.round((55 + this.getWorkerLevel(worker) * 5) * roleMult * relicHpMult * (worker?.userData?.workerTalents?.hp || 1));
     }
 
     getWorkerRoleLabel(role) {
@@ -1961,6 +2061,7 @@ export class Game {
         this.app.ui.setDodgeHandler?.(() => this.startDodge());
         this.app.ui.setSkillHandler?.((skill) => this.castSkill(skill));
         this.app.ui.setLevelUpHandler?.((choiceId) => this.claimLevelUp(choiceId));
+        this.app.ui.setWorkerPromotionHandler?.((choiceId) => this.claimWorkerPromotion(choiceId));
         // Mine defence waves are launched by the player from the combat menu.
         this.app.ui.setWaveStartHandler(() => {
             const result = this.startDefenceWave();
@@ -2882,14 +2983,20 @@ export class Game {
         if (this.playerData.hp <= 0) this.downPlayer();
     }
 
-    /** The leader is knocked out: enemies scatter and a short revive plays. */
+    /** The leader is knocked out. Defence arenas are a clean run failure: no revive loop, no death penalty. */
     downPlayer() {
-        this.isDown = true;
-        this.deathTimer = 3;
         this.playerData.miningTarget = null;
         this.combatFX.spawnShockwave(this.player.position, { color: 0x6ab7ff, scale: 8 });
         this.combatFX.spawnBurst(this.player.position, { color: 0x6ab7ff, radius: 1, expand: 3.6, life: 0.6 });
         this.app.addShake(0.9);
+
+        if (this.arenaActive && !this.finalBossActive) {
+            this.failDefenceArena();
+            return;
+        }
+
+        this.isDown = true;
+        this.deathTimer = 3;
         this.pushCombatFeed('리더가 쓰러졌습니다… 잠시 후 부활합니다.', '#ff7d6b');
 
         if (this.waveActive) {
@@ -2898,10 +3005,30 @@ export class Game {
             this.applyDeathPenalty();
         }
 
-        // Enemies lose interest and drift away while the leader recovers.
         this.enemies.forEach((enemy) => {
             enemy.userData.attackTimer = 2.5;
         });
+    }
+
+    /** v24: regular defence failure ends the arena immediately; the same wave remains available for a retry. */
+    failDefenceArena() {
+        const failedWave = this.wave;
+        this.isDown = false;
+        this.deathTimer = 0;
+        this.waveFailed = true;
+        this.waveActive = false;
+        this.rewardPending = null;
+        this.enemies.slice().forEach((enemy) => this.scene.remove(enemy));
+        this.enemies = [];
+        this.playerData.hp = Math.round(this.maxPlayerHp * 0.6);
+        this.playerData.targetPos.copy(this.player.position);
+        this.player.scale.setScalar(this.player.userData.baseScale || 1.25);
+        this.player.rotation.z = 0;
+        this.exitCombatArena();
+        this.app.ui.showBanner?.('🛡 방어전 실패', `리더가 쓰러졌습니다 · 웨이브 ${failedWave} 재도전 가능`, '#ff7d6b');
+        this.pushCombatFeed(`❌ 방어전 ${failedWave} 실패. 전력을 강화한 뒤 같은 웨이브에 다시 도전하세요.`, '#ff7d6b');
+        this.app.multiplayer.broadcastEvent?.('wave_fail', { wave: failedWave });
+        this.persist();
     }
 
     /** Falling in a formal wave is an outright loss: no reward, run ends now. */
@@ -3944,7 +4071,8 @@ export class Game {
             return { ok: false, reason: '먼저 지난 웨이브의 보상을 선택하세요.' };
         }
 
-        const nextWave = waveOverride ?? (Math.max(0, this.wave) + 1);
+        const nextWave = waveOverride ?? (this.waveFailed ? Math.max(1, this.wave) : (Math.max(0, this.wave) + 1));
+        this.waveFailed = false;
         this.waveEnemyTotal = getWaveComposition(nextWave).reduce((sum, [, count]) => sum + count, 0);
         this.startWave(nextWave);
         this.app.multiplayer.broadcastEvent?.('wave_start', { wave: nextWave });
@@ -3953,7 +4081,7 @@ export class Game {
 
     /** Highest wave the player may jump straight to (cleared waves + 1). */
     getMaxSelectableWave() {
-        return Math.max(1, this.wave + 1);
+        return this.waveFailed ? Math.max(1, this.wave) : Math.max(1, this.wave + 1);
     }
 
     getBossRewardChoices() {
@@ -4018,7 +4146,8 @@ export class Game {
             canStartWave: !this.waveActive && !this.isDown && !this.rewardPending && this.canRunWaves(),
             rewardPending: !!this.rewardPending,
             waveUnlocked: this.canRunWaves(),
-            nextWave: Math.max(0, this.wave) + 1,
+            nextWave: this.waveFailed ? Math.max(1, this.wave) : Math.max(0, this.wave) + 1,
+            waveFailed: !!this.waveFailed,
             maxSelectableWave: this.getMaxSelectableWave(),
             miningNoise: Math.round(this.miningNoise || 0),
             unstableHaul: Math.round(this.unstableHaul || 0),
@@ -4686,6 +4815,16 @@ export class Game {
             return false;
         }
         if (worker.userData.downTimer <= 0) {
+            // The survivor arena forces every worker into 'attack' role, so the
+            // squadmate-rescue path above can never trigger there. Losing a
+            // worker for good just because the arena was too chaotic to reach
+            // them in time would feel unfair, so arena downs simply wait —
+            // exitCombatArena() patches every still-downed worker back up once
+            // the fight ends, win or lose.
+            if (this.arenaActive) {
+                worker.userData.downTimer = 0.5;
+                return true;
+            }
             this.combatFX.spawnBurst(worker.position, { color: 0x8b1a1a, radius: 0.55, expand: 2.3, life: 0.5 });
             this.removeWorker(worker);
             this.pushCombatFeed('💀 워커 슬라임을 잃었습니다.', '#ff5a5a');
@@ -4725,37 +4864,47 @@ export class Game {
         let isMining = false;
 
         if (this.squadCommand === 'mine') {
-            // Prefer this worker's own seam. If it was depleted, pick the
-            // nearest available node with a light round-robin bias so workers
-            // naturally spread across the mine.
-            let node = worker.userData.miningTarget;
-            if (!node || !this.nodes.includes(node)) {
-                const candidates = this.nodes.slice().sort((a, b) => {
-                    const da = worker.position.distanceToSquared(a.position);
-                    const db = worker.position.distanceToSquared(b.position);
-                    return da - db;
-                });
-                node = candidates.length ? candidates[worker.userData.miningTargetIndex % candidates.length] : null;
-                worker.userData.miningTarget = node;
-            }
-            if (node) {
-                const offset = new THREE.Vector3(Math.cos(formationAngle), 0, Math.sin(formationAngle)).multiplyScalar(1.35);
-                destination = node.position.clone().add(offset);
-                const workerDistance = Math.hypot(
-                    worker.position.x - node.position.x,
-                    worker.position.z - node.position.z
-                );
-                if (workerDistance < 3.1) {
-                    isMining = true;
-                    worker.userData.swingTimer = (worker.userData.swingTimer || 0) - delta;
-                    if (worker.userData.swingTimer <= 0) {
-                        this.swingAtNode(node);
-                        const roleMiningMult = ({ miner: 1.35, fighter: 0.72, guard: 0.82, prospector: 0.92 }[worker.userData.workerRole] || 1);
-                        const roleNoiseMult = ({ miner: 1.0, fighter: 0.8, guard: 0.7, prospector: 0.65 }[worker.userData.workerRole] || 1);
-                        this.addMiningNoise(0.75 * roleNoiseMult);
-                        this.addWorkerXp(worker, 1);
-                        worker.userData.swingTimer = 0.72 / (this.traitEffects.workerSwingMult
-                            * this.boons.workerSwingMult * this.getWorkerLevelMult(worker) * roleMiningMult);
+            // A monster that wanders within striking distance interrupts mining:
+            // the worker fights it off instead of standing there taking hits,
+            // then automatically goes back to the same seam once it's clear.
+            const threat = this.acquireTarget(worker.position, worker.userData.workerRole === 'guard' ? 8 : 6);
+            if (threat) {
+                const flank = new THREE.Vector3(Math.cos(formationAngle), 0, Math.sin(formationAngle)).multiplyScalar(1.5);
+                destination = threat.position.clone().add(flank);
+                if (worker.position.distanceTo(threat.position) < 2.6) this.workerAttack(worker, threat, delta);
+            } else {
+                // Prefer this worker's own seam. If it was depleted, pick the
+                // nearest available node with a light round-robin bias so workers
+                // naturally spread across the mine.
+                let node = worker.userData.miningTarget;
+                if (!node || !this.nodes.includes(node)) {
+                    const candidates = this.nodes.slice().sort((a, b) => {
+                        const da = worker.position.distanceToSquared(a.position);
+                        const db = worker.position.distanceToSquared(b.position);
+                        return da - db;
+                    });
+                    node = candidates.length ? candidates[worker.userData.miningTargetIndex % candidates.length] : null;
+                    worker.userData.miningTarget = node;
+                }
+                if (node) {
+                    const offset = new THREE.Vector3(Math.cos(formationAngle), 0, Math.sin(formationAngle)).multiplyScalar(1.35);
+                    destination = node.position.clone().add(offset);
+                    const workerDistance = Math.hypot(
+                        worker.position.x - node.position.x,
+                        worker.position.z - node.position.z
+                    );
+                    if (workerDistance < 3.1) {
+                        isMining = true;
+                        worker.userData.swingTimer = (worker.userData.swingTimer || 0) - delta;
+                        if (worker.userData.swingTimer <= 0) {
+                            this.swingAtNode(node);
+                            const roleMiningMult = ({ miner: 1.35, fighter: 0.72, guard: 0.82, prospector: 0.92 }[worker.userData.workerRole] || 1);
+                            const roleNoiseMult = ({ miner: 1.0, fighter: 0.8, guard: 0.7, prospector: 0.65 }[worker.userData.workerRole] || 1);
+                            this.addMiningNoise(0.75 * roleNoiseMult);
+                            this.addWorkerXp(worker, 1);
+                            worker.userData.swingTimer = 0.72 / (this.traitEffects.workerSwingMult
+                                * this.boons.workerSwingMult * this.getWorkerLevelMult(worker) * this.getWorkerMiningMult(worker) * roleMiningMult);
+                        }
                     }
                 }
             }
@@ -4970,7 +5119,8 @@ export class Game {
             downed: this.workers.filter((worker) => worker.userData.downTimer > 0).length,
             roles: this.workers.map((worker) => ({ role: worker.userData.workerRole || 'miner', label: this.getWorkerRoleLabel(worker.userData.workerRole || 'miner') })),
             xp: this.workers.map((worker) => Math.max(0, Math.floor(worker.userData.workerXp || 0))),
-            maxLevel: 100
+            maxLevel: 100,
+            promotions: this.workers.map((worker) => ({ tier: worker.userData.workerPromotionTier || 0, talents: { ...(worker.userData.workerTalents || { attack:1, mining:1, hp:1, rare:0 }) } }))
         };
     }
 
