@@ -27,6 +27,7 @@ export class UI {
         this.traitData = null;
         this.traitFilter = 'all';
         this.resetHandler = null;
+        this.adminRestartHandler = null;
         this.craftHandlers = null;
         this.craftOpen = false;
         this.mineEventOpen = false;
@@ -52,6 +53,7 @@ export class UI {
         this.initAudioPrompt();
         this.initStatusWindow();
         this.initWaveReward();
+        this.initCombatArena();
         this.initShortcuts();
     }
 
@@ -70,6 +72,11 @@ export class UI {
             if (this.rewardOpen) return;
 
             const key = event.key.toLowerCase();
+            if (['q','e','r'].includes(key) && this.skillHandler) {
+                event.preventDefault();
+                this.skillHandler(key === 'q' ? 'lightning' : key === 'e' ? 'nova' : 'meteor');
+                return;
+            }
             if (key === 'i' || key === 'c') {
                 event.preventDefault();
                 this.closeStatusWindow();
@@ -143,6 +150,13 @@ export class UI {
                 <button class="status-codex" type="button" style="margin-top:14px; width:100%; padding:9px;
                         border:1px solid #6c568d; border-radius:7px; background:#2a203a; color:#e8dcf5;
                         font:700 12px Inter, sans-serif; cursor:pointer; flex:none;">특성 도감 보기</button>
+                <div style="margin-top:14px; padding-top:11px; border-top:1px solid #3b3048;">
+                    <div style="font:700 10px Orbitron,sans-serif; letter-spacing:2px; color:#e3a76f;">ADMIN / TEST</div>
+                    <div style="margin-top:4px; color:#8d80a0; font:500 10.5px Inter,sans-serif; line-height:1.45;">현재 진행만 초기화하고 유산 포인트는 유지한 채 지하 30층부터 다시 시작합니다.</div>
+                    <button class="admin-b30-reset" type="button" style="margin-top:8px; width:100%; padding:9px;
+                            border:1px solid #9b6540; border-radius:7px; background:linear-gradient(180deg,#3a281f,#241913); color:#ffd9b5;
+                            font:800 11.5px Inter,sans-serif; cursor:pointer;">🛠 관리자 · B30F부터 처음 시작</button>
+                </div>
             </div>
         `;
         this.container.appendChild(this.statusOverlay);
@@ -154,6 +168,10 @@ export class UI {
                 this.closeStatusWindow();
                 this.openTraitCodex();
             });
+        this.statusOverlay.querySelector('.admin-b30-reset').addEventListener('click', () => {
+            if (!window.confirm('관리자 테스트: 현재 진행을 초기화하고 지하 30층부터 새로 시작할까요?\n\n유산 포인트와 영구 유산 업그레이드는 유지됩니다.')) return;
+            if (this.adminRestartHandler) this.adminRestartHandler();
+        });
         this.statusOverlay.querySelector('.status-reroll').addEventListener('click', () => {
             if (this.traitRerollHandler) this.traitRerollHandler();
         });
@@ -803,6 +821,10 @@ export class UI {
 
     setResetHandler(handler) {
         this.resetHandler = handler;
+    }
+
+    setAdminRestartHandler(handler) {
+        this.adminRestartHandler = handler;
     }
 
     showProgressNotice(notice) {
@@ -1962,6 +1984,11 @@ export class UI {
                 <button class="retreat-button" type="button">↩ 긴급 철수</button>
                 <button class="dodge-button" type="button">💨 회피 [SPACE]</button>
             </div>
+            <div class="skill-bar" style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:8px;">
+                <button class="skill-button skill-lightning" data-skill="lightning" type="button"><b>⚡</b><span>천둥폭우</span><small>Q · 8초</small></button>
+                <button class="skill-button skill-nova" data-skill="nova" type="button"><b>✦</b><span>대폭발</span><small>E · 12초</small></button>
+                <button class="skill-button skill-meteor" data-skill="meteor" type="button"><b>☄</b><span>지옥 운석</span><small>R · 18초</small></button>
+            </div>
             <div class="mining-risk" style="margin-top:8px; display:none;">
                 <div style="display:flex; justify-content:space-between; font-size:10.5px; color:#cdbfd7;">
                     <span>⛏ 채굴 소음</span><b class="risk-value" style="font-family:Orbitron,sans-serif;"></b>
@@ -2026,6 +2053,13 @@ export class UI {
             if (this.dodgeHandler) this.dodgeHandler();
         });
 
+        this.combatPanel.querySelectorAll('.skill-button').forEach((button) => {
+            button.style.cssText = `padding:7px 4px; border:1px solid #7b5da8; border-radius:8px; background:linear-gradient(180deg,#3b2758,#1d152b); color:#f5eaff; cursor:pointer; font:800 10px Inter,sans-serif; display:grid; gap:2px; place-items:center; box-shadow:0 0 12px rgba(155,105,220,.2); transition:transform .08s,filter .12s;`;
+            button.addEventListener('click', (event) => { event.stopPropagation(); if (this.skillHandler) this.skillHandler(button.dataset.skill); });
+            button.addEventListener('pointerdown', () => { button.style.transform='scale(.95)'; });
+            button.addEventListener('pointerup', () => { button.style.transform='scale(1)'; });
+        });
+
         const waveStart = this.combatPanel.querySelector('.wave-start');
         waveStart.style.cssText = `
             margin-top:10px; width:100%; padding:10px 9px; border:1px solid #6fb8d1;
@@ -2058,6 +2092,139 @@ export class UI {
             <div class="wave-sub" style="margin-top:8px; font-size:14px; color:#e4d3e8; text-shadow:0 2px 10px rgba(0,0,0,.9);"></div>
         `;
         this.container.appendChild(this.waveBanner);
+
+        // Small centered alert for "a worker is under attack" — separate from
+        // the big wave banner so the two never fight over the same slot.
+        this.workerAlert = document.createElement('div');
+        this.workerAlert.style.cssText = `
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.9);
+            opacity: 0;
+            text-align: center;
+            pointer-events: none;
+            z-index: 77;
+            padding: 10px 22px;
+            border-radius: 10px;
+            border: 1px solid #a2495a;
+            background: linear-gradient(180deg, rgba(44,16,22,.88), rgba(14,8,14,.88));
+            box-shadow: 0 8px 26px rgba(0,0,0,.5);
+            font: 800 15px Orbitron, sans-serif;
+            color: #ffcf8a;
+            text-shadow: 0 2px 10px rgba(0,0,0,.9);
+            transition: opacity .2s ease, transform .2s ease;
+        `;
+        this.container.appendChild(this.workerAlert);
+    }
+
+    showWorkerAlert(text) {
+        if (!this.workerAlert) return;
+        this.workerAlert.textContent = `⚠ ${text}`;
+        this.workerAlert.style.opacity = '1';
+        this.workerAlert.style.transform = 'translate(-50%, -50%) scale(1)';
+        clearTimeout(this.workerAlertTimer);
+        this.workerAlertTimer = setTimeout(() => {
+            this.workerAlert.style.opacity = '0';
+            this.workerAlert.style.transform = 'translate(-50%, -50%) scale(0.9)';
+        }, 1600);
+    }
+
+    // ------------------------------------------------------ v16 arena HUD
+    initCombatArena() {
+        this.arenaOverlay = document.createElement('div');
+        this.arenaOverlay.style.cssText = `
+            position:absolute; inset:0; display:none; pointer-events:none; z-index:76;
+            font-family:Inter,sans-serif;
+        `;
+        this.arenaOverlay.innerHTML = `
+            <div class="arena-top" style="
+                position:absolute; top:16px; left:50%; transform:translateX(-50%);
+                width:min(620px,calc(100vw - 32px)); text-align:center;
+                padding:10px 14px; box-sizing:border-box; border-radius:12px;
+                background:linear-gradient(180deg,rgba(19,10,28,.86),rgba(8,6,14,.65));
+                border:1px solid rgba(255,122,74,.55); box-shadow:0 8px 28px rgba(0,0,0,.42);
+                backdrop-filter:blur(5px);">
+                <div class="arena-kicker" style="font:700 10px Orbitron,sans-serif;letter-spacing:4px;color:#ff8e6f;">SURVIVAL ARENA</div>
+                <div class="arena-title" style="margin-top:3px;font:800 19px Orbitron,sans-serif;color:#fff1d1;">WAVE 1</div>
+                <div class="arena-sub" style="margin-top:3px;font-size:11px;color:#bfb2cc;">적이 계속 몰려옵니다</div>
+                <div style="height:8px;margin-top:9px;border-radius:999px;overflow:hidden;background:#17111e;border:1px solid #47334e;">
+                    <div class="arena-timebar" style="height:100%;width:100%;background:linear-gradient(90deg,#ff5b61,#ffb06b);transition:width .15s linear;"></div>
+                </div>
+                <div style="display:flex;justify-content:center;gap:18px;margin-top:7px;font-size:11px;color:#cfc0d8;">
+                    <span>⏱ <b class="arena-timer" style="color:#ffe39a;">01:30</b></span>
+                    <span>☠ 처치 <b class="arena-kills" style="color:#ffb3a6;">0</b></span>
+                    <span>👹 잔류 <b class="arena-enemies" style="color:#ff9c9c;">0</b></span>
+                </div>
+            </div>
+            <div class="arena-vignette" style="
+                position:absolute;inset:0;opacity:.0;
+                background:radial-gradient(circle at 50% 50%,transparent 35%,rgba(122,25,35,.52) 100%);
+                transition:opacity .12s; pointer-events:none;"></div>
+            <div class="arena-corner" style="
+                position:absolute;right:18px;bottom:18px;padding:7px 10px;border-radius:7px;
+                background:rgba(10,8,16,.7);border:1px solid rgba(255,255,255,.12);
+                color:#a99bb8;font-size:10.5px;">SPACE 회피 · 긴급 철수로 전투 포기</div>
+        `;
+        this.container.appendChild(this.arenaOverlay);
+
+        this.arenaTransition = document.createElement('div');
+        this.arenaTransition.style.cssText = `
+            position:absolute;inset:0;display:none;background:#05030a;opacity:1;
+            pointer-events:none;z-index:79;transition:opacity .55s ease;
+        `;
+        this.container.appendChild(this.arenaTransition);
+    }
+
+    showCombatArena(data = {}) {
+        if (!this.arenaOverlay) return;
+        this.arenaOverlay.style.display = 'block';
+        const title = this.arenaOverlay.querySelector('.arena-title');
+        const kicker = this.arenaOverlay.querySelector('.arena-kicker');
+        const sub = this.arenaOverlay.querySelector('.arena-sub');
+        title.textContent = data.boss ? 'BOSS · 광산 점령자' : `WAVE ${data.wave || 1}`;
+        kicker.textContent = data.boss ? 'BOSS ARENA' : 'SURVIVAL ARENA';
+        sub.textContent = data.subtitle || '';
+        this.arenaOverlay.querySelector('.arena-timebar').style.width = '100%';
+        this.arenaOverlay.querySelector('.arena-timer').textContent = data.boss ? '∞' : this.formatArenaTime(data.duration || 90);
+
+        // Short black-out makes the mode switch read as a real scene change.
+        if (this.arenaTransition) {
+            this.arenaTransition.style.display = 'block';
+            this.arenaTransition.style.opacity = '1';
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                this.arenaTransition.style.opacity = '0';
+                setTimeout(() => {
+                    if (this.arenaTransition) this.arenaTransition.style.display = 'none';
+                }, 600);
+            }));
+        }
+    }
+
+    hideCombatArena() {
+        if (this.arenaOverlay) this.arenaOverlay.style.display = 'none';
+    }
+
+    formatArenaTime(seconds) {
+        const total = Math.max(0, Math.ceil(seconds || 0));
+        const min = Math.floor(total / 60);
+        const sec = String(total % 60).padStart(2, '0');
+        return `${String(min).padStart(2, '0')}:${sec}`;
+    }
+
+    updateCombatArenaHUD(combat) {
+        if (!this.arenaOverlay || !combat) return;
+        if (!combat.arenaActive) {
+            this.arenaOverlay.style.display = 'none';
+            return;
+        }
+        this.arenaOverlay.style.display = 'block';
+        this.arenaOverlay.querySelector('.arena-timer').textContent =
+            combat.finalBoss ? '∞' : this.formatArenaTime(combat.arenaTime);
+        this.arenaOverlay.querySelector('.arena-kills').textContent = combat.arenaKills || 0;
+        this.arenaOverlay.querySelector('.arena-enemies').textContent = combat.arenaEnemies || 0;
+        const ratio = combat.finalBoss ? 1 : Math.max(0, Math.min(1, combat.arenaTime / Math.max(1, combat.arenaDuration)));
+        this.arenaOverlay.querySelector('.arena-timebar').style.width = `${ratio * 100}%`;
     }
 
     setRetreatHandler(handler) {
@@ -2070,6 +2237,10 @@ export class UI {
 
     setDodgeHandler(handler) {
         this.dodgeHandler = handler;
+    }
+
+    setSkillHandler(handler) {
+        this.skillHandler = handler;
     }
 
     setAutoCombatHandler(handler) {
@@ -2116,6 +2287,7 @@ export class UI {
 
     updateCombatHUD(combat) {
         if (!combat || !this.combatPanel) return;
+        this.updateCombatArenaHUD(combat);
 
         const toggle = this.combatPanel.querySelector('.auto-combat-toggle');
         toggle.textContent = combat.auto ? '⚔ 자동 전투 ON' : '⏸ 자동 전투 OFF';
@@ -2138,6 +2310,21 @@ export class UI {
             dodgeButton.textContent = ready ? '💨 회피 [SPACE] · READY' : `💨 회피 · ${Math.max(0, combat.dodgeCooldown || 0).toFixed(1)}초`;
             dodgeButton.style.opacity = ready ? '1' : '0.55';
             dodgeButton.style.cursor = ready ? 'pointer' : 'not-allowed';
+        }
+
+        const skillMap = { lightning: 'Q', nova: 'E', meteor: 'R' };
+        if (combat.skills) {
+            this.combatPanel.querySelectorAll('.skill-button').forEach((button) => {
+                const id = button.dataset.skill;
+                const cd = combat.skills[id] || 0;
+                const max = combat.skills.max?.[id] || 1;
+                const ready = cd <= 0.05 && !combat.isDown;
+                button.disabled = !ready;
+                button.style.opacity = ready ? '1' : '0.48';
+                button.style.filter = ready ? 'brightness(1.18)' : 'grayscale(.25)';
+                const small = button.querySelector('small');
+                if (small) small.textContent = ready ? `${skillMap[id]} · READY` : `${skillMap[id]} · ${cd.toFixed(1)}초`;
+            });
         }
 
         const targetAffix = this.combatPanel.querySelector('.target-affix');
@@ -2163,7 +2350,13 @@ export class UI {
                 risk.querySelector('.risk-hint').textContent += ` · 욕심 보너스 ${Math.round(combat.unstableHaul)} (사망 시 소실)`;
             }
         }
-        if (combat.isDown) {
+        if (combat.arenaActive && !combat.isDown) {
+            const timeText = combat.finalBoss ? '∞' : this.formatArenaTime(combat.arenaTime);
+            status.innerHTML = `<span style="color:#ffb3a6;font-weight:800;">🔥 전투 구역 · 생존 ${timeText}</span><br>
+                                처치 <b style="color:#ffe39a;">${combat.arenaKills || 0}</b> ·
+                                잔류 <b style="color:#ff9c9c;">${combat.arenaEnemies || 0}</b> ·
+                                <span style="color:#a99bb8;">SPACE 회피 가능</span>`;
+        } else if (combat.isDown) {
             status.innerHTML = `<span style="color:#ff7d6b; font-weight:700;">리더 전투불능 · ${combat.reviveIn.toFixed(1)}초 후 부활</span>`;
         } else if (combat.retreating) {
             status.innerHTML = `<span style="color:#8fe4ff; font-weight:700;">↩ 철수 중 · ${combat.retreatIn.toFixed(1)}초</span><br><span style="color:#a99bb8;">채굴 소음이 빠르게 감소합니다.</span>`;
@@ -2190,7 +2383,7 @@ export class UI {
             retreatButton.style.cursor = canRetreat ? 'pointer' : 'not-allowed';
             retreatButton.textContent = combat.retreating
                 ? `↩ 철수 중 · ${combat.retreatIn.toFixed(1)}초`
-                : '↩ 긴급 철수 — 채굴 중단';
+                : (combat.arenaActive ? '↩ 전투 철수 — 보상 포기' : '↩ 긴급 철수 — 채굴 중단');
         }
 
         // Start button reflects whether a defence run can be launched now.
@@ -2617,6 +2810,7 @@ export class UI {
         const list = this.commandPanel?.querySelector('.worker-role-list');
         if (!list) return;
         const roles = this.workerData?.roles || [];
+        const levels = this.workerData?.levels || [];
         const roleLabels = { miner: '⛏ 광부', fighter: '⚔ 전투원', guard: '🛡 경비', prospector: '💎 탐광꾼' };
         if (!roles.length) {
             list.innerHTML = '<div style="color:#7f718f;font-size:11px;">고용된 워커가 없습니다.</div>';
@@ -2624,7 +2818,7 @@ export class UI {
         }
         list.innerHTML = roles.map((item, index) => `
             <div style="display:grid; grid-template-columns: 58px 1fr; gap:6px; align-items:center;">
-                <div style="font-size:11px;color:#cbb8e8;font-weight:700;">워커 ${index + 1}</div>
+                <div style="font-size:11px;color:#cbb8e8;font-weight:700;line-height:1.3;">워커 ${index + 1}<br><span style="font-size:9.5px;color:#8fd9a8;font-weight:600;">Lv.${levels[index] || 1}</span></div>
                 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;">
                     ${Object.entries(roleLabels).map(([role, label]) => `<button type="button" data-worker-index="${index}" data-worker-role="${role}" style="border:1px solid ${item.role === role ? '#d7c4ed' : '#4f4164'};border-radius:4px;padding:5px 2px;background:${item.role === role ? '#664487' : '#211a2d'};color:#eee;font:600 10px Inter,sans-serif;cursor:pointer;">${label}</button>`).join('')}
                 </div>

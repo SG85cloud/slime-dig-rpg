@@ -164,6 +164,20 @@ export class Game {
         this.wave = 0;
         this.groundOffsets = {};
         this.waveActive = false;
+        // v16: formal defence is a dedicated survivor-style combat arena.
+        this.arenaActive = false;
+        this.arenaTime = 0;
+        this.arenaDuration = 90;
+        this.arenaKills = 0;
+        this.arenaSpawnTimer = 0;
+        this.arenaSpawnCount = 0;
+        this.arenaSavedPosition = new THREE.Vector3();
+        this.arenaSavedAutoMine = true;
+        this.arenaSavedCommand = 'mine';
+        this.arenaGroup = null;
+        this.arenaFloor = null;
+        this.arenaRing = null;
+        this.arenaPillars = [];
         this.autoCombat = true;
         // When free (no manual target, not fighting), the leader keeps
         // heading for the nearest ore instead of standing idle.
@@ -175,6 +189,10 @@ export class Game {
         this.dodgeTimer = 0;
         this.dodgeVector = new THREE.Vector3();
         this.dodgeSpeed = 12;
+        // v17: flashy active combat skills. Cooldowns are intentionally short so
+        // the arena feels like a survivor-action game instead of pure auto-DPS.
+        this.skillCooldowns = { lightning: 0, nova: 0, meteor: 0 };
+        this.skillMaxCooldowns = { lightning: 8, nova: 12, meteor: 18 };
         this.combatFeed = [];
         this.lastCombatMoment = 0;
         this.regenTimer = 0;
@@ -344,7 +362,26 @@ export class Game {
         }
         this.setSquadCommand(this.savedCommand || this.squadCommand);
 
+        if (this.savedArenaState) {
+            setTimeout(() => {
+                if (!this.arenaActive && !this.rewardPending && !this.bossRewardPending) {
+                    this.finalBossActive = !!this.savedArenaState.boss;
+                    this.enterCombatArena(this.wave || 1, {
+                        resume: true,
+                        time: this.savedArenaState.time,
+                        duration: this.savedArenaState.duration,
+                        kills: this.savedArenaState.kills,
+                        spawnCount: this.savedArenaState.spawnCount,
+                        boss: this.savedArenaState.boss,
+                        command: this.savedArenaState.command,
+                        autoMine: this.savedArenaState.autoMine
+                    });
+                }
+            }, 650);
+        }
+
         this.app.ui.setResetHandler(() => this.resetProgress());
+        this.app.ui.setAdminRestartHandler?.(() => this.restartFromB30Admin());
         this.app.ui.showProgressNotice(this.getProgressNotice());
         // A reward left unclaimed at the last save is offered again on return.
         if (this.rewardPending) {
@@ -575,6 +612,20 @@ export class Game {
             this.rewardPending = pending;
         }
 
+        // v16: a saved survivor run resumes as an active arena after the world
+        // and player meshes have been rebuilt.
+        if (saved.arenaActive) {
+            this.savedArenaState = {
+                time: Math.max(0, Number(saved.arenaTime) || 0),
+                duration: Math.max(30, Number(saved.arenaDuration) || 90),
+                kills: Math.max(0, Math.floor(Number(saved.arenaKills) || 0)),
+                spawnCount: Math.max(0, Math.floor(Number(saved.arenaSpawnCount) || 0)),
+                command: ['mine','attack','defend','focus'].includes(saved.arenaCommand) ? saved.arenaCommand : 'attack',
+                autoMine: typeof saved.arenaAutoMine === 'boolean' ? saved.arenaAutoMine : false,
+                boss: !!saved.arenaBoss
+            };
+        }
+
         this.savedAt = Number(saved.savedAt) || null;
         this.totalOreMined = Number(saved.totalOreMined) || 0;
         this.totalCrafted = Number(saved.totalCrafted) || 0;
@@ -632,7 +683,16 @@ export class Game {
             boons: { ...this.boons },
             facilities: { ...this.facilities },
             // An unclaimed reward survives a reload so a win is never lost.
-            rewardPending: this.rewardPending
+            rewardPending: this.rewardPending,
+            // v16 survivor arena state. The live enemies are reconstructed on load.
+            arenaActive: !!this.arenaActive,
+            arenaTime: this.arenaActive ? this.arenaTime : 0,
+            arenaDuration: this.arenaActive ? this.arenaDuration : 90,
+            arenaKills: this.arenaActive ? this.arenaKills : 0,
+            arenaSpawnCount: this.arenaActive ? this.arenaSpawnCount : 0,
+            arenaCommand: this.arenaActive ? this.squadCommand : null,
+            arenaAutoMine: this.arenaActive ? this.autoMine : null,
+            arenaBoss: this.arenaActive ? !!this.finalBossActive : false
         };
     }
 
@@ -672,6 +732,14 @@ export class Game {
 
     resetProgress() {
         this.awardLegacyRunPoints();
+        clearProgress(this.profileId);
+        window.location.reload();
+    }
+
+    // v18 admin/test shortcut: restart the current run at B30F without
+    // awarding legacy points. Permanent legacy upgrades remain intact, so this
+    // is useful for repeatedly testing the opening section of the game.
+    restartFromB30Admin() {
         clearProgress(this.profileId);
         window.location.reload();
     }
@@ -1373,45 +1441,279 @@ export class Game {
 
     // ------------------------------------------------------------------ waves
     startWave(wave) {
+        // v16: formal waves now leave the mine and become a timed survivor arena.
         this.wave = wave;
         this.waveActive = true;
-        const composition = getWaveComposition(wave);
-        let index = 0;
-        const total = composition.reduce((sum, [, count]) => sum + count, 0);
+        this.enterCombatArena(wave);
+        this.app.multiplayer.broadcastEvent?.('wave_start', { wave });
+    }
 
-        let eliteAssigned = false;
-        composition.forEach(([typeId, count]) => {
-            for (let i = 0; i < count; i++) {
-                const angle = (index / Math.max(1, total)) * Math.PI * 2 + Math.random() * 0.5;
-                let eliteAffix = null;
-                if (isEliteWave(wave) && !eliteAssigned && typeId !== 'overlord') {
-                    const pool = ['berserker', 'plated', 'volatile', 'leech'];
-                    eliteAffix = pool[Math.floor(Math.random() * pool.length)];
-                    eliteAssigned = true;
-                }
-                this.spawnEnemy(typeId, { angle, distance: 15 + Math.random() * 6, eliteAffix });
-                index += 1;
-            }
+    /**
+     * v16 Survivor Arena.
+     * Exploration remains the mining game; formal waves are now a short,
+     * high-pressure combat session with continuous edge spawns and a survival
+     * clock. The same Three.js scene is reused, but exploration props are hidden
+     * and a dedicated arena floor/ring is brought forward so the transition
+     * feels like a real mode switch without a second renderer.
+     */
+    createCombatArenaVisuals() {
+        if (this.arenaGroup) return;
+        const group = new THREE.Group();
+        group.name = 'CombatArena_v16';
+
+        const floorMat = new THREE.MeshStandardMaterial({
+            color: 0x21172f, roughness: 0.92, metalness: 0.05,
+            emissive: 0x140b20, emissiveIntensity: 0.45
         });
-        if (isEliteWave(wave) && !eliteAssigned) {
-            const boss = this.enemies[this.enemies.length - 1];
-            if (boss) {
-                const pool = ['berserker', 'plated', 'volatile', 'leech'];
-                const affix = pool[Math.floor(Math.random() * pool.length)];
-                boss.userData.eliteAffix = affix;
-                boss.userData.eliteAffixName = ({berserker:'광폭', plated:'중갑', volatile:'불안정', leech:'흡혈'})[affix];
-            }
-        }
+        const floor = new THREE.Mesh(new THREE.CylinderGeometry(14.5, 14.5, 0.22, 64), floorMat);
+        floor.position.y = 0.06;
+        floor.receiveShadow = true;
+        group.add(floor);
+        this.arenaFloor = floor;
 
-        if (isEliteWave(wave)) {
-            this.pushCombatFeed(`⚠ 정예 웨이브 ${wave}! 광산의 군주가 나타납니다.`, '#ff7a4a');
-            this.app.ui.showBanner(`⚠ 정예 웨이브 ${wave}`, `강력한 적 ${total}마리가 몰려옵니다!`, '#ff7a4a');
+        const ringMat = new THREE.MeshStandardMaterial({
+            color: 0xc36a4d, emissive: 0x4a170e, emissiveIntensity: 0.9,
+            roughness: 0.5, metalness: 0.25
+        });
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(14.2, 0.18, 8, 64), ringMat);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.28;
+        group.add(ring);
+        this.arenaRing = ring;
+
+        const pillarMat = new THREE.MeshStandardMaterial({
+            color: 0x59446d, roughness: 0.8, metalness: 0.1
+        });
+        const glowMat = new THREE.MeshStandardMaterial({
+            color: 0xff6f45, emissive: 0xff3d1d, emissiveIntensity: 2.2
+        });
+        this.arenaPillars = [];
+        for (let i = 0; i < 8; i++) {
+            const a = i / 8 * Math.PI * 2;
+            const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.58, 3.2, 8), pillarMat);
+            pillar.position.set(Math.cos(a) * 12.8, 1.6, Math.sin(a) * 12.8);
+            pillar.castShadow = true;
+            group.add(pillar);
+            const flame = new THREE.Mesh(new THREE.SphereGeometry(0.38, 10, 10), glowMat);
+            flame.position.set(pillar.position.x, 3.25, pillar.position.z);
+            group.add(flame);
+            this.arenaPillars.push(flame);
+        }
+        this.scene.add(group);
+        this.arenaGroup = group;
+    }
+
+    enterCombatArena(wave, options = {}) {
+        if (!this.player) return;
+        this.createCombatArenaVisuals();
+        this.arenaGroup.visible = true;
+
+        const isBoss = !!options.boss;
+        this.arenaActive = true;
+        this.waveActive = true;
+        this.arenaDuration = options.duration || (isBoss ? 9999 : 90);
+        this.arenaTime = options.resume ? Math.max(0, options.time ?? this.arenaDuration) : this.arenaDuration;
+        this.arenaKills = options.resume ? Math.max(0, options.kills || 0) : 0;
+        this.arenaSpawnCount = options.resume ? Math.max(0, options.spawnCount || 0) : 0;
+        this.arenaSpawnTimer = options.resume ? 1.2 : 0.9;
+        this.arenaSavedPosition.copy(this.player.position);
+        this.arenaSavedAutoMine = this.autoMine;
+        this.arenaSavedCommand = this.squadCommand;
+
+        // Clear exploration-only targets and park all mining props.
+        this.playerData.miningTarget = null;
+        this.playerTarget = null;
+        this.autoMine = false;
+        this.squadCommand = 'attack';
+        this.workers.forEach((worker, i) => {
+            worker.userData.squadRole = 'attack';
+            worker.userData.miningTarget = null;
+            const a = i / Math.max(1, this.workers.length) * Math.PI * 2;
+            worker.position.set(Math.cos(a) * (2.2 + i * 0.12), worker.position.y, Math.sin(a) * (2.2 + i * 0.12));
+            worker.userData.targetPos = worker.position.clone();
+        });
+
+        this.nodes.forEach(node => node.visible = false);
+        this.chests.forEach(chest => chest.visible = false);
+        if (this.floor) this.floor.visible = false;
+
+        // Clear leftover field enemies; formal arena owns its enemy roster.
+        this.enemies.slice().forEach(enemy => this.scene.remove(enemy));
+        this.enemies = [];
+
+        this.player.position.set(0, this.player.userData.baseY || 0.5, 0);
+        this.playerData.targetPos.copy(this.player.position);
+        this.player.rotation.y = 0;
+        this.autoCombat = true;
+
+        const intro = isBoss ? 'BOSS ARENA' : 'SURVIVAL ARENA';
+        const subtitle = isBoss
+            ? '3단계 광산 점령자 · 끝까지 살아남아 처치하세요'
+            : `${this.arenaDuration}초 생존 · 몰려오는 적을 계속 베어내세요`;
+        this.app.ui.showCombatArena?.({
+            wave,
+            boss: isBoss,
+            duration: this.arenaDuration,
+            title: intro,
+            subtitle
+        });
+        this.app.ui.showBanner(
+            isBoss ? '⚔ 광산 점령전' : `WAVE ${wave}`,
+            isBoss ? '전용 전투 구역으로 진입합니다!' : '전투 구역 진입 · 적이 계속 몰려옵니다!',
+            '#ff7a4a'
+        );
+
+        if (isBoss && options.resume) {
+            // Boss HP was intentionally not serialized in v16; a reload resumes
+            // the boss arena with a fresh boss rather than creating a broken
+            // empty arena. Progress resources remain safe.
+            const boss = this.spawnEnemy('overlord', { distance: 8.5, angle: Math.PI / 2, origin: new THREE.Vector3() });
+            if (boss) {
+                const scaled = scaleEnemyStats(ENEMY_TYPES.overlord, wave + 6);
+                boss.userData.hp = Math.round(scaled.hp * 1.6 * (1 + this.cycle * 0.25));
+                boss.userData.maxHp = boss.userData.hp;
+                boss.userData.damage = Math.round(scaled.damage * 1.3 * (1 + this.cycle * 0.15));
+                boss.userData.name = '광산 점령자';
+                boss.userData.isFinalBoss = true;
+                boss.userData.bossPhase = 1;
+                boss.userData.bossSummonCooldown = 5.0;
+                boss.userData.bossHazardCooldown = 8.0;
+            }
+            this.spawnEnemy('brute', { distance: 6.5, angle: Math.PI / 2 - 1.3, origin: new THREE.Vector3() });
+            this.spawnEnemy('brute', { distance: 6.5, angle: Math.PI / 2 + 1.3, origin: new THREE.Vector3() });
+        } else if (!options.resume) {
+            const composition = getWaveComposition(wave);
+            const initial = Math.max(3, Math.min(6, composition.reduce((sum, [, count]) => sum + count, 0)));
+            for (let i = 0; i < initial; i++) this.spawnArenaEnemy(wave, i < Math.floor(initial * 0.65));
         } else {
-            this.pushCombatFeed(`웨이브 ${wave} 시작! 몬스터 ${total}마리가 몰려옵니다.`, '#ff9c9c');
-            this.app.ui.showWaveBanner(wave, total);
+            const initial = Math.min(5, Math.max(2, 2 + Math.floor(this.arenaKills / 8)));
+            for (let i = 0; i < initial; i++) this.spawnArenaEnemy(wave, false);
         }
         this.persist();
     }
+
+    spawnArenaEnemy(wave = this.wave, forceElite = false) {
+        const climbed = this.getFloorsClimbed();
+        const pool = wave < 3 ? ['crawler']
+            : wave < 6 ? ['crawler', 'archer']
+            : wave < 10 ? ['crawler', 'archer', 'brute']
+            : ['crawler', 'archer', 'brute'];
+        let typeId = pool[Math.floor(Math.random() * pool.length)];
+        if (this.finalBossActive) typeId = Math.random() < 0.55 ? 'brute' : 'crawler';
+
+        const elite = forceElite || (wave % 5 === 0 && this.arenaSpawnCount > 0 && Math.random() < 0.09);
+        const affixPool = ['berserker', 'plated', 'volatile', 'leech'];
+        const eliteAffix = elite ? affixPool[Math.floor(Math.random() * affixPool.length)] : null;
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 11.8 + Math.random() * 2.1;
+        const enemy = this.spawnEnemy(typeId, {
+            angle, distance, eliteAffix,
+            waveOverride: Math.max(1, wave),
+            origin: new THREE.Vector3(0, 0, 0)
+        });
+        if (enemy) {
+            enemy.userData.isArenaEnemy = true;
+            enemy.userData.arenaWave = wave;
+            this.arenaSpawnCount += 1;
+            if (elite) {
+                this.pushCombatFeed(`⚠ 정예 출현! ${enemy.userData.eliteAffixName} · ${enemy.userData.name}`, '#ff7a4a');
+                this.app.addShake(0.25);
+            }
+        }
+        return enemy;
+    }
+
+    updateCombatArena(delta) {
+        if (!this.arenaActive) return;
+        const isBoss = !!this.finalBossActive;
+        if (!isBoss) {
+            this.arenaTime = Math.max(0, this.arenaTime - delta);
+            this.arenaSpawnTimer -= delta;
+
+            const elapsed = this.arenaDuration - this.arenaTime;
+            const spawnInterval = Math.max(0.48, 1.75 - elapsed * 0.010 - this.wave * 0.025);
+            if (this.arenaSpawnTimer <= 0 && this.enemies.filter(e => !e.userData.dying).length < Math.min(18, 6 + Math.floor(elapsed / 14) + this.wave)) {
+                const count = Math.random() < Math.min(0.55, elapsed / 110) ? 2 : 1;
+                for (let i = 0; i < count; i++) this.spawnArenaEnemy(this.wave);
+                this.arenaSpawnTimer = spawnInterval;
+            }
+
+            if (this.arenaTime <= 0) {
+                this.completeCombatArena();
+                return;
+            }
+        } else {
+            const bossLiving = this.enemies.some(e => e.userData.isFinalBoss && !e.userData.dying);
+            if (!bossLiving) {
+                this.waveActive = false;
+                this.resolveFinalBossVictory();
+                return;
+            }
+            this.arenaSpawnTimer -= delta;
+            if (this.arenaSpawnTimer <= 0 && this.enemies.filter(e => !e.userData.dying).length < 7) {
+                this.spawnArenaEnemy(this.wave);
+                this.arenaSpawnTimer = this.arenaTime > 999 ? 6 : 4;
+            }
+        }
+
+        this.clampCombatArenaPositions();
+    }
+
+    clampCombatArenaPositions() {
+        if (!this.arenaActive) return;
+        const radius = 12.4;
+        const clampOne = (obj, margin = 0) => {
+            if (!obj) return;
+            const x = obj.position.x, z = obj.position.z;
+            const len = Math.hypot(x, z);
+            const max = radius - margin;
+            if (len > max && len > 0.001) {
+                obj.position.x = x / len * max;
+                obj.position.z = z / len * max;
+            }
+        };
+        clampOne(this.player, 1.0);
+        this.workers.forEach(worker => clampOne(worker, 1.2));
+        this.enemies.forEach(enemy => clampOne(enemy, 0));
+    }
+
+    completeCombatArena() {
+        if (!this.arenaActive || this.finalBossActive) return;
+        const clearedWave = this.wave;
+        const kills = this.arenaKills;
+        this.waveActive = false;
+        this.arenaActive = false;
+        this.arenaTime = 0;
+        this.exitCombatArena();
+        this.rewardPending = { wave: clearedWave, choices: this.buildRewardChoices(clearedWave) };
+        this.pushCombatFeed(`🏆 생존 성공! ${clearedWave} 웨이브 · ${kills}처치 · 보상을 선택하세요.`, '#8fd9a8');
+        this.app.multiplayer.broadcastEvent?.('wave_clear', { wave: clearedWave, kills });
+        this.app.ui.showWaveCleared(clearedWave);
+        setTimeout(() => this.offerWaveReward(clearedWave), 900);
+        this.persist();
+    }
+
+    exitCombatArena() {
+        if (this.arenaGroup) this.arenaGroup.visible = false;
+        this.nodes.forEach(node => node.visible = true);
+        this.chests.forEach(chest => chest.visible = true);
+        if (this.floor) this.floor.visible = true;
+        if (this.player) {
+            this.player.position.copy(this.arenaSavedPosition);
+            this.playerData.targetPos.copy(this.player.position);
+        }
+        this.workers.forEach(worker => {
+            const a = Math.random() * Math.PI * 2;
+            worker.position.set(this.player.position.x + Math.cos(a) * (2 + Math.random()), worker.position.y, this.player.position.z + Math.sin(a) * (2 + Math.random()));
+        });
+        this.playerData.miningTarget = null;
+        this.playerTarget = null;
+        this.autoMine = this.arenaSavedAutoMine;
+        this.squadCommand = this.arenaSavedCommand;
+        this.arenaActive = false;
+        this.app.ui.hideCombatArena?.();
+    }
+
 
     pushCombatFeed(text, color = '#ded0e9') {
         this.combatFeed.unshift({ text, color, time: this.elapsed });
@@ -1545,6 +1847,19 @@ export class Game {
         return Math.min(10, 1 + Math.floor((worker.userData.workerXp || 0) / 40));
     }
 
+    /** Grants worker XP and announces it the moment a level threshold is crossed. */
+    addWorkerXp(worker, amount) {
+        const before = this.getWorkerLevel(worker);
+        worker.userData.workerXp = (worker.userData.workerXp || 0) + amount;
+        const after = this.getWorkerLevel(worker);
+        if (after > before) {
+            const index = this.workers.indexOf(worker);
+            this.combatFX.spawnFlash(worker.position, 0x8fd9a8, 24, 0.3);
+            this.combatFX.spawnBurst(worker.position, { color: 0x8fd9a8, radius: 0.4, expand: 2, life: 0.4, height: worker.userData.baseY });
+            this.pushCombatFeed(`🌱 워커 ${index + 1}번이 레벨업했습니다! Lv.${after}`, '#8fd9a8');
+        }
+    }
+
     getWorkerLevelMult(worker) {
         return 1 + (this.getWorkerLevel(worker) - 1) * 0.05;
     }
@@ -1592,6 +1907,7 @@ export class Game {
         this.app.ui.setAutoMineHandler(() => this.toggleAutoMine());
         this.app.ui.setRetreatHandler(() => this.startEmergencyRetreat());
         this.app.ui.setDodgeHandler?.(() => this.startDodge());
+        this.app.ui.setSkillHandler?.((skill) => this.castSkill(skill));
         // Mine defence waves are launched by the player from the combat menu.
         this.app.ui.setWaveStartHandler(() => {
             const result = this.startDefenceWave();
@@ -2202,6 +2518,18 @@ export class Game {
             return { ok: false, reason: this.isDown ? '리더가 쓰러져 있습니다.' : '지휘할 워커가 없습니다.' };
         }
 
+        if (this.arenaActive && !this.finalBossActive) {
+            const failedWave = this.wave;
+            this.waveActive = false;
+            this.arenaActive = false;
+            this.exitCombatArena();
+            this.miningNoise = Math.max(0, (this.miningNoise || 0) * 0.45);
+            this.pushCombatFeed(`↩ 전투 구역 철수 · WAVE ${failedWave} 보상 없음`, '#8fe4ff');
+            this.app.ui.showBanner('↩ 전투 철수', '생존 보상을 포기하고 광산으로 돌아갑니다.', '#8fe4ff');
+            this.persist();
+            return { ok: true };
+        }
+
         this.autoMine = false;
         this.playerData.miningTarget = null;
         this.playerTarget = null;
@@ -2395,6 +2723,9 @@ export class Game {
         }
         this.grantKillReward(enemy);
         this.bumpQuestStat('kills', 1);
+        if (this.arenaActive && enemy.userData.isArenaEnemy) {
+            this.arenaKills += 1;
+        }
     }
 
     /** Ore + recruit rewards for a slain monster. */
@@ -2477,8 +2808,11 @@ export class Game {
         // Legendary weapon proc: a bonus magic burst on top of the normal hit.
         if (Math.random() < this.getSpellProcChance() && target.userData && !target.userData.dying) {
             const burstDamage = Math.max(1, Math.round(this.getTotalAttack() * 0.75));
-            this.combatFX.spawnFlash(target.position, 0x9f6bff, 46, 0.4);
-            this.combatFX.spawnBurst(target.position, { color: 0x9f6bff, radius: 0.7, expand: 3, height: target.userData.baseY });
+            this.combatFX.spawnFlash(target.position, 0x9f6bff, 62, 0.45);
+            this.combatFX.spawnBurst(target.position, { color: 0xc9a6ff, radius: 0.85, expand: 3.6, life: 0.5, height: target.userData.baseY });
+            this.combatFX.spawnShockwave(target.position, { color: 0x9f6bff, scale: 6.5, life: 0.55 });
+            this.combatFX.spawnSparks(target.position, { color: 0xd8b8ff, count: 26, speed: 7.5, life: 0.6, height: target.userData.baseY });
+            this.app.addShake(0.4);
             this.damageEnemy(target, burstDamage, { from: this.player.position, color: '#c9a6ff' });
             this.pushCombatFeed('✨ 마법 폭발이 터졌습니다!', '#c9a6ff');
         }
@@ -2916,10 +3250,88 @@ export class Game {
         }
     }
 
+    // ---------------------------------------------------------------- skills / VFX
+    /** v17: three big active skills designed to read instantly in the arena. */
+    castSkill(skillId) {
+        if (this.isDown || this.mineEvent || !this.autoCombat) return { ok: false, reason: '전투 중에만 스킬을 사용할 수 있습니다.' };
+        if (!this.arenaActive && this.enemies.filter(e => !e.userData.dying).length === 0) {
+            return { ok: false, reason: '주변에 적이 없습니다.' };
+        }
+        if (!(skillId in this.skillCooldowns)) return { ok: false, reason: '알 수 없는 스킬입니다.' };
+        if (this.skillCooldowns[skillId] > 0) return { ok: false, reason: `${this.getSkillName(skillId)} 재사용 대기 중입니다.` };
+
+        const live = this.enemies.filter(e => !e.userData.dying && (!this.arenaActive || e.userData.isArenaEnemy));
+        if (!live.length) return { ok: false, reason: '주변에 적이 없습니다.' };
+
+        const p = this.player.position.clone();
+        const color = skillId === 'lightning' ? 0x8fe8ff : skillId === 'nova' ? 0xb98cff : 0xff8a4d;
+        const power = this.getTotalAttack();
+
+        if (skillId === 'lightning') {
+            const targets = live.sort((a,b) => p.distanceTo(a.position)-p.distanceTo(b.position)).slice(0, 6);
+            this.combatFX.spawnSkillCast(p, { color: 0x8fe8ff, type: 'lightning', radius: 1.6, life: 0.65 });
+            targets.forEach((enemy, i) => {
+                const strike = enemy.position.clone();
+                this.combatFX.spawnLightningStrike(strike, { color: 0x9ff6ff, delay: i * 0.045, height: enemy.userData.baseY });
+                setTimeout(() => {
+                    if (!enemy.userData.dying) this.damageEnemy(enemy, Math.round(power * 1.05), { color: '#9ff6ff', knockback: 0.9, from: p });
+                }, i * 45);
+            });
+            this.combatFX.spawnShockwave(p, { color: 0x8fe8ff, scale: 4.5, life: 0.45 });
+            this.app.addShake(0.65);
+            this.pushCombatFeed('⚡ 천둥폭우 발동!', '#9ff6ff');
+        } else if (skillId === 'nova') {
+            const radius = 6.2;
+            this.combatFX.spawnSkillNova(p, { color: 0xc58cff, radius, life: 0.75 });
+            live.forEach(enemy => {
+                const d = p.distanceTo(enemy.position);
+                if (d <= radius) this.damageEnemy(enemy, Math.round(power * 1.45), { color: '#d6b5ff', knockback: 3.2, from: p });
+            });
+            this.combatFX.spawnSparks(p, { color: 0xe2c8ff, count: 48, speed: 10, life: 0.85, height: 0.7 });
+            this.combatFX.spawnFlash(p, 0xc58cff, 100, 0.5);
+            this.app.addShake(0.95);
+            this.pushCombatFeed('✦ 슬라임 대폭발!', '#d8b8ff');
+        } else if (skillId === 'meteor') {
+            const target = this.playerTarget && !this.playerTarget.userData.dying
+                ? this.playerTarget : live.sort((a,b) => p.distanceTo(a.position)-p.distanceTo(b.position))[0];
+            const impact = target.position.clone();
+            const radius = 4.5;
+            this.combatFX.spawnMeteor(impact, { color: 0xff8a4d, radius, life: 1.0 });
+            live.forEach(enemy => {
+                if (impact.distanceTo(enemy.position) <= radius) this.damageEnemy(enemy, Math.round(power * 2.6), { color: '#ffd08a', crit: true, knockback: 2.6, from: impact });
+            });
+            this.combatFX.spawnShockwave(impact, { color: 0xff5b35, scale: 11, life: 0.75 });
+            this.combatFX.spawnSparks(impact, { color: 0xffd28a, count: 64, speed: 13, life: 1.0, height: 0.8 });
+            this.combatFX.spawnFlash(impact, 0xff7040, 150, 0.7);
+            this.app.addShake(1.4);
+            this.pushCombatFeed('☄️ 지옥 운석 낙하!', '#ffb36b');
+        }
+
+        this.skillCooldowns[skillId] = this.skillMaxCooldowns[skillId];
+        this.persist();
+        return { ok: true };
+    }
+
+    getSkillName(skillId) {
+        return ({ lightning: '천둥폭우', nova: '슬라임 대폭발', meteor: '지옥 운석' })[skillId] || '스킬';
+    }
+
+    getSkillData() {
+        return {
+            lightning: Math.max(0, this.skillCooldowns.lightning),
+            nova: Math.max(0, this.skillCooldowns.nova),
+            meteor: Math.max(0, this.skillCooldowns.meteor),
+            max: { ...this.skillMaxCooldowns }
+        };
+    }
+
     /** Leader auto-combat: pick a target, close in, and strike on cooldown. */
     updatePlayerCombat(delta) {
         this.playerAttackTimer = Math.max(0, this.playerAttackTimer - delta);
         this.dodgeCooldown = Math.max(0, this.dodgeCooldown - delta);
+        Object.keys(this.skillCooldowns).forEach((key) => {
+            this.skillCooldowns[key] = Math.max(0, this.skillCooldowns[key] - delta);
+        });
         if (this.dodgeTimer > 0) {
             this.dodgeTimer = Math.max(0, this.dodgeTimer - delta);
             const step = Math.min(delta * this.dodgeSpeed, 0.8);
@@ -3024,6 +3436,10 @@ export class Game {
      * by design: auto-combat should have something to react to.)
      */
     updateWaves(delta) {
+        if (this.arenaActive) {
+            this.updateCombatArena(delta);
+            return;
+        }
         if (!this.canRunWaves()) return;
         if (!this.waveActive) return;
 
@@ -3060,8 +3476,9 @@ export class Game {
         this.finalBossActive = true;
         this.waveActive = true;
         this.wave = Math.max(1, this.wave);
+        this.enterCombatArena(this.wave, { boss: true, duration: 9999 });
 
-        const boss = this.spawnEnemy('overlord', { distance: 16, angle: Math.PI / 2 });
+        const boss = this.spawnEnemy('overlord', { distance: 8.5, angle: Math.PI / 2, origin: new THREE.Vector3() });
         if (boss) {
             const scaled = scaleEnemyStats(ENEMY_TYPES.overlord, this.wave + 6);
             boss.userData.hp = Math.round(scaled.hp * 1.6 * (1 + this.cycle * 0.25));
@@ -3073,8 +3490,8 @@ export class Game {
             boss.userData.bossSummonCooldown = 5.0;
             boss.userData.bossHazardCooldown = 8.0;
         }
-        this.spawnEnemy('brute', { distance: 13, angle: Math.PI / 2 - 1.3 });
-        this.spawnEnemy('brute', { distance: 13, angle: Math.PI / 2 + 1.3 });
+        this.spawnEnemy('brute', { distance: 6.5, angle: Math.PI / 2 - 1.3, origin: new THREE.Vector3() });
+        this.spawnEnemy('brute', { distance: 6.5, angle: Math.PI / 2 + 1.3, origin: new THREE.Vector3() });
 
         this.waveEnemyTotal = this.enemies.length;
         this.app.ui.showBanner('⚔ 광산 점령전', '지상을 지키는 세력을 물리치세요!', '#ff7a4a');
@@ -3085,7 +3502,10 @@ export class Game {
     /** The surface garrison is down: hand out a real reward and reopen the shaft. */
     resolveFinalBossVictory() {
         this.finalBossActive = false;
+        this.waveActive = false;
         this.surfaceConquered = true;
+        this.arenaActive = false;
+        this.exitCombatArena();
         const bonusGold = 40 + (this.cycle + 1) * 10;
         const bonusMithril = 6 + (this.cycle + 1) * 2;
         this.inventory.gold += bonusGold;
@@ -3487,7 +3907,15 @@ export class Game {
             bossRewardPending: !!this.bossRewardPending,
             bossRelics: this.bossRelics.map(r => ({ ...r })),
             cycleModifier: this.cycleModifier ? { ...this.cycleModifier } : null,
+            arenaActive: !!this.arenaActive,
+            arenaTime: Math.max(0, this.arenaTime || 0),
+            arenaDuration: this.arenaDuration || 90,
+            arenaKills: this.arenaKills || 0,
+            arenaEnemies: this.enemies.filter((enemy) => enemy.userData.isArenaEnemy && !enemy.userData.dying).length,
+            arenaSpawnCount: this.arenaSpawnCount || 0,
+            finalBoss: !!this.finalBossActive,
             dodging: (this.dodgeTimer || 0) > 0,
+            skills: this.getSkillData(),
             target: target
                 ? {
                     name: target.userData.name,
@@ -4057,7 +4485,7 @@ export class Game {
         const damage = 4 * roleDamageMult * this.traitEffects.workerAttackMult * this.boons.workerAttackMult
             * this.getWorkerLevelMult(worker) * (1 + (this.stats.strength - 1) * 0.18);
         this.damageEnemy(enemy, damage, { from: worker.position, color: '#b7f3ff', knockback: 0.16 });
-        worker.userData.workerXp = (worker.userData.workerXp || 0) + 2;
+        this.addWorkerXp(worker, 2);
     }
 
     // Short weapon-swing flourish while a worker is fighting.
@@ -4089,6 +4517,7 @@ export class Game {
         this.combatFX.spawnFlash(worker.position, 0xff9c5a, 18, 0.2);
         this.app.addShake(0.16);
         if (source) this.pushCombatFeed(`${source.userData.name}이(가) 워커를 공격합니다! -${damage}`, '#ffb36b');
+        this.app.ui.showWorkerAlert?.('워커가 공격받고 있습니다!');
         if (worker.userData.hp <= 0) {
             worker.userData.downTimer = 6;
             worker.userData.isMining = false;
@@ -4173,7 +4602,7 @@ export class Game {
                         const roleMiningMult = ({ miner: 1.35, fighter: 0.72, guard: 0.82, prospector: 0.92 }[worker.userData.workerRole] || 1);
                         const roleNoiseMult = ({ miner: 1.0, fighter: 0.8, guard: 0.7, prospector: 0.65 }[worker.userData.workerRole] || 1);
                         this.addMiningNoise(0.75 * roleNoiseMult);
-                        worker.userData.workerXp = (worker.userData.workerXp || 0) + 1;
+                        this.addWorkerXp(worker, 1);
                         worker.userData.swingTimer = 0.72 / (this.traitEffects.workerSwingMult
                             * this.boons.workerSwingMult * this.getWorkerLevelMult(worker) * roleMiningMult);
                     }
@@ -4270,7 +4699,7 @@ export class Game {
         // Auto-mine: once free (no target, not fighting) and the toggle is
         // on, keep heading for the nearest ore instead of standing idle —
         // the moment a fight ends this picks right back up on its own.
-        if (!inCombat && !this.isDown && this.autoMine && !this.playerData.miningTarget) {
+        if (!this.arenaActive && !inCombat && !this.isDown && this.autoMine && !this.playerData.miningTarget) {
             const nearest = this.findNearestNode(this.player.position);
             if (nearest) {
                 this.playerData.miningTarget = nearest;
@@ -4298,6 +4727,7 @@ export class Game {
 
         // Monster AI: approach, keep range, telegraph, and strike.
         this.enemies.slice().forEach((enemy) => this.updateEnemy(enemy, delta));
+        this.clampCombatArenaPositions();
 
         // Mining logic: stop at the node, visibly swing the pickaxe, and apply
         // one clear impact every few tenths of a second instead of relying on a

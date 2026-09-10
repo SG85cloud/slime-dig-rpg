@@ -507,6 +507,82 @@ export class CombatFX {
         });
     }
 
+    // -------------------------------------------------------------- skill VFX
+    spawnSkillCast(position, options = {}) {
+        const color = new THREE.Color(options.color || 0x8fe8ff);
+        const group = new THREE.Group();
+        const ring = new THREE.Mesh(
+            new THREE.RingGeometry(0.45, 0.62, 40),
+            new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        group.add(ring);
+        const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.28, 1), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending }));
+        core.position.y = 0.8;
+        group.add(core);
+        group.position.copy(position);
+        this.scene.add(group);
+        this.effects.push({ object: group, life: 0, maxLife: options.life || 0.6,
+            update: (fx, delta, t) => { ring.scale.setScalar(1 + t * 4); ring.material.opacity = 0.95 * (1-t); core.scale.setScalar(1 + Math.sin(t*Math.PI)*2.5); core.rotation.x += delta*7; core.rotation.y += delta*9; core.material.opacity = 0.9*(1-t); },
+            dispose: () => { ring.geometry.dispose(); ring.material.dispose(); core.geometry.dispose(); core.material.dispose(); }
+        });
+    }
+
+    spawnLightningStrike(position, options = {}) {
+        const color = new THREE.Color(options.color || 0x9ff6ff);
+        const group = new THREE.Group();
+        const points = [];
+        const segments = 7;
+        const top = position.clone(); top.y += 9;
+        let last = top.clone();
+        points.push(last.clone().sub(position));
+        for (let i=1;i<=segments;i++) {
+            const y = 9 - (9/segments)*i;
+            const next = new THREE.Vector3((Math.random()-.5)*0.8, y, (Math.random()-.5)*0.8);
+            if (i===segments) next.set(0,0,0);
+            points.push(next);
+            last = next;
+        }
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent:true, opacity:1, blending:THREE.AdditiveBlending, depthWrite:false }));
+        group.add(line); group.position.copy(position);
+        const orb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), new THREE.MeshBasicMaterial({color, transparent:true, opacity:.9, blending:THREE.AdditiveBlending}));
+        orb.position.y=.35; group.add(orb);
+        this.scene.add(group);
+        this.effects.push({object:group, life:0, maxLife:.5, update:(fx,delta,t)=>{line.material.opacity=1-t; orb.scale.setScalar(1+t*2); orb.material.opacity=.9*(1-t);}, dispose:()=>{geometry.dispose(); line.material.dispose(); orb.geometry.dispose(); orb.material.dispose();}});
+        this.spawnFlash(position, color.getHex(), 85, .32);
+    }
+
+    spawnSkillNova(position, options = {}) {
+        const color = new THREE.Color(options.color || 0xc58cff);
+        const group = new THREE.Group();
+        for (let i=0;i<3;i++) {
+            const ring = new THREE.Mesh(new THREE.RingGeometry(.3,.48,48), new THREE.MeshBasicMaterial({color,transparent:true,opacity:.95,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false}));
+            ring.rotation.x=-Math.PI/2; ring.userData.offset=i*.08; group.add(ring);
+        }
+        const core = new THREE.Mesh(new THREE.IcosahedronGeometry(.55,1), new THREE.MeshBasicMaterial({color:0xf0dfff,transparent:true,opacity:.95,blending:THREE.AdditiveBlending}));
+        core.position.y=.8; group.add(core); group.position.copy(position); this.scene.add(group);
+        this.effects.push({object:group,life:0,maxLife:options.life||.75,update:(fx,delta,t)=>{
+            group.children.forEach((o,i)=>{ if(o.isMesh && o.geometry.type==='RingGeometry'){ const tt=Math.min(1,Math.max(0,(t-o.userData.offset)*1.2)); o.scale.setScalar(1+tt*(options.radius||6)); o.material.opacity=.95*(1-tt); o.rotation.z += delta*(i+1)*2; }}
+            ); core.scale.setScalar(1+Math.sin(t*Math.PI)*3); core.rotation.y+=delta*10; core.rotation.x+=delta*6; core.material.opacity=.95*(1-t);
+        },dispose:()=>{group.children.forEach(o=>{o.geometry.dispose();o.material.dispose();});}});
+    }
+
+    spawnMeteor(position, options = {}) {
+        const color = new THREE.Color(options.color || 0xff8a4d);
+        const group = new THREE.Group(); group.position.copy(position);
+        const warning = new THREE.Mesh(new THREE.RingGeometry((options.radius||4.5)*.82,(options.radius||4.5),64), new THREE.MeshBasicMaterial({color:0xff3f2f,transparent:true,opacity:.85,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false}));
+        warning.rotation.x=-Math.PI/2; warning.position.y=.05; group.add(warning);
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(.8,1), new THREE.MeshStandardMaterial({color:0xff7040,emissive:0xff3a20,emissiveIntensity:2.5,metalness:.15,roughness:.35}));
+        rock.position.set(-1.2,8,1.0); group.add(rock);
+        const tail = new THREE.PointLight(0xff6b32, 120, 14, 2); tail.position.copy(rock.position); group.add(tail);
+        this.scene.add(group);
+        this.effects.push({object:group,life:0,maxLife:options.life||1,update:(fx,delta,t)=>{
+            const fall=Math.min(1,t/.48); rock.position.y=8-8*Math.pow(fall,1.6); rock.position.x=-1.2+1.2*fall; rock.position.z=1-1*fall; rock.rotation.x+=delta*8; rock.rotation.z+=delta*10; tail.position.copy(rock.position); tail.intensity=120*(1-t*.5); warning.scale.setScalar(1+Math.sin(t*25)*.06); warning.material.opacity=.65+.3*Math.sin(t*18)**2;
+            if(t>.43 && !group.userData.impact){group.userData.impact=true; this.spawnFlash(position,0xff7a3d,180,.5); this.spawnBurst(position,{color:0xff6b35,radius:1.2,expand:5,life:.65,height:.8});}
+        },dispose:()=>{warning.geometry.dispose();warning.material.dispose();rock.geometry.dispose();rock.material.dispose();}});
+    }
+
     // --------------------------------------------------------------- projectiles
 
     /**
