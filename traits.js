@@ -142,7 +142,7 @@ export function buildTraitEffects(traits) {
         doubleOreChance: 0,
         critChance: 0,
         lifestealChance: 0,
-        startingBonus: { coal: 0, iron: 0, gold: 0, mithril: 0 }
+        startingBonus: { coal: 0, iron: 0, frostite: 0, gold: 0, obsidian: 0, mithril: 0, sunstone: 0 }
     };
 
     let critMultOverridden = false;

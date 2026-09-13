@@ -21,6 +21,7 @@ import {
     createFistMesh,
     CombatFX
 } from './combat.js';
+import { MineEnvironment } from './mineEnvironment.js';
 
 /** Floor height of the mine. All contact correction resolves to this plane. */
 const GROUND_Y = 0;
@@ -140,8 +141,11 @@ export class Game {
         this.inventory = {
             coal: 0,
             iron: 0,
+            frostite: 0,
             gold: 0,
-            mithril: 0
+            obsidian: 0,
+            mithril: 0,
+            sunstone: 0
         };
 
         this.attackPower = 10;
@@ -200,6 +204,8 @@ export class Game {
         this.skillMaxCooldowns = { lightning: 8, nova: 12, meteor: 18 };
         // v19: survivor-style experience gems and level-up choices.
         this.skillLevels = { lightning: 1, nova: 1, meteor: 1 };
+        // v26: skill evolution after maxing a skill.
+        this.skillEvolutions = { lightning: false, nova: false, meteor: false };
         this.skillCooldownMultiplier = 1;
         this.playerLevel = 1;
         this.playerXp = 0;
@@ -265,7 +271,10 @@ export class Game {
             coal: { label: '석탄', baseSwings: 10, scale: 2.6, rarity: 0 },
             iron: { label: '철광석', baseSwings: 16, scale: 2.8, rarity: 1 },
             gold: { label: '금광석', baseSwings: 24, scale: 3.0, rarity: 2 },
-            mithril: { label: '미스릴', baseSwings: 52, scale: 3.2, rarity: 3 }
+            frostite: { label: '빙정석', baseSwings: 30, scale: 3.05, rarity: 2.4 },
+            mithril: { label: '미스릴', baseSwings: 52, scale: 3.2, rarity: 3 },
+            obsidian: { label: '흑요석', baseSwings: 66, scale: 3.3, rarity: 3.6 },
+            sunstone: { label: '태양석', baseSwings: 78, scale: 3.35, rarity: 4.2 }
         };
 
         // ------------------------------------------------------------ depth
@@ -615,6 +624,11 @@ export class Game {
         if (Number.isFinite(savedNext) && savedNext > 0) this.playerXpNext = savedNext;
         const savedCdMult = Number(saved.skillCooldownMultiplier);
         if (Number.isFinite(savedCdMult) && savedCdMult > 0) this.skillCooldownMultiplier = Math.max(0.45, Math.min(1, savedCdMult));
+        if (saved.skillEvolutions && typeof saved.skillEvolutions === 'object') {
+            Object.keys(this.skillEvolutions).forEach((key) => {
+                this.skillEvolutions[key] = saved.skillEvolutions[key] === true;
+            });
+        }
         if (saved.skillLevels && typeof saved.skillLevels === 'object') {
             Object.keys(this.skillLevels).forEach((key) => {
                 const lv = Number(saved.skillLevels[key]);
@@ -727,6 +741,7 @@ export class Game {
             playerXp: this.playerXp,
             playerXpNext: this.playerXpNext,
             skillLevels: { ...this.skillLevels },
+            skillEvolutions: { ...this.skillEvolutions },
             skillCooldownMultiplier: this.skillCooldownMultiplier || 1,
             depth: this.depth,
             floorNodesCleared: this.floorNodesCleared,
@@ -904,6 +919,11 @@ export class Game {
     }
 
     initWorld() {
+        // Procedural depth-band set dressing (rock formations, crystal
+        // clusters, the sky/fog crossfade) — built once, then recoloured by
+        // applyDepthAtmosphere() as the leader climbs.
+        this.environment = new MineEnvironment(this.scene);
+
         // Floor
         const floorGeo = new THREE.PlaneGeometry(50, 50);
         const floorMat = new THREE.MeshStandardMaterial({ 
@@ -986,11 +1006,21 @@ export class Game {
         const rareBonus = this.traitEffects.rareVeinBonus;
         // Mithril is meant to be a genuine find, not a routine vein. Luck and
         // traits still move the needle, but the base rate is deliberately tiny.
+        const climbed = this.getFloorsClimbed();
+        const deepBand = climbed < 10;
+        const middleBand = climbed >= 10 && climbed < 20;
+        const sunwardBand = climbed >= 20;
+        // Obsidian, frostite and sunstone each belong to their own elemental
+        // depth band — obsidian deep, frostite in the middle, sunstone near
+        // the surface — the same way the ice/lava floor themes nudge ore odds.
         const weights = {
             coal: 70,
             iron: 23 + luck * 1.4 + rareBonus,
             gold: 6 + luck * 1.8 + rareBonus * 1.2,
-            mithril: 0.5 + luck * 0.55 + rareBonus * 0.6
+            frostite: 1.2 + (middleBand ? 10 : sunwardBand ? 4.2 : 0.8) + luck * 0.45 + rareBonus * 0.35,
+            mithril: 0.5 + luck * 0.55 + rareBonus * 0.6,
+            obsidian: 0.35 + (deepBand ? 8.5 : middleBand ? 1.8 : 0.25) + luck * 0.22 + rareBonus * 0.45,
+            sunstone: 0.15 + (sunwardBand ? 9.5 : middleBand ? 1.7 : 0.08) + luck * 0.3 + rareBonus * 0.55
         };
         // A themed floor (ice/lava) nudges its signature ore's weight up.
         if (this.floorTheme?.oreBonus) {
@@ -1167,6 +1197,11 @@ export class Game {
     applyDepthAtmosphere() {
         const t = Math.min(1, this.getFloorsClimbed() / this.startDepth);
         const theme = this.floorTheme;
+        // Crossfades the procedural rock/crystal set dressing and the
+        // background/fog colour across the mine's three elemental depth bands.
+        // Independent of the FLOOR_THEMES override below, which only recolours
+        // the lights and floor material for specific hand-authored floors.
+        this.environment?.setProgress(t);
         if (this.ambientLight) {
             this.ambientLight.intensity = 4.5 + t * 3.5;
             if (theme) this.ambientLight.color.copy(theme.lightColor);
@@ -2838,16 +2873,29 @@ export class Game {
         let reward;
         if (enemy.userData.elite) {
             this.inventory.mithril += enemy.userData.eliteAffix ? 3 : 2;
+            this.inventory.obsidian += 1;
+            this.inventory.sunstone += this.wave >= 6 ? 1 : 0;
             this.inventory.gold += enemy.userData.eliteAffix ? 5 : 3;
-            reward = enemy.userData.eliteAffix
-                ? `미스릴 3 · 금광석 5 · ${enemy.userData.eliteAffixName} 보너스`
-                : '미스릴 2 · 금광석 3';
-        } else if (oreRoll < 0.14) {
+            const base = enemy.userData.eliteAffix ? '미스릴 3 · 흑요석 1 · 금광석 5' : '미스릴 2 · 흑요석 1 · 금광석 3';
+            reward = this.wave >= 6 ? `${base} · 태양석 1` : base;
+            if (enemy.userData.eliteAffix) reward += ` · ${enemy.userData.eliteAffixName} 보너스`;
+        } else if (oreRoll < 0.09) {
+            this.inventory.sunstone += 1;
+            reward = '태양석 1';
+        } else if (oreRoll < 0.2) {
+            this.inventory.obsidian += 1;
+            reward = '흑요석 1';
+        } else if (oreRoll < 0.34) {
+            const frostite = 1 + Math.floor(Math.random() * 2);
+            this.inventory.frostite += frostite;
+            reward = `빙정석 ${frostite}`;
+        } else if (oreRoll < 0.52) {
             this.inventory.gold += 1;
             reward = '금광석 1';
-        } else if (oreRoll < 0.5) {
-            this.inventory.iron += 1 + Math.floor(Math.random() * 2);
-            reward = '철광석';
+        } else if (oreRoll < 0.76) {
+            const iron = 1 + Math.floor(Math.random() * 2);
+            this.inventory.iron += iron;
+            reward = `철광석 ${iron}`;
         } else {
             const coal = 1 + Math.floor(Math.random() * 3);
             this.inventory.coal += coal;
@@ -3415,19 +3463,34 @@ export class Game {
     }
 
     getLevelUpChoices() {
+        // v26: once a skill maxes out at Lv.8, its evolution becomes an
+        // available (but not guaranteed-offered) pick instead of more levels.
+        const evolutionDefs = [
+            { id: 'evolve_lightning', skill: 'lightning', icon: '⚡', title: '천둥신 진화', desc: '천둥폭우 Lv.8 → 번개가 적 사이를 최대 12회 연쇄합니다.' },
+            { id: 'evolve_nova', skill: 'nova', icon: '🕳️', title: '블랙홀 진화', desc: '대폭발 Lv.8 → 적을 끌어당기는 거대 블랙홀이 됩니다.' },
+            { id: 'evolve_meteor', skill: 'meteor', icon: '☄️', title: '유성우 진화', desc: '지옥 운석 Lv.8 → 짧은 시간 동안 추가 운석이 연속 낙하합니다.' },
+        ].filter((d) => this.skillLevels[d.skill] >= 8 && !this.skillEvolutions[d.skill]);
+        const normal = [
+            { id: 'haste', icon: '⏱', title: '마력 가속', desc: '모든 스킬 쿨타임 -10%' },
+            { id: 'magnet', icon: '🧲', title: '마력 자석', desc: '경험치 획득 범위 +2.2m' },
+            { id: 'vitality', icon: '💚', title: '슬라임 활력', desc: '최대 HP +15 · 즉시 회복' },
+            { id: 'fury', icon: '🔥', title: '전투 본능', desc: '기본 공격력 +8%' },
+        ];
+        if (evolutionDefs.length) {
+            // If an evolution is available, make it visible in the choice screen.
+            const shuffled = evolutionDefs.slice().sort(() => Math.random() - 0.5);
+            return shuffled.concat(normal.slice().sort(() => Math.random() - 0.5)).slice(0, 3);
+        }
         const defs = [
-            { id: 'lightning', icon: '⚡', title: '천둥폭우 강화', desc: '번개 피해 +28%', apply: () => { this.skillLevels.lightning = Math.min(8, this.skillLevels.lightning + 1); } },
-            { id: 'nova', icon: '✦', title: '대폭발 강화', desc: '폭발 범위 +18% · 피해 +12%', apply: () => { this.skillLevels.nova = Math.min(8, this.skillLevels.nova + 1); } },
-            { id: 'meteor', icon: '☄', title: '지옥 운석 강화', desc: '운석 피해 +30%', apply: () => { this.skillLevels.meteor = Math.min(8, this.skillLevels.meteor + 1); } },
-            { id: 'haste', icon: '⏱', title: '마력 가속', desc: '모든 스킬 쿨타임 -10%', apply: () => { this.skillCooldownMultiplier = Math.max(0.45, (this.skillCooldownMultiplier || 1) * 0.9); } },
-            { id: 'magnet', icon: '🧲', title: '마력 자석', desc: '경험치 획득 범위 +2.2m', apply: () => { this.xpMagnetRadius += 2.2; } },
-            { id: 'vitality', icon: '💚', title: '슬라임 활력', desc: '최대 HP +15 · 즉시 회복', apply: () => { this.maxPlayerHp += 15; this.playerData.hp = Math.min(this.maxPlayerHp, this.playerData.hp + 15); } },
-            { id: 'fury', icon: '🔥', title: '전투 본능', desc: '기본 공격력 +8%', apply: () => { this.attackPower = Math.round(this.attackPower * 1.08); } },
+            { id: 'lightning', icon: '⚡', title: '천둥폭우 강화', desc: '번개 피해 +28%' },
+            { id: 'nova', icon: '✦', title: '대폭발 강화', desc: '폭발 범위 +18% · 피해 +12%' },
+            { id: 'meteor', icon: '☄', title: '지옥 운석 강화', desc: '운석 피해 +30%' },
+            ...normal,
         ];
         const pool = defs.slice().sort(() => Math.random() - 0.5);
         // Avoid offering an already maxed skill when alternatives exist.
         const filtered = pool.filter((d) => !['lightning','nova','meteor'].includes(d.id) || this.skillLevels[d.id] < 8);
-        return (filtered.length >= 3 ? filtered : pool).slice(0, 3).map(d => ({ id: d.id, icon: d.icon, title: d.title, desc: d.desc }));
+        return (filtered.length >= 3 ? filtered : pool).slice(0, 3);
     }
 
     gainPlayerXp(amount) {
@@ -3457,6 +3520,9 @@ export class Game {
             lightning: () => { this.skillLevels.lightning = Math.min(8, this.skillLevels.lightning + 1); },
             nova: () => { this.skillLevels.nova = Math.min(8, this.skillLevels.nova + 1); },
             meteor: () => { this.skillLevels.meteor = Math.min(8, this.skillLevels.meteor + 1); },
+            evolve_lightning: () => { this.skillEvolutions.lightning = true; },
+            evolve_nova: () => { this.skillEvolutions.nova = true; },
+            evolve_meteor: () => { this.skillEvolutions.meteor = true; },
             haste: () => { this.skillCooldownMultiplier = Math.max(0.45, (this.skillCooldownMultiplier || 1) * 0.9); },
             magnet: () => { this.xpMagnetRadius += 2.2; },
             vitality: () => { this.maxPlayerHp += 15; this.playerData.hp = Math.min(this.maxPlayerHp, this.playerData.hp + 15); },
@@ -3517,26 +3583,27 @@ export class Game {
         const lightningLv = this.skillLevels.lightning || 1;
         const novaLv = this.skillLevels.nova || 1;
         const meteorLv = this.skillLevels.meteor || 1;
+        const evo = this.skillEvolutions || {};
 
         if (skillId === 'lightning') {
-            const targets = live.sort((a,b) => p.distanceTo(a.position)-p.distanceTo(b.position)).slice(0, 6);
+            const targets = live.sort((a,b) => p.distanceTo(a.position)-p.distanceTo(b.position)).slice(0, evo.lightning ? 12 : 6);
             this.combatFX.spawnSkillCast(p, { color: 0x8fe8ff, type: 'lightning', radius: 1.6, life: 0.65 });
             targets.forEach((enemy, i) => {
                 const strike = enemy.position.clone();
                 this.combatFX.spawnLightningStrike(strike, { color: 0x9ff6ff, delay: i * 0.045, height: enemy.userData.baseY });
                 setTimeout(() => {
-                    if (!enemy.userData.dying) this.damageEnemy(enemy, Math.round(power * 1.05 * (1 + (lightningLv - 1) * 0.28)), { color: '#9ff6ff', knockback: 0.9, from: p });
+                    if (!enemy.userData.dying) this.damageEnemy(enemy, Math.round(power * (evo.lightning ? 1.45 : 1.05) * (1 + (lightningLv - 1) * 0.28)), { color: '#9ff6ff', knockback: 0.9, from: p });
                 }, i * 45);
             });
             this.combatFX.spawnShockwave(p, { color: 0x8fe8ff, scale: 4.5, life: 0.45 });
             this.app.addShake(0.65);
             this.pushCombatFeed('⚡ 천둥폭우 발동!', '#9ff6ff');
         } else if (skillId === 'nova') {
-            const radius = 6.2 * (1 + (novaLv - 1) * 0.18);
+            const radius = 6.2 * (1 + (novaLv - 1) * 0.18) * (evo.nova ? 1.55 : 1);
             this.combatFX.spawnSkillNova(p, { color: 0xc58cff, radius, life: 0.75 });
             live.forEach(enemy => {
                 const d = p.distanceTo(enemy.position);
-                if (d <= radius) this.damageEnemy(enemy, Math.round(power * 1.45 * (1 + (novaLv - 1) * 0.12)), { color: '#d6b5ff', knockback: 3.2, from: p });
+                if (d <= radius) this.damageEnemy(enemy, Math.round(power * (evo.nova ? 2.05 : 1.45) * (1 + (novaLv - 1) * 0.12)), { color: '#d6b5ff', knockback: 3.2, from: p });
             });
             this.combatFX.spawnSparks(p, { color: 0xe2c8ff, count: 48, speed: 10, life: 0.85, height: 0.7 });
             this.combatFX.spawnFlash(p, 0xc58cff, 100, 0.5);
@@ -3546,16 +3613,46 @@ export class Game {
             const target = this.playerTarget && !this.playerTarget.userData.dying
                 ? this.playerTarget : live.sort((a,b) => p.distanceTo(a.position)-p.distanceTo(b.position))[0];
             const impact = target.position.clone();
-            const radius = 4.5;
+            const radius = evo.meteor ? 5.8 : 4.5;
             this.combatFX.spawnMeteor(impact, { color: 0xff8a4d, radius, life: 1.0 });
             live.forEach(enemy => {
-                if (impact.distanceTo(enemy.position) <= radius) this.damageEnemy(enemy, Math.round(power * 2.6 * (1 + (meteorLv - 1) * 0.30)), { color: '#ffd08a', crit: true, knockback: 2.6, from: impact });
+                if (impact.distanceTo(enemy.position) <= radius) this.damageEnemy(enemy, Math.round(power * (evo.meteor ? 3.35 : 2.6) * (1 + (meteorLv - 1) * 0.30)), { color: '#ffd08a', crit: true, knockback: 2.6, from: impact });
             });
             this.combatFX.spawnShockwave(impact, { color: 0xff5b35, scale: 11, life: 0.75 });
             this.combatFX.spawnSparks(impact, { color: 0xffd28a, count: 64, speed: 13, life: 1.0, height: 0.8 });
             this.combatFX.spawnFlash(impact, 0xff7040, 150, 0.7);
             this.app.addShake(1.4);
-            this.pushCombatFeed('☄️ 지옥 운석 낙하!', '#ffb36b');
+            this.pushCombatFeed(evo.meteor ? '☄️ 유성우 진화 발동!' : '☄️ 지옥 운석 낙하!', '#ffb36b');
+            if (evo.meteor) {
+                for (let i = 0; i < 3; i++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const d = 2.5 + Math.random() * 4.5;
+                    const drop = impact.clone().add(new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d));
+                    this.combatFX.spawnMeteor(drop, { color: 0xff6a3d, radius: 2.7, life: 0.65 });
+                    live.forEach(enemy => { if (!enemy.userData.dying && drop.distanceTo(enemy.position) <= 2.7) this.damageEnemy(enemy, Math.round(power * 0.9), { color:'#ffb36b', crit:true, knockback:1.5, from:drop }); });
+                }
+            }
+        }
+
+        if (skillId === 'nova' && evo.nova) {
+            live.forEach(enemy => {
+                const dir = new THREE.Vector3().subVectors(p, enemy.position).setY(0);
+                const dist = Math.max(0.5, dir.length());
+                dir.normalize(); enemy.position.addScaledVector(dir, Math.min(2.4, dist * 0.42));
+            });
+            this.combatFX.spawnShockwave(p, { color: 0x8e5cff, scale: 14, life: 0.95 });
+            this.app.addShake(1.2);
+            this.pushCombatFeed('🕳️ 블랙홀 흡인!', '#b98cff');
+        }
+
+        if (skillId === 'lightning' && evo.lightning) {
+            const chainTargets = live.slice().sort((a,b) => p.distanceTo(a.position)-p.distanceTo(b.position)).slice(0, 12);
+            chainTargets.forEach((enemy, i) => {
+                if (i === 0) return;
+                this.combatFX.spawnLightningStrike(enemy.position.clone(), { color: 0xd9fbff, delay: i * 0.03, height: enemy.userData.baseY });
+            });
+            this.combatFX.spawnSparks(p, { color: 0xbff8ff, count: 70, speed: 15, life: 1.0, height: 0.8 });
+            this.pushCombatFeed('⚡ 천둥신 연쇄번개!', '#cfffff');
         }
 
         this.skillCooldowns[skillId] = this.skillMaxCooldowns[skillId] * cooldownMult;
@@ -3574,6 +3671,7 @@ export class Game {
             meteor: Math.max(0, this.skillCooldowns.meteor),
             max: { ...this.skillMaxCooldowns },
             levels: { ...this.skillLevels },
+            evolutions: { ...this.skillEvolutions },
             cooldownMultiplier: this.skillCooldownMultiplier || 1
         };
     }
@@ -3585,6 +3683,14 @@ export class Game {
         Object.keys(this.skillCooldowns).forEach((key) => {
             this.skillCooldowns[key] = Math.max(0, this.skillCooldowns[key] - delta);
         });
+        // v27: in a defence fight, skills fire the instant they come off
+        // cooldown instead of waiting on a manual key press — the arena is
+        // chaotic enough without also demanding perfect skill timing.
+        if (this.autoCombat && (this.waveActive || this.arenaActive || this.finalBossActive)) {
+            Object.keys(this.skillCooldowns).forEach((key) => {
+                if (this.skillCooldowns[key] <= 0) this.castSkill(key);
+            });
+        }
         if (this.dodgeTimer > 0) {
             this.dodgeTimer = Math.max(0, this.dodgeTimer - delta);
             const step = Math.min(delta * this.dodgeSpeed, 0.8);
@@ -3904,10 +4010,17 @@ export class Game {
         // 1) Ore bundle — immediate crafting/upgrade fuel.
         const coal = Math.round((14 + tier * 6) * eliteMult);
         const iron = Math.round((7 + tier * 4) * eliteMult);
+        const frostite = Math.round((tier >= 2 ? Math.max(1, Math.floor(tier / 2)) : 0) * eliteMult);
         const gold = Math.round(Math.max(1, Math.floor(tier * 1.6)) * eliteMult);
+        const obsidian = Math.round((tier >= 3 ? Math.max(1, Math.floor(tier / 3)) : 0) * eliteMult);
         const mithril = Math.round((tier >= 4 ? Math.max(1, Math.floor(tier / 4)) : 0) * eliteMult);
-        const oreParts = [`석탄 ${coal}`, `철 ${iron}`, `금 ${gold}`];
+        const sunstone = Math.round((tier >= 6 ? Math.max(1, Math.floor(tier / 6)) : 0) * eliteMult);
+        const oreParts = [`석탄 ${coal}`, `철 ${iron}`];
+        if (frostite > 0) oreParts.push(`빙정석 ${frostite}`);
+        oreParts.push(`금 ${gold}`);
+        if (obsidian > 0) oreParts.push(`흑요석 ${obsidian}`);
         if (mithril > 0) oreParts.push(`미스릴 ${mithril}`);
+        if (sunstone > 0) oreParts.push(`태양석 ${sunstone}`);
 
         // 2) Leader growth — one free stat level plus a permanent HP bump.
         const statKey = ['strength', 'speed', 'luck'][Math.floor(Math.random() * 3)];
@@ -3931,7 +4044,7 @@ export class Game {
                 title: '광석 묶음',
                 summary: oreParts.join(' · '),
                 benefit: '지금 바로 대장간에 넣거나 스탯 강화 비용으로 씁니다. 다음 층으로 올라가기 전에 장비를 한 번 더 굴려볼 수 있습니다.',
-                payload: { coal, iron, gold, mithril }
+                payload: { coal, iron, frostite, gold, obsidian, mithril, sunstone }
             },
             {
                 id: 'growth',
@@ -4176,6 +4289,7 @@ export class Game {
             playerXpNext: this.playerXpNext,
             levelUpPending: !!this.levelUpPending,
             skillLevels: { ...this.skillLevels },
+            skillEvolutions: { ...this.skillEvolutions },
             skillCooldownMultiplier: this.skillCooldownMultiplier || 1,
             target: target
                 ? {
@@ -4966,6 +5080,7 @@ export class Game {
         // nowhere in one step. Cap it the same way the camera smoothing does.
         delta = Math.min(delta, 0.1);
         this.elapsed += delta;
+        this.environment?.update(delta, this.elapsed);
 
         // Periodic autosave keeps progression safe without hammering storage.
         this.saveTimer -= delta;
@@ -5375,10 +5490,11 @@ export class Game {
         node.userData.lastYieldLucky = (this.oreConfig[minedOre]?.rarity || 0) > veinRarity;
         if (node.userData.lastYieldLucky && this.markedSeams > 0) { this.markedSeams -= 1; this.pushCombatFeed('📍 표시한 광맥의 흔적이 희귀 광석을 끌어냈습니다!', '#8fd9a8'); }
 
-        // Mithril is scarce enough that finding any at all deserves a callout.
-        if (minedOre === 'mithril') {
-            this.pushCombatFeed(`✦ 미스릴 ${amount}개를 캐냈습니다!`, '#8fe4ff');
-            this.combatFX.spawnFlash(node.position, 0x8fe4ff, 30, 0.45);
+        // High-tier ore discoveries get a stronger callout than routine pulls.
+        if (['mithril', 'obsidian', 'sunstone'].includes(minedOre)) {
+            const info = ORE_INFO[minedOre];
+            this.pushCombatFeed(`✦ ${info.label} ${amount}개를 캐냈습니다!`, info.color);
+            this.combatFX.spawnFlash(node.position, new THREE.Color(info.color).getHex(), 30, 0.45);
         }
 
         this.completeCoalQuest();

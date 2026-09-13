@@ -30,6 +30,40 @@ export const ENEMY_TYPES = {
         elite: false,
         pattern: 'lunge'
     },
+    caveBat: {
+        id: 'caveBat',
+        asset: 'caveBat',
+        name: '황혼 박쥐',
+        hp: 30,
+        damage: 6,
+        attackInterval: 1.1,
+        range: 1.7,
+        moveSpeed: 4.4,
+        scale: 1.45,
+        baseY: 0.6,
+        style: 'melee',
+        tint: 0xffb45e,
+        xp: 9,
+        elite: false,
+        pattern: 'lunge'
+    },
+    crystalStalker: {
+        id: 'crystalStalker',
+        asset: 'crystalStalker',
+        name: '수정 잠복자',
+        hp: 42,
+        damage: 8,
+        attackInterval: 1.65,
+        range: 2.05,
+        moveSpeed: 3.35,
+        scale: 1.6,
+        baseY: 0.6,
+        style: 'melee',
+        tint: 0x72e4ff,
+        xp: 13,
+        elite: false,
+        pattern: 'lunge'
+    },
     brute: {
         id: 'brute',
         asset: 'brute',
@@ -65,6 +99,75 @@ export const ENEMY_TYPES = {
         elite: false,
         pattern: 'volley'
     },
+    voidWitch: {
+        id: 'voidWitch',
+        asset: 'voidWitch',
+        name: '공허술사',
+        hp: 54,
+        damage: 14,
+        attackInterval: 2.75,
+        range: 12,
+        moveSpeed: 1.75,
+        keepDistance: 8.5,
+        scale: 1.95,
+        baseY: 1.15,
+        style: 'ranged',
+        tint: 0xc18cff,
+        xp: 22,
+        elite: false,
+        pattern: 'volley'
+    },
+    magmaHound: {
+        id: 'magmaHound',
+        asset: 'magmaHound',
+        name: '용암 사냥개',
+        hp: 52,
+        damage: 14,
+        attackInterval: 1.55,
+        range: 2.05,
+        moveSpeed: 3.6,
+        scale: 1.75,
+        baseY: 0.65,
+        style: 'melee',
+        tint: 0xff713f,
+        xp: 20,
+        elite: false,
+        pattern: 'lunge'
+    },
+    fungalOgre: {
+        id: 'fungalOgre',
+        asset: 'fungalOgre',
+        name: '균사 거인',
+        hp: 118,
+        damage: 16,
+        attackInterval: 2.45,
+        range: 2.55,
+        moveSpeed: 1.45,
+        scale: 2.35,
+        baseY: 1.2,
+        style: 'melee',
+        tint: 0x9bd27b,
+        xp: 28,
+        elite: false,
+        pattern: 'slam'
+    },
+    ironGolem: {
+        id: 'ironGolem',
+        asset: 'ironGolem',
+        name: '철맥 골렘',
+        hp: 190,
+        damage: 21,
+        attackInterval: 2.9,
+        range: 2.8,
+        moveSpeed: 1.2,
+        scale: 2.65,
+        baseY: 1.35,
+        style: 'melee',
+        tint: 0x6de0d4,
+        xp: 48,
+        elite: true,
+        pattern: 'slam'
+    },
     overlord: {
         id: 'overlord',
         asset: 'overlord',
@@ -93,12 +196,22 @@ export const WAVE_TABLE = [
     { wave: 5, spawns: [['archer', 2], ['brute', 1]] },
     { wave: 6, spawns: [['crawler', 3], ['archer', 2], ['brute', 1]] },
     { wave: 7, spawns: [['brute', 2], ['archer', 2]] },
-    { wave: 8, spawns: [['overlord', 1], ['crawler', 3]] }
+    { wave: 8, spawns: [['overlord', 1], ['crawler', 3]] },
+    { wave: 9, spawns: [['crawler', 2], ['caveBat', 2], ['archer', 1]] },
+    { wave: 10, spawns: [['crystalStalker', 2], ['magmaHound', 1], ['brute', 1]] },
+    { wave: 11, spawns: [['voidWitch', 1], ['caveBat', 2], ['archer', 2]] },
+    { wave: 12, spawns: [['fungalOgre', 2], ['ironGolem', 1], ['crystalStalker', 2]] }
 ];
 
-/** Every 5th wave past the hand-authored table is a named mini-boss wave. */
+// Elite mini-boss waves have always kicked in every 5th wave starting right
+// after the original 8-wave table. Keeping this baseline fixed (rather than
+// tied to WAVE_TABLE.length) means hand-authoring more early waves doesn't
+// silently push the elite cadence back.
+const ELITE_WAVE_BASELINE = 8;
+
+/** Every 5th wave past wave 8 is a named mini-boss wave. */
 export function isEliteWave(wave) {
-    return wave > WAVE_TABLE.length && wave % 5 === 0;
+    return wave > ELITE_WAVE_BASELINE && wave % 5 === 0;
 }
 
 export function getWaveComposition(wave) {

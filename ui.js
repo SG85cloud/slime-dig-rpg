@@ -32,7 +32,7 @@ export class UI {
         this.craftOpen = false;
         this.mineEventOpen = false;
         this.mineEventHandler = null;
-        this.craftMix = { coal: 0, iron: 0, gold: 0, mithril: 0 };
+        this.craftMix = { coal: 0, iron: 0, frostite: 0, gold: 0, obsidian: 0, mithril: 0, sunstone: 0 };
         this.craftSlot = 'weapon';
         this.equipmentData = null;
         this.statusOpen = false;
@@ -424,8 +424,11 @@ export class UI {
         const definitions = [
             { key: 'coal', label: '석탄', color: '#b3bccb' },
             { key: 'iron', label: '철광석', color: '#cfd8e3' },
+            { key: 'frostite', label: '빙정석', color: '#8ceeff' },
             { key: 'gold', label: '금광석', color: '#ffd873' },
-            { key: 'mithril', label: '미스릴', color: '#9ff3e0' }
+            { key: 'obsidian', label: '흑요석', color: '#b875ff' },
+            { key: 'mithril', label: '미스릴', color: '#9ff3e0' },
+            { key: 'sunstone', label: '태양석', color: '#ffbd68' }
         ];
 
         definitions.forEach((definition) => {
@@ -613,7 +616,7 @@ export class UI {
                     🔥 ${heatText}
                 </div>
                 <div style="margin-top:8px; font-size:11.5px; color:#8d80a0; line-height:1.55;">
-                    ${purityText} · 총 광석 ${['coal', 'iron', 'gold', 'mithril'].reduce((sum, ore) => sum + (this.craftMix[ore] || 0), 0)}개
+                    ${purityText} · 총 광석 ${['coal', 'iron', 'frostite', 'gold', 'obsidian', 'mithril', 'sunstone'].reduce((sum, ore) => sum + (this.craftMix[ore] || 0), 0)}개
                 </div>
                 <div style="margin-top:10px; font-size:11px; color:#8d80a0; line-height:1.5;">
                     가장 많이 넣은 광석이 장비의 종류를, 배합의 가치가 등급을 정합니다.
@@ -686,10 +689,10 @@ export class UI {
             const card = document.createElement('div');
             card.style.cssText = `padding:10px 11px; border-radius:9px; border:1px solid ${recipe.affordable ? '#d19a5f' : '#5a4460'};
                                   background:rgba(255,255,255,.03);`;
-            const mixText = ['coal', 'iron', 'gold', 'mithril']
+            const mixText = ['coal', 'iron', 'frostite', 'gold', 'obsidian', 'mithril', 'sunstone']
                 .filter((ore) => recipe.mix[ore] > 0)
                 .map((ore) => {
-                    const labels = { coal: '석탄', iron: '철', gold: '금', mithril: '미스릴' };
+                    const labels = { coal: '석탄', iron: '철', frostite: '빙정석', gold: '금', obsidian: '흑요석', mithril: '미스릴', sunstone: '태양석' };
                     return `${labels[ore]} ${recipe.mix[ore]}`;
                 })
                 .join(' · ');
@@ -735,10 +738,10 @@ export class UI {
             const card = document.createElement('div');
             card.style.cssText = `padding:10px 11px; border-radius:9px; border:1px solid ${recipe.affordable ? '#6f5a8c' : '#3b3048'};
                                   background:rgba(255,255,255,.03);`;
-            const mixText = ['coal', 'iron', 'gold', 'mithril']
+            const mixText = ['coal', 'iron', 'frostite', 'gold', 'obsidian', 'mithril', 'sunstone']
                 .filter((ore) => recipe.mix[ore] > 0)
                 .map((ore) => {
-                    const labels = { coal: '석탄', iron: '철', gold: '금', mithril: '미스릴' };
+                    const labels = { coal: '석탄', iron: '철', frostite: '빙정석', gold: '금', obsidian: '흑요석', mithril: '미스릴', sunstone: '태양석' };
                     return `${labels[ore]} ${recipe.mix[ore]}`;
                 })
                 .join(' · ');
@@ -918,8 +921,11 @@ export class UI {
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-size: 0.9em;">
                     <span class="inv-coal"></span>
                     <span class="inv-iron"></span>
+                    <span class="inv-frostite"></span>
                     <span class="inv-gold"></span>
+                    <span class="inv-obsidian"></span>
                     <span class="inv-mithril"></span>
+                    <span class="inv-sunstone"></span>
                 </div>
             </div>
         `;
@@ -1790,7 +1796,7 @@ export class UI {
 
     updateFacilities(facilities) {
         if (!this.statPanel || !Array.isArray(facilities)) return;
-        const oreLabels = { coal: '석탄', iron: '철', gold: '금', mithril: '미스릴' };
+        const oreLabels = { coal: '석탄', iron: '철', frostite: '빙정석', gold: '금', obsidian: '흑요석', mithril: '미스릴', sunstone: '태양석' };
 
         this.statPanel.querySelectorAll('.facility-rows > div').forEach((row) => {
             const entry = facilities.find((item) => item.key === row.dataset.facility);
@@ -1811,7 +1817,7 @@ export class UI {
                 return;
             }
 
-            const costText = ['coal', 'iron', 'gold', 'mithril']
+            const costText = ['coal', 'iron', 'frostite', 'gold', 'obsidian', 'mithril', 'sunstone']
                 .filter((ore) => entry.cost[ore] > 0)
                 .map((ore) => `${oreLabels[ore]} ${entry.cost[ore]}`)
                 .join(' · ');
@@ -2357,7 +2363,17 @@ export class UI {
                 button.style.opacity = ready ? '1' : '0.48';
                 button.style.filter = ready ? 'brightness(1.18)' : 'grayscale(.25)';
                 const small = button.querySelector('small');
-                if (small) small.textContent = ready ? `${skillMap[id]} · READY` : `${skillMap[id]} · ${cd.toFixed(1)}초`;
+                if (small) {
+                    const lv = combat.skills.levels?.[id] || 1;
+                    const evolved = combat.skills.evolutions?.[id];
+                    small.textContent = evolved ? `${skillMap[id]} · EVOLVED` : (ready ? `${skillMap[id]} · Lv.${lv} · READY` : `${skillMap[id]} · Lv.${lv} · ${cd.toFixed(1)}초`);
+                }
+                const label = button.querySelector('span');
+                if (label) {
+                    const names = { lightning: '천둥폭우', nova: '대폭발', meteor: '지옥 운석' };
+                    const evoNames = { lightning: '천둥신', nova: '블랙홀', meteor: '유성우' };
+                    label.textContent = combat.skills.evolutions?.[id] ? evoNames[id] : names[id];
+                }
             });
         }
 
@@ -2955,7 +2971,7 @@ export class UI {
         // Keep the open workshop in sync with the stockpile without re-rendering
         // (and killing interaction) on every single frame.
         if (this.craftOpen) {
-            const signature = `${inventory.coal}|${inventory.iron}|${inventory.gold}|${inventory.mithril}`;
+            const signature = `${inventory.coal}|${inventory.iron}|${inventory.frostite}|${inventory.gold}|${inventory.obsidian}|${inventory.mithril}|${inventory.sunstone}`;
             if (signature !== this.craftInventorySignature) {
                 this.craftInventorySignature = signature;
                 this.refreshCraftWorkshop();
@@ -3022,8 +3038,11 @@ export class UI {
 
         this.hud.querySelector('.inv-coal').textContent = `석탄: ${inventory.coal}`;
         this.hud.querySelector('.inv-iron').textContent = `철광석: ${inventory.iron}`;
+        this.hud.querySelector('.inv-frostite').textContent = `빙정석: ${inventory.frostite}`;
         this.hud.querySelector('.inv-gold').textContent = `금광석: ${inventory.gold}`;
+        this.hud.querySelector('.inv-obsidian').textContent = `흑요석: ${inventory.obsidian}`;
         this.hud.querySelector('.inv-mithril').textContent = `미스릴: ${inventory.mithril}`;
+        this.hud.querySelector('.inv-sunstone').textContent = `태양석: ${inventory.sunstone}`;
 
         // Keep the status window live while it is open.
         if (this.statusOpen) this.renderStatusWindow();

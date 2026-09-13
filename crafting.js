@@ -12,13 +12,16 @@
  * blend it is recorded in their recipe book and can be re-forged with one click.
  */
 
-export const ORE_KEYS = ['coal', 'iron', 'gold', 'mithril'];
+export const ORE_KEYS = ['coal', 'iron', 'frostite', 'gold', 'obsidian', 'mithril', 'sunstone'];
 
 export const ORE_INFO = {
     coal: { label: '석탄', color: '#9aa3b2', power: 1 },
     iron: { label: '철광석', color: '#cfd8e3', power: 3 },
+    frostite: { label: '빙정석', color: '#8ceeff', power: 11 },
     gold: { label: '금광석', color: '#ffd873', power: 7 },
-    mithril: { label: '미스릴', color: '#9ff3e0', power: 15 }
+    obsidian: { label: '흑요석', color: '#b875ff', power: 22 },
+    mithril: { label: '미스릴', color: '#9ff3e0', power: 15 },
+    sunstone: { label: '태양석', color: '#ffbd68', power: 28 }
 };
 
 // Quality bands. `min` is the minimum craft score needed to reach the tier.
@@ -79,6 +82,18 @@ export const ITEM_ARCHETYPES = [
         stats: { attack: 1.3, crit: 0.14, hp: 4 }
     },
     {
+        id: 'frost_scepter', name: '빙결 지팡이', icon: '🧊', slot: 'weapon',
+        blurb: '빙정석을 깎아 만든 차가운 지팡이. 안정적인 치명타를 냅니다.',
+        dominant: 'frostite', minMass: 0,
+        stats: { attack: 1.25, crit: 0.07, hp: 5 }
+    },
+    {
+        id: 'frost_lance', name: '서리 창', icon: '❄️', slot: 'weapon',
+        blurb: '고밀도 빙정석 창끝이 적의 움직임을 꿰뚫습니다.',
+        dominant: 'frostite', minMass: 78,
+        stats: { attack: 1.5, crit: 0.1, hp: 9 }
+    },
+    {
         id: 'mithril_edge', name: '미스릴 검', icon: '💠', slot: 'weapon',
         blurb: '미스릴을 벼려낸 신비한 검날.',
         dominant: 'mithril', minMass: 0,
@@ -89,6 +104,30 @@ export const ITEM_ARCHETYPES = [
         blurb: '미스릴을 아낌없이 쏟아부은 절대 병기.',
         dominant: 'mithril', minMass: 120,
         stats: { attack: 1.85, crit: 0.12, hp: 12 }
+    },
+    {
+        id: 'obsidian_axe', name: '흑요석 도끼', icon: '🪓', slot: 'weapon',
+        blurb: '공허의 균열을 머금은 묵직한 도끼.',
+        dominant: 'obsidian', minMass: 0,
+        stats: { attack: 1.6, crit: 0.03, hp: 9 }
+    },
+    {
+        id: 'void_maul', name: '공허 망치', icon: '🔨', slot: 'weapon',
+        blurb: '흑요석을 한계까지 압축한 파괴 병기.',
+        dominant: 'obsidian', minMass: 115,
+        stats: { attack: 1.95, crit: 0.04, hp: 16 }
+    },
+    {
+        id: 'sunblade', name: '태양검', icon: '☀️', slot: 'weapon',
+        blurb: '태양석의 열기를 품은 눈부신 검.',
+        dominant: 'sunstone', minMass: 0,
+        stats: { attack: 1.5, crit: 0.13, hp: 5 }
+    },
+    {
+        id: 'dawn_halberd', name: '여명의 할버드', icon: '🌅', slot: 'weapon',
+        blurb: '태양석을 대량으로 박아 넣은 지상 돌파용 무기.',
+        dominant: 'sunstone', minMass: 145,
+        stats: { attack: 1.9, crit: 0.17, hp: 11 }
     },
 
     // ---------------------------------------------------------------- armor
@@ -132,6 +171,18 @@ export const ITEM_ARCHETYPES = [
         stats: { defense: 1.05, hp: 16 }
     },
     {
+        id: 'frost_mail', name: '빙정 갑옷', icon: '🥶', slot: 'armor',
+        blurb: '빙정석 조각을 엮어 붙인 서늘한 갑옷.',
+        dominant: 'frostite', minMass: 0,
+        stats: { defense: 1.0, hp: 9 }
+    },
+    {
+        id: 'rime_plate', name: '서리 결정 갑주', icon: '❄️', slot: 'armor',
+        blurb: '두터운 서리 결정이 충격을 통째로 얼려버립니다.',
+        dominant: 'frostite', minMass: 78,
+        stats: { defense: 1.35, hp: 15 }
+    },
+    {
         id: 'mithril_mail', name: '미스릴 갑옷', icon: '💠', slot: 'armor',
         blurb: '가볍지만 강철보다 단단한 미스릴 갑옷.',
         dominant: 'mithril', minMass: 0,
@@ -142,6 +193,30 @@ export const ITEM_ARCHETYPES = [
         blurb: '미스릴을 아낌없이 두른 최상급 방벽.',
         dominant: 'mithril', minMass: 120,
         stats: { defense: 1.7, hp: 22 }
+    },
+    {
+        id: 'obsidian_plate', name: '흑요석 갑옷', icon: '🖤', slot: 'armor',
+        blurb: '공허의 균열을 두른 묵직한 흑요석 판금.',
+        dominant: 'obsidian', minMass: 0,
+        stats: { defense: 1.45, hp: 16 }
+    },
+    {
+        id: 'void_bastion', name: '공허 파쇄 갑주', icon: '🌑', slot: 'armor',
+        blurb: '흑요석을 한계까지 압축한 최상급 방벽.',
+        dominant: 'obsidian', minMass: 115,
+        stats: { defense: 1.85, hp: 26 }
+    },
+    {
+        id: 'sun_plate', name: '태양 갑옷', icon: '🔆', slot: 'armor',
+        blurb: '태양석의 열기가 스며들어 은은히 빛나는 갑옷.',
+        dominant: 'sunstone', minMass: 0,
+        stats: { defense: 1.6, hp: 18 }
+    },
+    {
+        id: 'dawn_bulwark', name: '여명의 갑주', icon: '🌅', slot: 'armor',
+        blurb: '태양석을 대량으로 두른, 지상의 빛을 두른 최상급 갑주.',
+        dominant: 'sunstone', minMass: 145,
+        stats: { defense: 2.05, hp: 30 }
     },
 
     // ------------------------------------------------------------ accessory
@@ -185,6 +260,18 @@ export const ITEM_ARCHETYPES = [
         stats: { crit: 0.08, hp: 3 }
     },
     {
+        id: 'frost_amulet', name: '서리 부적', icon: '🧿', slot: 'accessory',
+        blurb: '차가운 빙정석 조각을 엮은 부적.',
+        dominant: 'frostite', minMass: 0,
+        stats: { luck: 0.9, crit: 0.02, hp: 4 }
+    },
+    {
+        id: 'rime_seal', name: '빙결의 인장', icon: '❄️', slot: 'accessory',
+        blurb: '서릿발 같은 정밀함을 벼려낸 인장.',
+        dominant: 'frostite', minMass: 78,
+        stats: { luck: 1.3, crit: 0.03, hp: 6 }
+    },
+    {
         id: 'mithril_talisman', name: '미스릴 부적', icon: '💠', slot: 'accessory',
         blurb: '운과 정밀함을 함께 벼려낸 미스릴 세공품.',
         dominant: 'mithril', minMass: 0,
@@ -195,6 +282,30 @@ export const ITEM_ARCHETYPES = [
         blurb: '운·치명타·흡혈을 한데 두른 최상급 인장.',
         dominant: 'mithril', minMass: 120,
         stats: { luck: 1.2, crit: 0.04, lifesteal: 0.05, hp: 6 }
+    },
+    {
+        id: 'obsidian_ring', name: '흑요석 반지', icon: '🩸', slot: 'accessory',
+        blurb: '공허의 균열을 삼킨 갈증의 반지.',
+        dominant: 'obsidian', minMass: 0,
+        stats: { lifesteal: 0.08, hp: 5 }
+    },
+    {
+        id: 'void_signet', name: '심연의 흑요석 인장', icon: '🌑', slot: 'accessory',
+        blurb: '흑요석에 새겨진 갈증과 정밀함의 문양.',
+        dominant: 'obsidian', minMass: 115,
+        stats: { lifesteal: 0.13, crit: 0.04, hp: 8 }
+    },
+    {
+        id: 'sun_necklace', name: '태양 목걸이', icon: '📿', slot: 'accessory',
+        blurb: '태양석의 빛이 스며든 목걸이.',
+        dominant: 'sunstone', minMass: 0,
+        stats: { crit: 0.09, luck: 0.5, hp: 5 }
+    },
+    {
+        id: 'dawn_relic', name: '여명의 성물', icon: '🌅', slot: 'accessory',
+        blurb: '지상의 빛을 한데 모은 최상급 성물.',
+        dominant: 'sunstone', minMass: 145,
+        stats: { crit: 0.14, luck: 1.0, lifesteal: 0.04, hp: 10 }
     }
 ];
 
