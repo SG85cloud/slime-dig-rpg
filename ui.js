@@ -55,6 +55,57 @@ export class UI {
         this.initWaveReward();
         this.initCombatArena();
         this.initShortcuts();
+        this.initOrientationHint();
+    }
+
+    /**
+     * The HUD rail is sized for a landscape-width screen — around a quarter
+     * of the view there, but most of a portrait phone's width, leaving almost
+     * nothing to see or tap in the 3D view underneath. Rather than cram a
+     * second, cut-down layout into every panel in this file, nudge portrait
+     * phones toward landscape, where the existing layout already works.
+     */
+    initOrientationHint() {
+        this.orientationDismissed = false;
+        this.orientationHint = document.createElement('div');
+        this.orientationHint.style.cssText = `
+            position: fixed; inset: 0; z-index: 500; display: none;
+            align-items: center; justify-content: center; padding: 24px;
+            box-sizing: border-box; text-align: center;
+            background: rgba(5,5,10,.94); backdrop-filter: blur(6px);
+            pointer-events: auto; font-family: Inter, sans-serif;
+        `;
+        this.orientationHint.innerHTML = `
+            <div style="max-width: 320px;">
+                <div class="orientation-icon" style="font-size: 46px; display: inline-block;">📱</div>
+                <div style="margin-top: 14px; font: 800 16px Orbitron, sans-serif; color: #fff;">기기를 가로로 돌려주세요</div>
+                <div style="margin-top: 8px; font-size: 12.5px; color: #bdb1ce; line-height: 1.6;">
+                    이 게임은 가로 화면에 맞춰 만들어졌습니다. 세로 화면에서는 조작 패널이 화면 대부분을 가려 플레이하기 어렵습니다.
+                </div>
+                <button class="orientation-continue" type="button" style="
+                    margin-top: 18px; padding: 10px 18px; border: 1px solid #6c568d; border-radius: 8px;
+                    background: rgba(255,255,255,.08); color: #cfc3dd; font: 700 12px Inter, sans-serif; cursor: pointer;
+                ">그래도 세로로 계속하기</button>
+            </div>
+        `;
+        document.body.appendChild(this.orientationHint);
+        const icon = this.orientationHint.querySelector('.orientation-icon');
+        icon.animate(
+            [{ transform: 'rotate(0deg)' }, { transform: 'rotate(-90deg)' }, { transform: 'rotate(-90deg)' }, { transform: 'rotate(0deg)' }],
+            { duration: 1800, iterations: Infinity, easing: 'ease-in-out' }
+        );
+        this.orientationHint.querySelector('.orientation-continue').addEventListener('click', () => {
+            this.orientationDismissed = true;
+            this.updateOrientationHint();
+        });
+        window.addEventListener('resize', () => this.updateOrientationHint());
+        window.addEventListener('orientationchange', () => this.updateOrientationHint());
+        this.updateOrientationHint();
+    }
+
+    updateOrientationHint() {
+        const isPortraitPhone = window.innerWidth < 700 && window.innerHeight > window.innerWidth;
+        this.orientationHint.style.display = (isPortraitPhone && !this.orientationDismissed) ? 'flex' : 'none';
     }
 
     /**
@@ -867,7 +918,7 @@ export class UI {
             margin-top: auto;
             flex: 0 1 auto;
             min-height: 0;
-            padding: 16px;
+            padding: 12px;
             background: rgba(0,0,0,0.68);
             border: 2px solid #555;
             border-radius: 8px;
@@ -882,14 +933,14 @@ export class UI {
         // node that's already gone by the time mouseup/click resolves).
         this.hud.innerHTML = `
             <button class="status-open" type="button" style="
-                display:block; width:100%; text-align:left; margin-bottom:12px;
-                padding:9px 11px; border:1px solid #2f6f80; border-radius:8px;
+                display:block; width:100%; text-align:left; margin-bottom:9px;
+                padding:7px 10px; border:1px solid #2f6f80; border-radius:8px;
                 background:rgba(0,210,255,.07); color:inherit; font:inherit;
                 cursor:pointer;
             ">
                 <div style="display:flex; align-items:center; gap:10px;">
-                    <span style="font-size:19px;">🧬</span>
-                    <span style="flex:1; min-width:0; display:flex; gap:10px; font-size:12.5px;">
+                    <span style="font-size:17px;">🧬</span>
+                    <span style="flex:1; min-width:0; display:flex; gap:10px; font-size:12px;">
                         <span class="hud-hp" style="color:#9fe8ff;"></span>
                         <span class="hud-attack" style="color:#ff9c9c;">공<span class="hud-attack-value"></span></span>
                         <span class="hud-workers" style="color:#d7c4ed;"></span>
@@ -897,36 +948,24 @@ export class UI {
                     <span class="hud-traits" style="color:#8d80a0; font-size:10.5px; font-weight:700;"></span>
                 </div>
             </button>
-            <div style="margin-bottom: 15px;">
-                <h3 style="margin: 0; color: #ffd08a;">🎒 아이템 · 장비</h3>
-                <div class="equip-slot" style="margin-top:8px; display:flex; align-items:center; gap:9px;
-                            padding:9px 10px; border-radius:8px; border:1px solid #8d80a0;
+            <div style="margin-bottom: 10px;">
+                <h3 style="margin: 0; font-size: 13px; color: #ffd08a;">🎒 아이템 · 장비</h3>
+                <div class="equip-slot" style="margin-top:6px; display:flex; align-items:center; gap:9px;
+                            padding:7px 10px; border-radius:8px; border:1px solid #8d80a0;
                             background:rgba(255,255,255,.04);">
-                    <div class="equip-icon" style="font-size:22px;"></div>
+                    <div class="equip-icon" style="font-size:20px;"></div>
                     <div style="min-width:0;">
                         <div style="font-size:10px; letter-spacing:1px; color:#a99bb8;">장착 중인 무기</div>
-                        <div class="equip-name" style="font-size:12.5px; font-weight:800;"></div>
+                        <div class="equip-name" style="font-size:12px; font-weight:800;"></div>
                     </div>
                 </div>
                 <button class="craft-open" type="button" style="
-                    margin-top:10px; width:100%; padding:11px 9px; border:1px solid #f0b268;
+                    margin-top:8px; width:100%; padding:9px 9px; border:1px solid #f0b268;
                     border-radius:7px; background:linear-gradient(180deg,#8a4c26,#4d2711); color:#ffe6c4;
-                    font:800 12.5px Inter, sans-serif; cursor:pointer;
+                    font:800 12px Inter, sans-serif; cursor:pointer;
                     box-shadow:0 0 14px rgba(224,150,74,.34);
                 "></button>
-                <div style="margin-top:5px; text-align:center; font-size:10.5px; color:#8d80a0;">단축키 <b style="color:#cbb8e8;">I</b> 또는 <b style="color:#cbb8e8;">C</b></div>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <h3 style="margin: 0; color: #00d2ff;">광석 보관함</h3>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-size: 0.9em;">
-                    <span class="inv-coal"></span>
-                    <span class="inv-iron"></span>
-                    <span class="inv-frostite"></span>
-                    <span class="inv-gold"></span>
-                    <span class="inv-obsidian"></span>
-                    <span class="inv-mithril"></span>
-                    <span class="inv-sunstone"></span>
-                </div>
+                <div style="margin-top:4px; text-align:center; font-size:10px; color:#8d80a0;">단축키 <b style="color:#cbb8e8;">I</b> 또는 <b style="color:#cbb8e8;">C</b></div>
             </div>
         `;
         this.leftRail.appendChild(this.hud);
@@ -962,7 +1001,7 @@ export class UI {
                 display: flex;
                 flex-direction: column;
                 align-items: stretch;
-                gap: 12px;
+                gap: 8px;
                 pointer-events: none;
                 z-index: 71;
             `;
@@ -1327,25 +1366,27 @@ export class UI {
         this.questPanel.style.cssText = `
             position: relative;
             width: 100%;
-            flex: none;
-            padding: 16px;
+            flex: 0 2 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 13px;
             box-sizing: border-box;
-            background: linear-gradient(145deg, rgba(31, 23, 42, 0.96), rgba(10, 9, 18, 0.95));
-            border: 2px solid #a875ca;
+            background: linear-gradient(145deg, rgba(31, 23, 42, 0.28), rgba(10, 9, 18, 0.22));
+            backdrop-filter: blur(3px);
+            border: 2px solid rgba(168, 117, 202, 0.55);
             border-radius: 10px;
-            box-shadow: 0 0 18px rgba(84, 52, 125, 0.42), inset 0 0 0 1px #2b203d;
+            box-shadow: 0 0 14px rgba(84, 52, 125, 0.22);
             pointer-events: auto;
-            flex-shrink: 0;
             font-family: Inter, sans-serif;
         `;
         this.questPanel.innerHTML = `
-            <div style="font: 700 11px Orbitron, sans-serif; letter-spacing: 2px; color: #cbb8e8;">현재 퀘스트</div>
-            <div class="quest-title" style="margin-top: 7px; font-size: 17px; font-weight: 800; color: #fff1d1;"></div>
-            <div class="quest-description" style="margin-top: 6px; color: #d7cbe1; font-size: 13px; line-height: 1.4;"></div>
-            <div class="quest-progress-text" style="margin-top: 12px; color: #b7f3ff; font-size: 12px; font-weight: 700;"></div>
-            <div style="height: 7px; margin-top: 6px; overflow: hidden; border-radius: 999px; background: #1c1726; border: 1px solid #4e3d5e;"><div class="quest-progress-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#8c63b5,#c7a3ef); transition:width .25s;"></div></div>
+            <div style="font: 700 10.5px Orbitron, sans-serif; letter-spacing: 2px; color: #cbb8e8;">현재 퀘스트</div>
+            <div class="quest-title" style="margin-top: 5px; font-size: 15px; font-weight: 800; color: #fff1d1;"></div>
+            <div class="quest-description" style="margin-top: 4px; color: #d7cbe1; font-size: 12px; line-height: 1.35;"></div>
+            <div class="quest-progress-text" style="margin-top: 8px; color: #b7f3ff; font-size: 11.5px; font-weight: 700;"></div>
+            <div style="height: 6px; margin-top: 5px; overflow: hidden; border-radius: 999px; background: #1c1726; border: 1px solid #4e3d5e;"><div class="quest-progress-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#8c63b5,#c7a3ef); transition:width .25s;"></div></div>
             <button class="quest-reward-claim" type="button" style="
-                display:none; margin-top:12px; width:100%; padding:10px 9px; border:1px solid #6be3a8;
+                display:none; margin-top:9px; width:100%; padding:8px 9px; border:1px solid #6be3a8;
                 border-radius:7px; background:linear-gradient(180deg,#2f8a5c,#175236); color:#e8fff2;
                 font:800 12.5px Inter, sans-serif; cursor:pointer;
                 box-shadow:0 0 14px rgba(107,227,168,.35);
@@ -2000,8 +2041,9 @@ export class UI {
             width: 100%;
             flex: 0 1 auto;
             min-height: 0;
-            overflow: hidden;
-            padding: 12px 14px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 10px 12px;
             box-sizing: border-box;
             border: 2px solid #8a5a6e;
             border-radius: 10px;
@@ -2018,28 +2060,28 @@ export class UI {
                     <button class="auto-combat-toggle" type="button">⚔ 자동 전투 ON</button>
                 </div>
             </div>
-            <div class="target-affix" style="display:none; margin-top:6px; padding:5px 7px; border-radius:5px; background:rgba(122,70,38,.22); border:1px solid rgba(255,178,95,.35); color:#ffd39a; font-size:11px; line-height:1.35;"></div>
-            <div class="combat-status" style="margin-top:9px; font-size:12.5px; color:#d7cbe1; line-height:1.5;"></div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:7px;">
+            <div class="target-affix" style="display:none; margin-top:5px; padding:4px 7px; border-radius:5px; background:rgba(122,70,38,.22); border:1px solid rgba(255,178,95,.35); color:#ffd39a; font-size:10.5px; line-height:1.3;"></div>
+            <div class="combat-status" style="margin-top:7px; font-size:12px; color:#d7cbe1; line-height:1.4;"></div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px;">
                 <button class="retreat-button" type="button">↩ 긴급 철수</button>
                 <button class="dodge-button" type="button">💨 회피 [SPACE]</button>
             </div>
-            <div class="skill-bar" style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:8px;">
+            <div class="skill-bar" style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:6px;">
                 <button class="skill-button skill-lightning" data-skill="lightning" type="button"><b>⚡</b><span>천둥폭우</span><small>Q · 8초</small></button>
                 <button class="skill-button skill-nova" data-skill="nova" type="button"><b>✦</b><span>대폭발</span><small>E · 12초</small></button>
                 <button class="skill-button skill-meteor" data-skill="meteor" type="button"><b>☄</b><span>지옥 운석</span><small>R · 18초</small></button>
             </div>
-            <div class="mining-risk" style="margin-top:8px; display:none;">
+            <div class="mining-risk" style="margin-top:6px; display:none;">
                 <div style="display:flex; justify-content:space-between; font-size:10.5px; color:#cdbfd7;">
                     <span>⛏ 채굴 소음</span><b class="risk-value" style="font-family:Orbitron,sans-serif;"></b>
                 </div>
-                <div style="height:7px; margin-top:4px; border-radius:999px; overflow:hidden; background:#17131c; border:1px solid #4d4257;">
+                <div style="height:6px; margin-top:4px; border-radius:999px; overflow:hidden; background:#17131c; border:1px solid #4d4257;">
                     <div class="risk-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#6fb08a,#ffd166,#ff6b5e); transition:width .2s;"></div>
                 </div>
-                <div class="risk-hint" style="margin-top:4px; font-size:10.5px; color:#9f91aa;"></div>
+                <div class="risk-hint" style="margin-top:3px; font-size:10.5px; color:#9f91aa;"></div>
             </div>
             <button class="wave-start" type="button">🛡 광산 방어 시작</button>
-            <div class="combat-feed" style="margin-top:9px; display:grid; gap:3px; font-size:11.5px; line-height:1.45; overflow:hidden;"></div>
+            <div class="combat-feed" style="margin-top:7px; display:grid; gap:2px; font-size:11px; line-height:1.35; overflow:hidden;"></div>
         `;
         if (this.leftRail) {
             // Sits between the quest panel and the bottom-pinned HUD.
@@ -2102,7 +2144,7 @@ export class UI {
 
         const waveStart = this.combatPanel.querySelector('.wave-start');
         waveStart.style.cssText = `
-            margin-top:10px; width:100%; padding:10px 9px; border:1px solid #6fb8d1;
+            margin-top:7px; width:100%; padding:10px 9px; border:1px solid #6fb8d1;
             border-radius:7px; background:linear-gradient(180deg,#245c74,#12303f); color:#dff3fa;
             font:800 12.5px Inter, sans-serif; cursor:pointer;
             box-shadow:0 0 14px rgba(90,180,215,.3);
@@ -3035,14 +3077,6 @@ export class UI {
         equipName.style.color = equipInfo.color;
 
         this.hud.querySelector('.craft-open').textContent = `🔨 아이템 제작 · 장비창 열기${equipInfo.recipeSuffix}`;
-
-        this.hud.querySelector('.inv-coal').textContent = `석탄: ${inventory.coal}`;
-        this.hud.querySelector('.inv-iron').textContent = `철광석: ${inventory.iron}`;
-        this.hud.querySelector('.inv-frostite').textContent = `빙정석: ${inventory.frostite}`;
-        this.hud.querySelector('.inv-gold').textContent = `금광석: ${inventory.gold}`;
-        this.hud.querySelector('.inv-obsidian').textContent = `흑요석: ${inventory.obsidian}`;
-        this.hud.querySelector('.inv-mithril').textContent = `미스릴: ${inventory.mithril}`;
-        this.hud.querySelector('.inv-sunstone').textContent = `태양석: ${inventory.sunstone}`;
 
         // Keep the status window live while it is open.
         if (this.statusOpen) this.renderStatusWindow();
