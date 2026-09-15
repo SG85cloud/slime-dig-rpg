@@ -2181,6 +2181,7 @@ export class UI {
                 <div class="target-name" style="font-size:14px; font-weight:800; color:#ffd9cf;"></div>
                 <div class="target-hp" style="font:700 12px Orbitron, sans-serif; color:#ffb3a6;"></div>
             </div>
+            <div class="target-element" style="display:none; margin-top:5px; width:max-content; max-width:100%; padding:3px 8px; box-sizing:border-box; border:1px solid #a2495a; border-radius:999px; color:#ffd9cf; background:rgba(255,255,255,.06); font:800 10px Inter, sans-serif; letter-spacing:.6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
             <div style="height:9px; margin-top:7px; border-radius:999px; overflow:hidden; background:#2a1119; border:1px solid #8c4353;">
                 <div class="target-bar" style="height:100%; width:100%; background:linear-gradient(90deg,#ff5b61,#ffb06b); transition:width .12s linear;"></div>
             </div>
@@ -2661,11 +2662,29 @@ export class UI {
             this.targetPlate.querySelector('.target-hp').textContent =
                 `${Math.ceil(combat.target.hp)} / ${combat.target.maxHp}`;
             this.targetPlate.querySelector('.target-bar').style.width = `${ratio * 100}%`;
+            const elementEl = this.targetPlate.querySelector('.target-element');
+            if (elementEl) {
+                if (combat.target.isFinalBoss && combat.target.element) {
+                    const tint = combat.target.elementTint || '#a2495a';
+                    elementEl.textContent = `ELEMENT · ${combat.target.element}`;
+                    elementEl.style.display = 'block';
+                    elementEl.style.color = tint;
+                    elementEl.style.borderColor = tint;
+                    elementEl.style.background = `${tint}22`;
+                } else {
+                    elementEl.textContent = '';
+                    elementEl.style.display = 'none';
+                }
+            }
             const pattern = combat.target.pattern || 'basic';
             const patternNames = { lunge:'돌진', slam:'지면 강타', volley:'삼연발', boss:'지면분쇄' };
             const patternEl = this.targetPlate.querySelector('.target-pattern');
             if (patternEl) {
-                if (combat.target.patternState === 'windup') {
+                if (combat.target.abilityCasting) {
+                    patternEl.textContent = `☠ ${combat.target.abilityName} 시전 중! ${combat.target.abilityInstruction || ''} · ${combat.target.abilityTimer.toFixed(1)}초`;
+                    patternEl.style.color = '#ff3b5c';
+                    patternEl.style.fontWeight = '800';
+                } else if (combat.target.patternState === 'windup') {
                     patternEl.textContent = `⚠ ${patternNames[pattern] || '특수 공격'} 준비 중 · ${combat.target.patternWindup.toFixed(1)}초`;
                     patternEl.style.color = '#ff6b5e';
                     patternEl.style.fontWeight = '800';

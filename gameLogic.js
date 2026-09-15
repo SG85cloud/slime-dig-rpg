@@ -14,6 +14,7 @@ import {
 } from './crafting.js';
 import {
     ENEMY_TYPES,
+    FINAL_BOSS_TYPES,
     getWaveComposition,
     scaleEnemyStats,
     isEliteWave,
@@ -58,6 +59,33 @@ const FLOOR_THEMES = {
         lightColor: new THREE.Color(0xffd166),
         floorColor: new THREE.Color(0xe8c988),
         oreBonus: {}
+    }
+};
+
+// Elemental surface bosses each get one signature telegraphed ground hazard —
+// a warning ring, then a live zone — on its own cooldown, independent of and
+// running alongside the shared boss pattern (updateBossPhase/resolveEnemyPattern).
+// Keyed by ENEMY_TYPES id; a boss with no entry here just skips this system.
+const BOSS_ABILITY_CONFIG = {
+    frostiteGlacierBoss: {
+        name: '빙정 감속', kind: 'frost', telegraph: 1.35, cooldown: 7.1,
+        radius: 3.5, duration: 4.6, damage: 7, tick: 1.15, slow: 0.38,
+        color: 0x76eaff, instruction: '푸른 빙정 지대를 벗어나세요'
+    },
+    voidAbyssBoss: {
+        name: '공허 균열', kind: 'void', telegraph: 1.2, cooldown: 7.8,
+        radius: 3.2, duration: 3.8, damage: 9, tick: 1.0, slow: 0,
+        color: 0x8a5fff, instruction: '보라색 균열 밖으로 피하세요'
+    },
+    moltenObsidianBoss: {
+        name: '용암 웅덩이', kind: 'lava', telegraph: 1.5, cooldown: 6.6,
+        radius: 3.8, duration: 5.2, damage: 8, tick: 1.0, slow: 0.15,
+        color: 0xff5a2e, instruction: '붉은 용암 지대를 벗어나세요'
+    },
+    sunstoneSolarBoss: {
+        name: '태양 폭발', kind: 'solar', telegraph: 1.6, cooldown: 8.4,
+        radius: 4.2, duration: 0, damage: 26, tick: 0, slow: 0,
+        color: 0xffe14a, instruction: '노란 원 밖으로 피하세요!'
     }
 };
 
@@ -1540,6 +1568,10 @@ export class Game {
             bossTransitioning: false,
             bossSummonCooldown: 0,
             bossHazardCooldown: 0,
+            element: config.element || null,
+            bossAbility: BOSS_ABILITY_CONFIG[config.id]
+                ? { config: BOSS_ABILITY_CONFIG[config.id], state: 'cooldown', timer: BOSS_ABILITY_CONFIG[config.id].cooldown * 0.45, mesh: null, zonePosition: null, tickTimer: 0 }
+                : null,
             xp: config.xp,
             isQuestEnemy: !!options.isQuestEnemy,
             isFieldEnemy: !!options.isFieldEnemy,
@@ -2944,6 +2976,114 @@ export class Game {
         }
     }
 
+    /**
+     * Elemental boss ability: a telegraphed ground-hazard cast, independent of
+     * (and running alongside) the melee pattern/phase system above. State
+     * machine: cooldown -> casting (warning ring) -> active (live zone,
+     * ticking or one instant burst) -> cooldown again.
+     */
+    updateBossAbility(enemy, delta) {
+        const data = enemy.userData;
+        const ability = data.bossAbility;
+        if (!ability || data.dying) return;
+        const config = ability.config;
+
+        if (ability.state === 'cooldown') {
+            ability.timer -= delta;
+            if (ability.timer <= 0 && this.player && !this.isDown) {
+                ability.zonePosition = this.player.position.clone();
+                this.createBossHazardMesh(ability);
+                ability.state = 'casting';
+                ability.timer = config.telegraph;
+                this.pushCombatFeed(`☠ ${data.name}의 ${config.name}! ${config.instruction}`, '#ffb3a6');
+            }
+            return;
+        }
+
+        if (ability.state === 'casting') {
+            ability.timer -= delta;
+            if (ability.mesh) {
+                const pulse = 0.3 + Math.abs(Math.sin(this.elapsed * 9)) * 0.4;
+                ability.mesh.material.opacity = pulse;
+            }
+            if (ability.timer <= 0) this.activateBossHazard(enemy, ability);
+            return;
+        }
+
+        if (ability.state === 'active') {
+            ability.timer -= delta;
+            if (ability.mesh) ability.mesh.material.opacity = 0.24;
+            if (config.tick > 0) {
+                ability.tickTimer -= delta;
+                if (ability.tickTimer <= 0) {
+                    ability.tickTimer = config.tick;
+                    this.applyBossHazardDamage(enemy, ability);
+                }
+            }
+            if (ability.timer <= 0) this.endBossHazard(ability);
+        }
+    }
+
+    createBossHazardMesh(ability) {
+        const config = ability.config;
+        const geometry = new THREE.CircleGeometry(config.radius, 28);
+        const material = new THREE.MeshBasicMaterial({
+            color: config.color, transparent: true, opacity: 0.3, side: THREE.DoubleSide
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.copy(ability.zonePosition);
+        mesh.position.y = 0.05;
+        this.scene.add(mesh);
+        ability.mesh = mesh;
+    }
+
+    activateBossHazard(enemy, ability) {
+        const config = ability.config;
+        ability.state = 'active';
+        ability.timer = config.duration;
+        ability.tickTimer = 0;
+        this.combatFX.spawnFlash(ability.zonePosition, config.color, 60, 0.4);
+        this.combatFX.spawnShockwave(ability.zonePosition, { color: config.color, scale: config.radius * 1.8 });
+        this.app.addShake(0.5);
+        // A zero-duration hazard (the solar nova) is one instant burst, not a
+        // lingering zone — apply it immediately and clean up in the same beat.
+        if (config.duration <= 0) {
+            this.applyBossHazardDamage(enemy, ability);
+            this.endBossHazard(ability);
+        }
+    }
+
+    applyBossHazardDamage(enemy, ability) {
+        const config = ability.config;
+        const targets = this.getCombatTargetsInRadius(ability.zonePosition, config.radius);
+        targets.forEach((victim) => this.damageCombatTarget(victim, config.damage, enemy));
+        this.combatFX.spawnSparks(ability.zonePosition, { color: config.color, count: 14, speed: 5, height: 0.3 });
+    }
+
+    endBossHazard(ability) {
+        if (ability.mesh) {
+            this.scene.remove(ability.mesh);
+            ability.mesh.geometry.dispose();
+            ability.mesh.material.dispose();
+            ability.mesh = null;
+        }
+        ability.state = 'cooldown';
+        ability.timer = ability.config.cooldown;
+        ability.zonePosition = null;
+    }
+
+    /** Slows the leader while standing inside a live frost/lava hazard zone. */
+    getHazardSpeedMultiplier() {
+        if (!this.player) return 1;
+        const boss = this.enemies.find((e) => e.userData.isFinalBoss && e.userData.bossAbility?.state === 'active');
+        const ability = boss?.userData.bossAbility;
+        if (!ability || !ability.config.slow || !ability.zonePosition) return 1;
+        const distance = this.player.position.distanceTo(ability.zonePosition);
+        if (distance > ability.config.radius) return 1;
+        return 1 - ability.config.slow;
+    }
+
     /** Applies damage to a monster with full visual feedback. */
     damageEnemy(enemy, rawDamage, options = {}) {
         if (!enemy || enemy.userData.dying) return 0;
@@ -2993,6 +3133,8 @@ export class Game {
         if (enemy.userData.dying) return;
         enemy.userData.dying = true;
         enemy.userData.deathTimer = 0.55;
+        // A boss killed mid-cast shouldn't leave its telegraph/hazard ring behind.
+        if (enemy.userData.bossAbility?.mesh) this.endBossHazard(enemy.userData.bossAbility);
 
         this.combatFX.spawnShockwave(enemy.position, {
             color: enemy.userData.elite ? 0xff7a4a : 0xff5a5a,
@@ -3507,6 +3649,10 @@ export class Game {
             if (data.patternWindup <= 0) this.resolveEnemyPattern(enemy);
         }
 
+        // Elemental boss ability runs on its own independent cooldown/cast
+        // timer, alongside (not instead of) the melee pattern above.
+        if (data.isFinalBoss && data.bossAbility) this.updateBossAbility(enemy, delta);
+
         data.bob += delta * (data.style === 'melee' ? 5.5 : 3.4);
         const target = this.acquireEnemyTarget(enemy);
         const toTarget = target
@@ -3914,7 +4060,7 @@ export class Game {
 
         if (distance > range) {
             // Chase: override the click destination while a fight is live.
-            const step = Math.min(delta * 5.4 * this.traitEffects.moveSpeedMult, distance - range * 0.7);
+            const step = Math.min(delta * 5.4 * this.traitEffects.moveSpeedMult * this.getHazardSpeedMultiplier(), distance - range * 0.7);
             this.player.position.addScaledVector(toTarget, Math.max(0, step));
             this.player.position.y = this.player.userData.baseY || 0.5;
             this.playerData.targetPos.copy(this.player.position);
@@ -4004,13 +4150,16 @@ export class Game {
         this.wave = Math.max(1, this.wave);
         this.enterCombatArena(this.wave, { boss: true, duration: 9999 });
 
-        const boss = this.spawnEnemy('overlord', { distance: 8.5, angle: Math.PI / 2, origin: new THREE.Vector3() });
+        // A different final boss each cycle (the original overlord, plus four
+        // elemental alternates) keeps the surface fight from going stale in NG+.
+        const bossTypeId = FINAL_BOSS_TYPES[Math.floor(Math.random() * FINAL_BOSS_TYPES.length)];
+        const bossConfig = ENEMY_TYPES[bossTypeId] || ENEMY_TYPES.overlord;
+        const boss = this.spawnEnemy(bossTypeId, { distance: 8.5, angle: Math.PI / 2, origin: new THREE.Vector3() });
         if (boss) {
-            const scaled = scaleEnemyStats(ENEMY_TYPES.overlord, this.wave + 6);
+            const scaled = scaleEnemyStats(bossConfig, this.wave + 6);
             boss.userData.hp = Math.round(scaled.hp * 1.6 * (1 + this.cycle * 0.25));
             boss.userData.maxHp = boss.userData.hp;
             boss.userData.damage = Math.round(scaled.damage * 1.3 * (1 + this.cycle * 0.15));
-            boss.userData.name = '광산 점령자';
             boss.userData.isFinalBoss = true;
             boss.userData.bossPhase = 1;
             boss.userData.bossSummonCooldown = 5.0;
@@ -4020,8 +4169,8 @@ export class Game {
         this.spawnEnemy('brute', { distance: 6.5, angle: Math.PI / 2 + 1.3, origin: new THREE.Vector3() });
 
         this.waveEnemyTotal = this.enemies.length;
-        this.app.ui.showBanner('⚔ 광산 점령전', '지상을 지키는 세력을 물리치세요!', '#ff7a4a');
-        this.pushCombatFeed('⚔ 광산 점령자가 나타났습니다!', '#ff7a4a');
+        this.app.ui.showBanner('⚔ 광산 점령전', `${bossConfig.name}이(가) 지상을 지킵니다!`, '#ff7a4a');
+        this.pushCombatFeed(`⚔ ${bossConfig.name}이(가) 나타났습니다!`, '#ff7a4a');
         this.persist();
     }
 
@@ -4472,7 +4621,15 @@ export class Game {
                     pattern: target.userData.pattern || 'basic',
                     patternState: target.userData.patternState || 'ready',
                     patternWindup: Math.max(0, target.userData.patternWindup || 0),
-                    enraged: !!target.userData.enraged
+                    enraged: !!target.userData.enraged,
+                    element: target.userData.element || null,
+                    elementTint: target.userData.tint != null ? `#${target.userData.tint.toString(16).padStart(6, '0')}` : null,
+                    abilityCasting: target.userData.bossAbility
+                        ? (target.userData.bossAbility.state === 'casting' || target.userData.bossAbility.state === 'active')
+                        : false,
+                    abilityName: target.userData.bossAbility?.config.name || '',
+                    abilityInstruction: target.userData.bossAbility?.config.instruction || '',
+                    abilityTimer: Math.max(0, target.userData.bossAbility?.timer || 0)
                 }
                 : null,
             feed: this.combatFeed.slice(0, 4)
@@ -5300,7 +5457,7 @@ export class Game {
             const moveDistance = moveDir.length();
             if (moveDistance > 0.06) {
                 moveDir.normalize();
-                const step = Math.min(delta * 5 * this.traitEffects.moveSpeedMult, moveDistance);
+                const step = Math.min(delta * 5 * this.traitEffects.moveSpeedMult * this.getHazardSpeedMultiplier(), moveDistance);
                 this.player.position.add(moveDir.multiplyScalar(step));
                 this.player.position.y = this.player.userData.baseY || 0.5;
                 this.player.lookAt(this.player.position.clone().add(moveDir));

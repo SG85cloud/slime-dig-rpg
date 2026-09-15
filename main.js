@@ -75,6 +75,10 @@ class App {
             'fungalOgre': 'assets/models/fungal-ogre.glb',
             'ironGolem': 'assets/models/iron-golem.glb',
             'overlord': 'assets/models/mine-overlord.glb',
+            'frostiteGlacierBoss': 'assets/models/frostite-glacier-slime-boss.glb',
+            'voidAbyssBoss': 'assets/models/void-abyss-slime-boss.glb',
+            'moltenObsidianBoss': 'assets/models/molten-obsidian-slime-boss.glb',
+            'sunstoneSolarBoss': 'assets/models/sunstone-solar-slime-boss.glb',
             'floor': 'assets/dungeon-floor.webp'
         };
 

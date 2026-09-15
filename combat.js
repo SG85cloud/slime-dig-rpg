@@ -183,9 +183,88 @@ export const ENEMY_TYPES = {
         tint: 0xff7a4a,
         xp: 90,
         elite: true,
-        pattern: 'boss'
+        pattern: 'boss',
+        element: '용암'
+    },
+    // Elemental surface bosses: alternates for the final "광산 점령전" fight,
+    // each paired with a themed telegraphed ground-hazard ability
+    // (BOSS_ABILITY_CONFIG in gameLogic.js) on top of the shared boss pattern.
+    frostiteGlacierBoss: {
+        id: 'frostiteGlacierBoss',
+        asset: 'frostiteGlacierBoss',
+        name: '프로스티트 빙하 슬라임 군주',
+        hp: 280,
+        damage: 19,
+        attackInterval: 2.6,
+        range: 3.0,
+        moveSpeed: 1.85,
+        scale: 3.1,
+        baseY: 1.55,
+        style: 'melee',
+        tint: 0x76eaff,
+        xp: 95,
+        elite: true,
+        pattern: 'boss',
+        element: '빙정석'
+    },
+    voidAbyssBoss: {
+        id: 'voidAbyssBoss',
+        asset: 'voidAbyssBoss',
+        name: '공허 심연 슬라임 군주',
+        hp: 265,
+        damage: 21,
+        attackInterval: 2.5,
+        range: 3.0,
+        moveSpeed: 1.95,
+        scale: 3.0,
+        baseY: 1.5,
+        style: 'melee',
+        tint: 0x8a5fff,
+        xp: 95,
+        elite: true,
+        pattern: 'boss',
+        element: '공허'
+    },
+    moltenObsidianBoss: {
+        id: 'moltenObsidianBoss',
+        asset: 'moltenObsidianBoss',
+        name: '용암 흑요석 슬라임 군주',
+        hp: 300,
+        damage: 22,
+        attackInterval: 2.7,
+        range: 3.1,
+        moveSpeed: 1.8,
+        scale: 3.2,
+        baseY: 1.6,
+        style: 'melee',
+        tint: 0xff5a2e,
+        xp: 100,
+        elite: true,
+        pattern: 'boss',
+        element: '흑요석'
+    },
+    sunstoneSolarBoss: {
+        id: 'sunstoneSolarBoss',
+        asset: 'sunstoneSolarBoss',
+        name: '태양석 슬라임 군주',
+        hp: 270,
+        damage: 20,
+        attackInterval: 2.6,
+        range: 3.0,
+        moveSpeed: 1.9,
+        scale: 3.05,
+        baseY: 1.55,
+        style: 'melee',
+        tint: 0xffe14a,
+        xp: 95,
+        elite: true,
+        pattern: 'boss',
+        element: '태양석'
     }
 };
+
+/** Pool the final surface boss ("광산 점령전") is drawn from each cycle. */
+export const FINAL_BOSS_TYPES = ['overlord', 'frostiteGlacierBoss', 'voidAbyssBoss', 'moltenObsidianBoss', 'sunstoneSolarBoss'];
 
 /** Wave table: which monsters show up as the mine gets deeper. */
 export const WAVE_TABLE = [
