@@ -307,6 +307,19 @@ export class Game {
         this.bossRewardPending = null;
         this.cycleModifier = null;
 
+        // Contested mine: a short bonus field unlocked after the first surface
+        // run. Whoever clears it fastest in this multiplayer room owns it —
+        // one-time reward plus standing bonus-mining rights until dethroned.
+        this.contestedMineUnlocked = false;
+        this.mineRaceActive = false;
+        this.mineRaceElapsed = 0;
+        this.mineRaceNodesTotal = 0;
+        this.mineRaceNodesCleared = 0;
+        this.mineRaceBonusMode = false;
+        this.mineRaceStash = null;
+        this.mineOwner = null;
+        this.isMineOwner = false;
+
         // Spent on rerollTrait() to swap the one innate trait for a fresh roll.
         this.traitRerollTickets = 0;
 
@@ -441,6 +454,7 @@ export class Game {
         // Multiplayer sync
         this.app.multiplayer.subscribeToPlayers((peers) => this.syncPlayers(peers));
         this.app.multiplayer.onEvent?.((event) => this.handlePeerEvent(event));
+        this.app.multiplayer.subscribeMineOwner?.((record) => this.onMineOwnerUpdate(record));
     }
 
     // Innate traits are stored by id, so a returning leader is exactly the same
@@ -585,6 +599,7 @@ export class Game {
         if (Array.isArray(saved.bossRelics)) this.bossRelics = saved.bossRelics.filter(r => r && r.id).slice(-5);
         if (saved.bossRewardPending && Array.isArray(saved.bossRewardPending.choices)) this.bossRewardPending = saved.bossRewardPending;
         if (saved.cycleModifier && saved.cycleModifier.id) this.cycleModifier = saved.cycleModifier;
+        if (typeof saved.contestedMineUnlocked === 'boolean') this.contestedMineUnlocked = saved.contestedMineUnlocked;
         if (typeof saved.surfaceConquered === 'boolean') this.surfaceConquered = saved.surfaceConquered;
         if (typeof saved.floorReadyToAscend === 'boolean') this.floorReadyToAscend = saved.floorReadyToAscend;
 
@@ -719,6 +734,7 @@ export class Game {
             bossRelics: this.bossRelics.map(r => ({ ...r })),
             bossRewardPending: this.bossRewardPending ? { ...this.bossRewardPending, choices: this.bossRewardPending.choices.map(c => ({ ...c })) } : null,
             cycleModifier: this.cycleModifier ? { ...this.cycleModifier } : null,
+            contestedMineUnlocked: !!this.contestedMineUnlocked,
             floorReadyToAscend: this.floorReadyToAscend,
             unstableHaul: this.unstableHaul || 0,
             greedSeams: this.greedSeams || 0,
@@ -1181,6 +1197,10 @@ export class Game {
             const bonus = this.awardLegacyRunPoints();
             if (bonus > 0) {
                 this.pushCombatFeed(`유산 포인트 +${bonus} 획득! 다음 광부에게 물려줄 수 있습니다.`, '#c9a6ff');
+            }
+            if (!this.contestedMineUnlocked) {
+                this.contestedMineUnlocked = true;
+                this.pushCombatFeed('⚔ 쟁탈 광산이 해금되었습니다! 가장 빨리 클리어하면 소유권을 가져갑니다.', '#ffe39a');
             }
             if (!this.surfaceConquered) setTimeout(() => this.startFinalBossWave(), 1600);
         }
@@ -1838,6 +1858,143 @@ export class Game {
         this.app.ui.hideCombatArena?.();
     }
 
+    // -------------------------------------------------------- contested mine
+    // A short bonus field, unlocked once the leader has reached the surface.
+    // Whoever clears it fastest in this multiplayer room "owns" it: a one-time
+    // reward plus standing rights to re-enter for free bonus ore, both of
+    // which flip to the next record-holder the instant a faster time lands.
+    enterContestedMine(options = {}) {
+        if (!this.contestedMineUnlocked) return { ok: false, reason: '아직 쟁탈 광산이 해금되지 않았습니다.' };
+        if (this.mineRaceActive) return { ok: false, reason: '이미 쟁탈 광산에 있습니다.' };
+        if (this.arenaActive || this.finalBossActive || this.waveActive) {
+            return { ok: false, reason: '전투 중에는 입장할 수 없습니다.' };
+        }
+        if (this.enemies.some((enemy) => !enemy.userData.dying)) {
+            return { ok: false, reason: '주변의 몬스터를 정리한 뒤 입장하세요.' };
+        }
+        if (options.bonusMode && !this.isMineOwner) {
+            return { ok: false, reason: '지금은 소유자만 보너스 채굴을 할 수 있습니다.' };
+        }
+
+        this.mineRaceBonusMode = !!options.bonusMode;
+        this.mineRaceStash = { nodes: this.nodes, chests: this.chests };
+        this.nodes.forEach((node) => { node.visible = false; });
+        this.chests.forEach((chest) => { chest.visible = false; });
+        this.nodes = [];
+
+        const count = 14;
+        for (let i = 0; i < count; i++) {
+            const node = this.spawnNode();
+            if (node) node.userData.isRaceNode = true;
+        }
+        this.mineRaceNodesTotal = count;
+        this.mineRaceNodesCleared = 0;
+        this.mineRaceActive = true;
+        this.mineRaceElapsed = 0;
+        this.playerData.miningTarget = null;
+
+        this.app.ui.showBanner(
+            this.mineRaceBonusMode ? '⛏ 보너스 채굴 시작' : '⏱ 쟁탈 광산 입장',
+            this.mineRaceBonusMode ? '소유자 전용 무료 채굴 — 기록에는 반영되지 않습니다.' : `광맥 ${count}개를 가장 빨리 캐내야 합니다!`,
+            '#8fe4ff'
+        );
+        this.persist();
+        return { ok: true };
+    }
+
+    /** Shared restore step for both a full clear and an early abandon. */
+    restoreFromMineRace() {
+        this.nodes.forEach((node) => this.scene.remove(node));
+        this.nodes = this.mineRaceStash?.nodes || [];
+        this.chests = this.mineRaceStash?.chests || [];
+        this.nodes.forEach((node) => { node.visible = true; });
+        this.chests.forEach((chest) => { chest.visible = true; });
+        this.mineRaceStash = null;
+        this.playerData.miningTarget = null;
+    }
+
+    /** Leaving early forfeits the attempt — no time submitted, no reward. */
+    exitContestedMine() {
+        if (!this.mineRaceActive) return { ok: false, reason: '진행 중인 쟁탈 광산이 없습니다.' };
+        this.mineRaceActive = false;
+        this.mineRaceBonusMode = false;
+        this.restoreFromMineRace();
+        this.pushCombatFeed('↩ 쟁탈 광산에서 물러났습니다.', '#a99bb8');
+        this.persist();
+        return { ok: true };
+    }
+
+    completeMineRace() {
+        this.mineRaceActive = false;
+        const finalTimeMs = Math.round(this.mineRaceElapsed * 1000);
+        const wasBonusRun = this.mineRaceBonusMode;
+        this.mineRaceBonusMode = false;
+        this.restoreFromMineRace();
+
+        if (wasBonusRun) {
+            this.app.ui.showBanner('⛏ 보너스 채굴 완료', '소유권을 유지하는 한 언제든 다시 캘 수 있습니다.', '#8fe4ff');
+            this.persist();
+            return;
+        }
+
+        // Known limitation: this check is only optimistic. The room's live
+        // subscribeMineOwner feed (see onMineOwnerUpdate) is the actual source
+        // of truth — see multiplayer.js for the last-write-wins caveat.
+        const isNewRecord = !this.mineOwner || finalTimeMs < this.mineOwner.timeMs;
+        if (isNewRecord) {
+            const playerName = `광부 #${(this.profileId || '0000').slice(-4)}`;
+            this.app.multiplayer.submitMineClearTime?.({ timeMs: finalTimeMs, playerName, profileId: this.profileId });
+            this.app.multiplayer.broadcastEvent?.('mine_captured', { playerName, timeMs: finalTimeMs });
+
+            const goldReward = 60 + this.cycle * 15;
+            const legacyReward = 15 + this.cycle * 3;
+            this.inventory.gold += goldReward;
+            this.meta.legacyPoints = (this.meta.legacyPoints || 0) + legacyReward;
+            saveMeta(this.profileId, this.meta);
+
+            this.app.ui.showBanner(
+                '👑 쟁탈 광산 점령!',
+                `${(finalTimeMs / 1000).toFixed(1)}초 · 금광석 +${goldReward} · 유산 포인트 +${legacyReward}`,
+                '#ffe39a'
+            );
+            this.pushCombatFeed(`👑 쟁탈 광산을 점령했습니다! 기록 ${(finalTimeMs / 1000).toFixed(1)}초`, '#ffe39a');
+            this.app.ui.showMineRaceResult?.({ won: true, timeMs: finalTimeMs, goldReward, legacyReward });
+        } else {
+            this.app.ui.showBanner('⏱ 도전 완료', `${(finalTimeMs / 1000).toFixed(1)}초 — 최고 기록에는 못 미쳤습니다.`, '#a99bb8');
+            this.pushCombatFeed(`⏱ 쟁탈 광산 클리어: ${(finalTimeMs / 1000).toFixed(1)}초 (최고 기록 ${(this.mineOwner.timeMs / 1000).toFixed(1)}초)`, '#a99bb8');
+            this.app.ui.showMineRaceResult?.({ won: false, timeMs: finalTimeMs, bestTimeMs: this.mineOwner.timeMs });
+        }
+        this.persist();
+    }
+
+    /** Reacts to every push from the room's shared mine-owner record. */
+    onMineOwnerUpdate(record) {
+        const wasOwner = this.isMineOwner;
+        this.mineOwner = record;
+        this.isMineOwner = !!record && record.profileId === this.profileId;
+        if (this.isMineOwner && !wasOwner) {
+            this.app.ui.showBanner('👑 쟁탈 광산 소유권 획득!', '이제 이 광산에서 보너스 채굴을 할 수 있습니다.', '#ffe39a');
+            this.pushCombatFeed('👑 쟁탈 광산의 소유자가 되었습니다!', '#ffe39a');
+        } else if (!this.isMineOwner && wasOwner) {
+            this.app.ui.showBanner('⚠ 쟁탈 광산 소유권 상실', '다른 광부가 더 빠른 기록을 세웠습니다.', '#ff9c9c');
+            this.pushCombatFeed('⚠ 쟁탈 광산의 소유권을 잃었습니다.', '#ff9c9c');
+        }
+    }
+
+    /** Everything the HUD needs to render the contested-mine panel. */
+    getContestedMineData() {
+        return {
+            unlocked: this.contestedMineUnlocked,
+            ownerName: this.mineOwner?.playerName || null,
+            bestTimeMs: this.mineOwner?.timeMs ?? null,
+            isOwner: this.isMineOwner,
+            active: this.mineRaceActive,
+            bonusMode: this.mineRaceBonusMode,
+            raceElapsedMs: this.mineRaceActive ? Math.round(this.mineRaceElapsed * 1000) : 0,
+            nodesCleared: this.mineRaceNodesCleared,
+            nodesTotal: this.mineRaceNodesTotal
+        };
+    }
 
     pushCombatFeed(text, color = '#ded0e9') {
         this.combatFeed.unshift({ text, color, time: this.elapsed });
@@ -2109,6 +2266,16 @@ export class Game {
         this.app.ui.setQuestRewardHandler(() => this.claimQuestReward());
         this.app.ui.setMineEventHandler?.((choiceId) => this.resolveMineEvent(choiceId));
         this.app.ui.setBossRewardHandler?.((choiceId) => this.claimBossReward(choiceId));
+        // Contested mine: enter to race for ownership, or (owner-only) mine it for free.
+        this.app.ui.setContestedMineEnterHandler?.(() => {
+            const result = this.enterContestedMine();
+            if (!result.ok) this.pushCombatFeed(result.reason, '#ff9c9c');
+        });
+        this.app.ui.setContestedMineBonusHandler?.(() => {
+            const result = this.enterContestedMine({ bonusMode: true });
+            if (!result.ok) this.pushCombatFeed(result.reason, '#ff9c9c');
+        });
+        this.app.ui.setContestedMineExitHandler?.(() => this.exitContestedMine());
         // Status window: spend a ticket to reroll the leader's innate trait.
         this.app.ui.setTraitRerollHandler(() => this.rerollTrait());
         // Depth panel: climb to the next floor once its quota is met.
@@ -5080,6 +5247,7 @@ export class Game {
         // nowhere in one step. Cap it the same way the camera smoothing does.
         delta = Math.min(delta, 0.1);
         this.elapsed += delta;
+        if (this.mineRaceActive) this.mineRaceElapsed += delta;
         this.environment?.update(delta, this.elapsed);
 
         // Periodic autosave keeps progression safe without hammering storage.
@@ -5217,7 +5385,8 @@ export class Game {
             this.getDepthData(),
             this.getFacilitiesData(),
             this.getMetaData(),
-            this.getWorkerData()
+            this.getWorkerData(),
+            this.getContestedMineData()
         );
     }
 
@@ -5509,20 +5678,27 @@ export class Game {
                 if (worker.userData.miningTarget === node) worker.userData.miningTarget = null;
             });
 
-            // Emptying a seam is progress toward stripping this floor bare.
-            this.floorNodesCleared += 1;
-            if (this.depth > 0 && this.isFloorCleared()) {
-                if (!this.floorReadyToAscend) {
-                    this.floorReadyToAscend = true;
-                    this.pushCombatFeed(
-                        `${this.getFloorLabel()}의 광맥을 모두 캐냈습니다! 다음 층으로 이동할 수 있습니다.`,
-                        '#8fe4ff'
-                    );
-                    this.persist();
+            if (node.userData.isRaceNode) {
+                // Contested-mine seam: tracked separately from the normal floor
+                // quota so it never touches floorNodesCleared/replace-on-deplete.
+                this.mineRaceNodesCleared += 1;
+                if (this.mineRaceNodesCleared >= this.mineRaceNodesTotal) this.completeMineRace();
+            } else {
+                // Emptying a seam is progress toward stripping this floor bare.
+                this.floorNodesCleared += 1;
+                if (this.depth > 0 && this.isFloorCleared()) {
+                    if (!this.floorReadyToAscend) {
+                        this.floorReadyToAscend = true;
+                        this.pushCombatFeed(
+                            `${this.getFloorLabel()}의 광맥을 모두 캐냈습니다! 다음 층으로 이동할 수 있습니다.`,
+                            '#8fe4ff'
+                        );
+                        this.persist();
+                    }
+                } else if (this.depth > 0) {
+                    // Replace it so the floor always has something left to work.
+                    this.spawnNode();
                 }
-            } else if (this.depth > 0) {
-                // Replace it so the floor always has something left to work.
-                this.spawnNode();
             }
         } else {
             // A partially mined vein visibly shrinks but stays minable.
@@ -5619,6 +5795,9 @@ export class Game {
             this.pushCombatFeed(`🔔 다른 광부가 웨이브 ${event.wave}에서 쓰러졌습니다…`, '#ff9c9c');
         } else if (event.type === 'floor_ascend') {
             this.pushCombatFeed(`🔔 다른 광부가 ${this.getFloorLabel(event.floor)}(으)로 올라갔습니다.`, '#8fe4ff');
+        } else if (event.type === 'mine_captured') {
+            const seconds = ((event.timeMs || 0) / 1000).toFixed(1);
+            this.pushCombatFeed(`👑 ${event.playerName || '다른 광부'}이(가) 쟁탈 광산을 ${seconds}초에 점령했습니다!`, '#ffe39a');
         }
     }
 }

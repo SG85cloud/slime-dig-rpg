@@ -45,6 +45,7 @@ export class UI {
         this.initTraitCodex();
         this.initDepthPanel();
         this.initQuestPanel();
+        this.initContestedMinePanel();
         this.initStatPanel();
         this.initCommandPanel();
         this.initBattleOverlay();
@@ -1441,6 +1442,160 @@ export class UI {
             ? 'linear-gradient(90deg,#54d6aa,#b7f3ff)'
             : `linear-gradient(90deg, ${quest.accent || '#8c63b5'}, #c7a3ef)`;
         this.questPanel.querySelector('.quest-reward-claim').style.display = quest.rewardReady ? 'block' : 'none';
+    }
+
+    // --------------------------------------------------------- contested mine
+    // A short bonus field, unlocked after the leader's first surface run.
+    // Fastest room-wide clear owns it: a live HUD readout (mirrors the depth
+    // panel's shell) plus a compact post-run result popup (mirrors boss reward).
+    formatRaceTime(ms) {
+        const totalMs = Math.max(0, Math.round(ms || 0));
+        const minutes = Math.floor(totalMs / 60000);
+        const seconds = ((totalMs % 60000) / 1000).toFixed(1);
+        return minutes > 0 ? `${minutes}:${seconds.padStart(4, '0')}` : `${seconds}초`;
+    }
+
+    initContestedMinePanel() {
+        this.ensureLeftRail();
+
+        this.contestedMinePanel = document.createElement('div');
+        this.contestedMinePanel.style.cssText = `
+            position: relative;
+            width: 100%;
+            flex: none;
+            padding: 11px 13px;
+            box-sizing: border-box;
+            background: linear-gradient(145deg, rgba(42, 26, 14, 0.4), rgba(15, 10, 6, 0.32));
+            border: 2px solid rgba(255, 178, 95, 0.5);
+            border-radius: 10px;
+            box-shadow: 0 0 14px rgba(180, 100, 40, 0.2);
+            pointer-events: auto;
+            font-family: Inter, sans-serif;
+            display: none;
+        `;
+        this.contestedMinePanel.innerHTML = `
+            <div style="font: 700 10.5px Orbitron, sans-serif; letter-spacing: 2px; color: #ffcf9a;">⚔ 쟁탈 광산</div>
+            <div class="cmine-status" style="margin-top: 5px; font-size: 11.5px; color: #e8d9c8; line-height: 1.4;"></div>
+            <div class="cmine-progress" style="display:none; margin-top: 6px; font-size: 11px; color: #ffe39a;"></div>
+            <button class="cmine-enter" type="button" style="
+                display:none; margin-top:8px; width:100%; padding:7px 8px;
+                border:1px solid #ff9c4a; border-radius:7px; background:linear-gradient(180deg,#7a4520,#4a2810);
+                color:#ffe8d0; font:800 11.5px Inter, sans-serif; cursor:pointer;
+            ">⏱ 도전 시작</button>
+            <button class="cmine-bonus" type="button" style="
+                display:none; margin-top:6px; width:100%; padding:7px 8px;
+                border:1px solid #ffe39a; border-radius:7px; background:linear-gradient(180deg,#7a6420,#4a3c10);
+                color:#fff6e0; font:800 11.5px Inter, sans-serif; cursor:pointer;
+            ">👑 보너스 채굴</button>
+            <button class="cmine-exit" type="button" style="
+                display:none; margin-top:6px; width:100%; padding:7px 8px;
+                border:1px solid #6c568d; border-radius:7px; background:rgba(255,255,255,.06);
+                color:#e8dcf5; font:700 11px Inter, sans-serif; cursor:pointer;
+            ">↩ 물러나기</button>
+        `;
+        // Insert above the HUD, same rail-ordering rule the quest panel uses.
+        this.leftRail.insertBefore(this.contestedMinePanel, this.hud || null);
+
+        this.contestedMinePanel.querySelector('.cmine-enter').addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.contestedMineEnterHandler) this.contestedMineEnterHandler();
+        });
+        this.contestedMinePanel.querySelector('.cmine-bonus').addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.contestedMineBonusHandler) this.contestedMineBonusHandler();
+        });
+        this.contestedMinePanel.querySelector('.cmine-exit').addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.contestedMineExitHandler) this.contestedMineExitHandler();
+        });
+
+        // Compact post-run result popup — same lazy-overlay pattern as showBossReward.
+        this.mineRaceResultOverlay = document.createElement('div');
+        this.mineRaceResultOverlay.style.cssText = `position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;background:rgba(6,4,10,.82);backdrop-filter:blur(4px);z-index:101;pointer-events:auto;`;
+        this.mineRaceResultOverlay.innerHTML = `
+            <div style="width:min(420px,94vw); padding:22px; box-sizing:border-box; border:2px solid #ff9c4a;
+                border-radius:15px; background:linear-gradient(160deg,rgba(42,26,14,.98),rgba(11,9,7,.98));
+                text-align:center; font-family:Inter,sans-serif;">
+                <div class="cmine-result-title" style="font:800 clamp(18px,3vw,24px) Orbitron,sans-serif; color:#ffe39a;"></div>
+                <div class="cmine-result-detail" style="margin-top:10px; color:#e8d9c8; font-size:13px; line-height:1.6;"></div>
+                <button class="cmine-result-close" type="button" style="
+                    margin-top:18px; width:100%; padding:9px; border:1px solid #ff9c4a; border-radius:7px;
+                    background:linear-gradient(180deg,#7a4520,#4a2810); color:#ffe8d0; font:800 12px Inter,sans-serif; cursor:pointer;
+                ">확인</button>
+            </div>
+        `;
+        this.container.appendChild(this.mineRaceResultOverlay);
+        this.mineRaceResultOverlay.querySelector('.cmine-result-close').addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.closeMineRaceResult();
+        });
+    }
+
+    setContestedMineEnterHandler(handler) { this.contestedMineEnterHandler = handler; }
+    setContestedMineBonusHandler(handler) { this.contestedMineBonusHandler = handler; }
+    setContestedMineExitHandler(handler) { this.contestedMineExitHandler = handler; }
+    setMineRaceResultHandler(handler) { this.mineRaceResultHandler = handler; }
+
+    updateContestedMine(data) {
+        if (!this.contestedMinePanel) return;
+        if (!data || !data.unlocked) {
+            this.contestedMinePanel.style.display = 'none';
+            return;
+        }
+        this.contestedMinePanel.style.display = 'block';
+
+        const status = this.contestedMinePanel.querySelector('.cmine-status');
+        const progress = this.contestedMinePanel.querySelector('.cmine-progress');
+        const enterBtn = this.contestedMinePanel.querySelector('.cmine-enter');
+        const bonusBtn = this.contestedMinePanel.querySelector('.cmine-bonus');
+        const exitBtn = this.contestedMinePanel.querySelector('.cmine-exit');
+
+        if (data.active) {
+            status.innerHTML = data.bonusMode
+                ? `<span style="color:#ffe39a;">👑 보너스 채굴 중</span>`
+                : `<span style="color:#ff9c4a;">⏱ 도전 중</span>`;
+            progress.style.display = 'block';
+            progress.textContent = `${this.formatRaceTime(data.raceElapsedMs)} · 광맥 ${data.nodesCleared}/${data.nodesTotal}`;
+            enterBtn.style.display = 'none';
+            bonusBtn.style.display = 'none';
+            exitBtn.style.display = 'block';
+            return;
+        }
+
+        progress.style.display = 'none';
+        exitBtn.style.display = 'none';
+        if (data.ownerName) {
+            status.innerHTML = data.isOwner
+                ? `👑 <b style="color:#ffe39a;">내가 소유 중</b> · 기록 ${this.formatRaceTime(data.bestTimeMs)}`
+                : `현재 소유자: <b style="color:#ffcf9a;">${data.ownerName}</b> · 기록 ${this.formatRaceTime(data.bestTimeMs)}`;
+        } else {
+            status.textContent = '아직 아무도 점령하지 않았습니다. 가장 빨리 클리어하면 소유권을 가져갑니다!';
+        }
+        enterBtn.style.display = 'block';
+        enterBtn.textContent = data.ownerName ? '⏱ 기록 갱신 도전' : '⏱ 도전 시작';
+        bonusBtn.style.display = data.isOwner ? 'block' : 'none';
+    }
+
+    showMineRaceResult(data) {
+        if (!data || !this.mineRaceResultOverlay) return;
+        const title = this.mineRaceResultOverlay.querySelector('.cmine-result-title');
+        const detail = this.mineRaceResultOverlay.querySelector('.cmine-result-detail');
+        if (data.won) {
+            title.textContent = '👑 쟁탈 광산 점령!';
+            title.style.color = '#ffe39a';
+            detail.innerHTML = `기록 <b>${this.formatRaceTime(data.timeMs)}</b><br>금광석 +${data.goldReward} · 유산 포인트 +${data.legacyReward}`;
+        } else {
+            title.textContent = '⏱ 도전 완료';
+            title.style.color = '#e8d9c8';
+            detail.innerHTML = `내 기록 <b>${this.formatRaceTime(data.timeMs)}</b><br>최고 기록 ${this.formatRaceTime(data.bestTimeMs)}에는 못 미쳤습니다.`;
+        }
+        this.mineRaceResultOverlay.style.display = 'flex';
+    }
+
+    closeMineRaceResult() {
+        if (!this.mineRaceResultOverlay) return;
+        this.mineRaceResultOverlay.style.display = 'none';
+        if (this.mineRaceResultHandler) this.mineRaceResultHandler();
     }
 
     initTraitCodex() {
@@ -2997,9 +3152,10 @@ export class UI {
         music.play().catch(() => {});
     }
 
-    update(inventory, traits, command = this.activeCommand, workerCount = 0, playerHp = 100, maxPlayerHp = 100, quest = null, stats = null, miningProgress = null, traitData = null, equipment = null, combat = null, depth = null, facilities = null, meta = null, workerData = null) {
+    update(inventory, traits, command = this.activeCommand, workerCount = 0, playerHp = 100, maxPlayerHp = 100, quest = null, stats = null, miningProgress = null, traitData = null, equipment = null, combat = null, depth = null, facilities = null, meta = null, workerData = null, contestedMine = null) {
         this.equipmentData = equipment || this.equipmentData;
         this.updateDepth(depth);
+        this.updateContestedMine(contestedMine);
         this.updateFacilities(facilities);
         this.metaData = meta || this.metaData;
         if (this.statusOpen) this.renderLegacyShop();
