@@ -155,7 +155,7 @@ export class Game {
         this.scene = app.scene;
         this.camera = app.camera;
         this.assets = app.assets;
-        
+
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
         
@@ -2780,7 +2780,13 @@ export class Game {
         // Status window: spend a ticket to reroll the leader's innate trait.
         this.app.ui.setTraitRerollHandler(() => this.rerollTrait());
         // Depth panel: climb to the next floor once its quota is met.
-        this.app.ui.setAscendHandler(() => this.requestAscend());
+        this.app.ui.setAscendHandler(() => {
+            const result = this.requestAscend();
+            if (!result.ok) {
+                this.pushCombatFeed(`⚠ ${result.reason}`, '#ff9c9c');
+                this.app.ui.showBanner('이동 불가', result.reason, '#ff9c9c');
+            }
+        });
         // Crafting workshop: the UI owns the mix, gameLogic owns the forge.
         this.app.ui.setCraftHandlers({
             preview: (mix, slot) => this.getCraftData(mix, slot),
