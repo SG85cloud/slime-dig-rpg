@@ -1954,7 +1954,10 @@ export class UI {
         const rows = this.statPanel.querySelector('.facility-rows');
         const definitions = [
             { key: 'miningRig', label: '채굴 설비 강화', hint: '채굴 속도 영구 증가', color: '#8fd9a8' },
-            { key: 'barracks', label: '막사 증축', hint: '워커 정원 영구 확장', color: '#ffcf8a' }
+            { key: 'barracks', label: '막사 증축', hint: '워커 정원 영구 확장', color: '#ffcf8a' },
+            { key: 'infirmary', label: '치료실', hint: '워커 회복 및 다운 복귀 개선', color: '#8fd9ff' },
+            { key: 'trainingHall', label: '훈련소', hint: '워커 경험치 획득 증가', color: '#d7b8ff' },
+            { key: 'workshop', label: '정비 작업장', hint: '제작 성공 보정 증가', color: '#ffd166' }
         ];
 
         definitions.forEach((definition) => {
@@ -3077,6 +3080,7 @@ export class UI {
         if (!list) return;
         const roles = this.workerData?.roles || [];
         const levels = this.workerData?.levels || [];
+        const personalities = this.workerData?.personalities || [];
         const roleLabels = { miner: '⛏ 광부', fighter: '⚔ 전투원', guard: '🛡 경비', prospector: '💎 탐광꾼' };
         if (!roles.length) {
             list.innerHTML = '<div style="color:#7f718f;font-size:11px;">고용된 워커가 없습니다.</div>';
@@ -3084,7 +3088,7 @@ export class UI {
         }
         list.innerHTML = roles.map((item, index) => `
             <div style="display:grid; grid-template-columns: 58px 1fr; gap:6px; align-items:center;">
-                <div style="font-size:11px;color:#cbb8e8;font-weight:700;line-height:1.3;">워커 ${index + 1}<br><span style="font-size:9.5px;color:#8fd9a8;font-weight:600;">Lv.${levels[index] || 1}/100</span><br><span style="font-size:8.5px;color:#8f829e;">XP ${this.workerData?.xp?.[index] || 0}</span></div>
+                <div style="font-size:11px;color:#cbb8e8;font-weight:700;line-height:1.3;">워커 ${index + 1}<br><span style="font-size:9.5px;color:#8fd9a8;font-weight:600;">Lv.${levels[index] || 1}/100</span><br><span style="font-size:8.5px;color:#8f829e;">XP ${this.workerData?.xp?.[index] || 0}</span><br><span style="font-size:9px;color:#ffd27a;">${personalities[index]?.icon || '🧬'} ${personalities[index]?.name || '침착한'}</span><br><span style="font-size:8px;color:#8f829e;">${personalities[index]?.desc || ''}</span></div>
                 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;">
                     ${Object.entries(roleLabels).map(([role, label]) => `<button type="button" data-worker-index="${index}" data-worker-role="${role}" style="border:1px solid ${item.role === role ? '#d7c4ed' : '#4f4164'};border-radius:4px;padding:5px 2px;background:${item.role === role ? '#664487' : '#211a2d'};color:#eee;font:600 10px Inter,sans-serif;cursor:pointer;">${label}</button>`).join('')}
                 </div>

@@ -29,6 +29,17 @@ const GROUND_Y = 0;
 
 /** Scratch box reused by the contact pass so no per-frame garbage is created. */
 const _contactBox = new THREE.Box3();
+const WORKER_PERSONALITIES = [
+    { id:'steady', name:'침착한', icon:'🧘', desc:'부상 위험 -15%', damageTakenMult:0.85 },
+    { id:'brave', name:'용감한', icon:'🔥', desc:'전투 공격 +12%', attackMult:1.12 },
+    { id:'greedy', name:'욕심쟁이', icon:'💰', desc:'채굴 보상 +10%', miningYieldMult:1.10 },
+    { id:'careful', name:'신중한', icon:'🔎', desc:'희귀 광석 발견 +10%', rareMult:0.10 },
+    { id:'energetic', name:'활발한', icon:'⚡', desc:'채굴 속도 +8%', miningSpeedMult:1.08 },
+    { id:'loyal', name:'충성스러운', icon:'💚', desc:'경비 시 리더 피해 -8%', guardProtectMult:0.92 },
+    { id:'coward', name:'겁많은', icon:'😨', desc:'HP +15%, 공격 -8%', hpMult:1.15, attackMult:0.92 },
+    { id:'lucky', name:'행운아', icon:'🍀', desc:'이벤트 보상 +15%', eventRewardMult:1.15 }
+];
+const getWorkerPersonality = (id) => WORKER_PERSONALITIES.find(p => p.id === id) || WORKER_PERSONALITIES[0];
 
 /**
  * Special floor concepts along the otherwise-continuous B30F -> surface climb.
@@ -37,29 +48,18 @@ const _contactBox = new THREE.Box3();
  * gradient, plus an ore-weight nudge that matches the flavor.
  */
 const FLOOR_THEMES = {
-    20: {
-        name: '얼음 갱도',
-        desc: '서리 낀 벽면 사이로 광맥이 파랗게 빛납니다. 미스릴이 유독 잘 보입니다.',
-        lightColor: new THREE.Color(0x8fd9ff),
-        floorColor: new THREE.Color(0xcfeeff),
-        oreBonus: { mithril: 2.4 }
-    },
-    10: {
-        name: '용암 지대',
-        desc: '뜨거운 열기 속에서 황금빛 광맥이 유독 많이 보입니다.',
-        lightColor: new THREE.Color(0xff7a4a),
-        floorColor: new THREE.Color(0xffcaa8),
-        oreBonus: { gold: 2.2 }
-    },
+    28: { name:'버려진 갱도', desc:'버려진 채굴 장비와 낡은 지지대가 남아 있습니다. 철광석이 조금 더 잘 나옵니다.', lightColor:new THREE.Color(0x9b8f86), floorColor:new THREE.Color(0xc7beb4), oreBonus:{ iron:1.5 } },
     // No ore here at all — see spawnTreasureRoom()/openChest(). The leader's
     // one innate trait is only ever awakened by opening a chest on this floor.
-    25: {
-        name: '드래곤의 둥지',
-        desc: '흩어진 황금 상자 10개 중 하나를 선택해 여세요. 그 안에 태생 특성이 잠들어 있습니다.',
-        lightColor: new THREE.Color(0xffd166),
-        floorColor: new THREE.Color(0xe8c988),
-        oreBonus: {}
-    }
+    25: { name:'드래곤의 둥지', desc:'흩어진 황금 상자 10개 중 하나를 선택해 여세요. 상자마다 보상이 다릅니다.', lightColor:new THREE.Color(0xffd166), floorColor:new THREE.Color(0xe8c988), oreBonus:{} },
+    22: { name:'버섯 동굴', desc:'포자가 떠다니는 습한 동굴입니다. 독성 균류와 희귀 광맥이 숨어 있습니다.', lightColor:new THREE.Color(0xb28cff), floorColor:new THREE.Color(0xb9a8c9), oreBonus:{ frostite:1.35 } },
+    20: { name:'얼음 갱도', desc:'서리 낀 벽면 사이로 광맥이 파랗게 빛납니다. 빙정석과 미스릴이 유독 잘 보입니다.', lightColor:new THREE.Color(0x8fd9ff), floorColor:new THREE.Color(0xcfeeff), oreBonus:{ frostite:1.8, mithril:2.4 } },
+    17: { name:'수정 동굴', desc:'수정 기둥이 빛을 반사합니다. 희귀 광석의 흔적이 자주 발견됩니다.', lightColor:new THREE.Color(0xd5a6ff), floorColor:new THREE.Color(0xdccff0), oreBonus:{ mithril:2.0 } },
+    14: { name:'고대 광산', desc:'수백 년 된 채굴 흔적과 봉인된 유물이 잠든 구역입니다.', lightColor:new THREE.Color(0xd8b47a), floorColor:new THREE.Color(0xd7c29c), oreBonus:{ gold:1.7, mithril:1.35 } },
+    10: { name:'용암 지대', desc:'뜨거운 열기 속에서 금과 흑요석 광맥이 번쩍입니다.', lightColor:new THREE.Color(0xff7a4a), floorColor:new THREE.Color(0xffcaa8), oreBonus:{ gold:2.2, obsidian:1.8 } },
+    7: { name:'그림자 갱도', desc:'빛이 거의 닿지 않는 구역입니다. 그림자 속에서 적과 보물이 함께 나타납니다.', lightColor:new THREE.Color(0x6556a8), floorColor:new THREE.Color(0x8f88aa), oreBonus:{ obsidian:1.8 } },
+    4: { name:'용의 폐허', desc:'거대한 발톱 자국과 오래된 석상이 남아 있습니다. 강력한 사건이 발생합니다.', lightColor:new THREE.Color(0xd47c6c), floorColor:new THREE.Color(0xc9a19a), oreBonus:{ sunstone:1.5, gold:1.4 } },
+    1: { name:'드래곤 관문', desc:'지상으로 이어지는 마지막 관문입니다. 가장 위험하지만 가장 값진 광맥이 있습니다.', lightColor:new THREE.Color(0xffb35c), floorColor:new THREE.Color(0xd8b38a), oreBonus:{ sunstone:2.2, obsidian:1.5 } }
 };
 
 // Elemental surface bosses each get one signature telegraphed ground hazard —
@@ -291,7 +291,10 @@ export class Game {
         // forge — mining speed and squad size that never need re-equipping.
         this.facilities = {
             miningRig: 0,
-            barracks: 0
+            barracks: 0,
+            infirmary: 0,
+            trainingHall: 0,
+            workshop: 0
         };
 
         // Each ore vein keeps yielding items; rarer ore needs far more swings.
@@ -374,6 +377,7 @@ export class Game {
         this.saveTimer = 0;
         this.pendingWorkerCount = 0;
         this.pendingWorkerXp = [];
+        this.pendingWorkerPersonalities = [];
         this.hasSavedRun = false;
         // Prevent beforeunload/visibilitychange from writing the old run back
         // after an intentional reset followed by a page reload.
@@ -424,7 +428,7 @@ export class Game {
         // Re-recruit the workers that were part of the squad on the last visit,
         // each rejoining at the individual level it had earned.
         for (let i = 0; i < this.pendingWorkerCount; i++) {
-            this.addWorker(this.pendingWorkerXp[i] || 0, this.pendingWorkerRoles[i] || this.workerRoles[i % this.workerRoles.length]);
+            this.addWorker(this.pendingWorkerXp[i] || 0, this.pendingWorkerRoles[i] || this.workerRoles[i % this.workerRoles.length], this.pendingWorkerPersonalities[i] || null);
             const restoredTalent = this.pendingWorkerPromotions[i];
             if (restoredTalent && this.workers[i]) {
                 this.workers[i].userData.workerTalents = { attack: Number(restoredTalent.attack) || 1, mining: Number(restoredTalent.mining) || 1, hp: Number(restoredTalent.hp) || 1, rare: Number(restoredTalent.rare) || 0 };
@@ -634,12 +638,15 @@ export class Game {
         const workerCount = Number(saved.workerCount);
         // Sanity bound only; addWorker() enforces the real cap once facilities
         // are restored (base 6 + up to 4 barracks levels).
-        if (Number.isFinite(workerCount)) this.pendingWorkerCount = Math.max(0, Math.min(10, Math.floor(workerCount)));
+        if (Number.isFinite(workerCount)) this.pendingWorkerCount = Math.max(0, Math.min(12, Math.floor(workerCount)));
         if (Array.isArray(saved.workerXp)) {
             this.pendingWorkerXp = saved.workerXp.map((xp) => Math.max(0, Number(xp) || 0));
         }
         if (Array.isArray(saved.workerRoles)) {
             this.pendingWorkerRoles = saved.workerRoles.map((role) => this.workerRoles.includes(role) ? role : 'miner');
+        }
+        if (Array.isArray(saved.workerPersonalities)) {
+            this.pendingWorkerPersonalities = saved.workerPersonalities.map((id) => getWorkerPersonality(id).id);
         }
         if (Array.isArray(saved.workerPromotions)) this.pendingWorkerPromotions = saved.workerPromotions;
 
@@ -769,6 +776,7 @@ export class Game {
             workerCount: this.workers.length,
             workerXp: this.workers.map((worker) => worker.userData.workerXp || 0),
             workerRoles: this.workers.map((worker) => worker.userData.workerRole || 'miner'),
+            workerPersonalities: this.workers.map((worker) => worker.userData.workerPersonality || 'steady'),
             workerPromotions: this.workers.map((worker) => ({ ...(worker.userData.workerTalents || { attack: 1, mining: 1, hp: 1, rare: 0 }), tier: worker.userData.workerPromotionTier || 0 })),
             squadCommand: this.squadCommand,
             totalOreMined: this.totalOreMined || 0,
@@ -1088,9 +1096,9 @@ export class Game {
 
     // What the vein actually drops on this pull. A vein is only a bias, not a
     // guarantee: any vein can yield other ore, and luck pushes the roll upward.
-    rollMinedOre(veinType) {
+    rollMinedOre(veinType, worker = null) {
         const config = this.oreConfig[veinType] || this.oreConfig.coal;
-        const luck = this.getEffectiveLuck();
+        const luck = this.getEffectiveLuck() + (worker ? (getWorkerPersonality(worker.userData.workerPersonality).rareMult || 0) * 10 : 0);
         const weights = {};
         const markedRareBoost = this.markedSeams > 0 ? 1.55 : 1;
         const relicRareMult = this.bossRelics.reduce((m, r) => m * (r.rareMult || 1), 1);
@@ -1383,7 +1391,8 @@ export class Game {
             const chest = this.createTreasureChest();
             chest.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
             chest.rotation.y = Math.random() * Math.PI * 2;
-            chest.userData = { type: 'chest', opened: false };
+            const roll = Math.random();
+            chest.userData = { type:'chest', opened:false, hoardType: roll < 0.58 ? 'reward' : roll < 0.78 ? 'rich' : roll < 0.92 ? 'trap' : 'relic' };
             chest.traverse((child) => { child.userData.type = 'chestPart'; });
             this.scene.add(chest);
             this.chests.push(chest);
@@ -1403,12 +1412,21 @@ export class Game {
         this.checkTraitUnlock();
 
         if (hadTrait) {
-            // An older leader already carries its one trait — the hoard still pays out.
-            const gold = 20 + Math.floor(Math.random() * 15);
-            const mithril = 2 + Math.floor(Math.random() * 3);
+            const type = chest.userData.hoardType || 'reward';
+            let gold = 12 + Math.floor(Math.random() * 12);
+            let mithril = 1 + Math.floor(Math.random() * 2);
+            if (type === 'rich') { gold += 18; mithril += 2; }
+            if (type === 'relic') { gold += 10; mithril += 4; this.traitRerollTickets = (this.traitRerollTickets || 0) + 1; }
+            if (type === 'trap') {
+                const damage = 12 + Math.floor(Math.random() * 14);
+                this.playerData.hp = Math.max(1, this.playerData.hp - damage);
+                gold = Math.max(4, gold - 8);
+                this.pushCombatFeed(`💥 함정! ${damage} 피해를 입었습니다. 그래도 보물은 챙겼습니다.`, '#ff8f8f');
+            }
             this.inventory.gold += gold;
             this.inventory.mithril += mithril;
-            this.pushCombatFeed(`상자에서 금 ${gold} · 미스릴 ${mithril}을(를) 발견했습니다!`, '#ffd166');
+            const suffix = type === 'relic' ? ' · 특성 변경권 +1' : '';
+            this.pushCombatFeed(`상자에서 금 ${gold} · 미스릴 ${mithril}을(를) 발견했습니다!${suffix}`, '#ffd166');
         }
 
         this.combatFX.spawnBurst(chest.position, { color: 0xffd166, radius: 0.9, expand: 3.2, life: 0.6, height: 1 });
@@ -2110,7 +2128,7 @@ export class Game {
         this.weaponArm.rotation.set(-0.35, 0, -0.5);
     }
 
-    addWorker(initialXp = 0, role = 'miner') {
+    addWorker(initialXp = 0, role = 'miner', personalityId = null) {
         if (this.workers.length >= this.getWorkerCap()) return false;
 
         const index = this.workers.length;
@@ -2128,6 +2146,8 @@ export class Game {
         worker.userData.isMining = false;
         worker.userData.squadRole = this.squadCommand;
         worker.userData.workerRole = this.workerRoles.includes(role) ? role : 'miner';
+        const personality = getWorkerPersonality(personalityId || WORKER_PERSONALITIES[Math.floor(Math.random() * WORKER_PERSONALITIES.length)].id);
+        worker.userData.workerPersonality = personality.id;
         worker.userData.attackCooldown = 0;
         worker.userData.maxHp = this.getWorkerMaxHp(worker);
         worker.userData.hp = worker.userData.maxHp;
@@ -2167,7 +2187,8 @@ export class Game {
     /** Grants worker XP and opens a promotion choice at Lv.20/40/60/80/100. */
     addWorkerXp(worker, amount) {
         const before = this.getWorkerLevel(worker);
-        worker.userData.workerXp = (worker.userData.workerXp || 0) + amount;
+        const trainingMult = 1 + (this.facilities?.trainingHall || 0) * 0.10;
+        worker.userData.workerXp = (worker.userData.workerXp || 0) + amount * trainingMult;
         const after = this.getWorkerLevel(worker);
         if (after > before) {
             const index = this.workers.indexOf(worker);
@@ -2243,8 +2264,10 @@ export class Game {
     getWorkerMaxHp(worker) {
         const role = worker?.userData?.workerRole || 'miner';
         const roleMult = { miner: 0.9, fighter: 1.0, guard: 1.35, prospector: 0.95 }[role] || 1;
+        const personality = getWorkerPersonality(worker?.userData?.workerPersonality);
+        const personalityHp = personality.hpMult || 1;
         const relicHpMult = this.bossRelics.reduce((m, r) => m * (r.workerHpMult || 1), 1);
-        return Math.round((55 + this.getWorkerLevel(worker) * 5) * roleMult * relicHpMult * (worker?.userData?.workerTalents?.hp || 1));
+        return Math.round((55 + this.getWorkerLevel(worker) * 5) * roleMult * relicHpMult * personalityHp * (worker?.userData?.workerTalents?.hp || 1));
     }
 
     getWorkerRoleLabel(role) {
@@ -4779,7 +4802,7 @@ export class Game {
             this.inventory[ore] -= cost[ore];
         });
 
-        const result = forgeItem(mix, this.getEffectiveLuck(), slot);
+        const result = forgeItem(mix, this.getEffectiveLuck() * this.getCraftFacilityBonus(), slot);
         // Craft-power traits add a flat bonus to whatever comes out of the forge
         // (only meaningful for weapons, which is the only archetype with attack).
         if (this.traitEffects.craftPowerBonus > 0 && result.item.stats.attack) {
@@ -4858,7 +4881,7 @@ export class Game {
             safeMix[ore] = Math.max(0, Math.floor(mix?.[ore] || 0));
         });
 
-        const preview = previewCraft(safeMix, this.getEffectiveLuck(), slot);
+        const preview = previewCraft(safeMix, this.getEffectiveLuck() * this.getCraftFacilityBonus(), slot);
         const cost = this.getCraftCost(safeMix);
         const equippedInSlot = this.getEquippedForSlot(slot);
 
@@ -4887,7 +4910,7 @@ export class Game {
                     label: recipe.label,
                     note: recipe.note,
                     mix: recipe.mix,
-                    preview: previewCraft(recipe.mix, this.getEffectiveLuck(), slot),
+                    preview: previewCraft(recipe.mix, this.getEffectiveLuck() * this.getCraftFacilityBonus(), slot),
                     affordable: this.canAffordMix(recipe.mix)
                 })),
             // Recipes saved before armor/accessory existed have no `slot` field
@@ -4969,31 +4992,23 @@ export class Game {
     // need re-equipping and use the full coal/iron/gold/mithril spread rather
     // than just the coal+iron the leader-stat shop already drains.
     static FACILITY_CONFIG = {
-        // Each level shaves 4% off the mining swing interval.
         miningRig: { maxLevel: 8, speedBonusPerLevel: 0.04 },
-        // Each level opens one more worker slot beyond the base cap of 6.
-        barracks: { maxLevel: 4, workerCapPerLevel: 1 }
+        barracks: { maxLevel: 6, workerCapPerLevel: 1 },
+        infirmary: { maxLevel: 5, regenBonusPerLevel: 0.12, downRecoveryPerLevel: 0.08 },
+        trainingHall: { maxLevel: 5, xpBonusPerLevel: 0.10 },
+        workshop: { maxLevel: 5, craftBonusPerLevel: 0.04 }
     };
 
     getFacilityCost(key) {
         const level = this.facilities[key] || 0;
-        if (key === 'miningRig') {
-            return {
-                coal: 20 + level * 22,
-                iron: 10 + level * 16,
-                gold: level >= 2 ? (level - 1) * 4 : 0,
-                mithril: 0
-            };
-        }
-        if (key === 'barracks') {
-            return {
-                coal: 40 + level * 34,
-                iron: 24 + level * 22,
-                gold: 6 + level * 8,
-                mithril: level >= 2 ? (level - 1) * 3 : 0
-            };
-        }
-        return { coal: 0, iron: 0, gold: 0, mithril: 0 };
+        const costs = {
+            miningRig: { coal:20+level*22, iron:10+level*16, gold:level>=2?(level-1)*4:0, mithril:0 },
+            barracks: { coal:40+level*34, iron:24+level*22, gold:6+level*8, mithril:level>=2?(level-1)*3:0 },
+            infirmary: { coal:28+level*24, iron:18+level*18, gold:level*4, mithril:level>=2?(level-1)*3:0 },
+            trainingHall: { coal:32+level*28, iron:22+level*20, gold:level*5, mithril:level>=2?(level-1)*4:0 },
+            workshop: { coal:24+level*24, iron:28+level*22, gold:8+level*7, mithril:level>=2?(level-1)*4:0 }
+        };
+        return costs[key] || { coal: 0, iron: 0, gold: 0, mithril: 0 };
     }
 
     canAffordFacility(key) {
@@ -5009,6 +5024,15 @@ export class Game {
 
     getWorkerCap() {
         return 6 + this.facilities.barracks * Game.FACILITY_CONFIG.barracks.workerCapPerLevel;
+    }
+
+    getWorkerRegenRate(worker) {
+        const base = 0.65 + (this.facilities.infirmary || 0) * 0.18;
+        return base * (getWorkerPersonality(worker?.userData?.workerPersonality).damageTakenMult === 0.85 ? 1.05 : 1);
+    }
+
+    getCraftFacilityBonus() {
+        return 1 + (this.facilities.workshop || 0) * Game.FACILITY_CONFIG.workshop.craftBonusPerLevel;
     }
 
     getFacilitiesData() {
@@ -5028,7 +5052,10 @@ export class Game {
         };
         return [
             describe('miningRig', '채굴 설비 강화', `채굴 속도 영구 +${Math.round(Game.FACILITY_CONFIG.miningRig.speedBonusPerLevel * 100)}%/레벨`),
-            describe('barracks', '막사 증축', `워커 정원 +${Game.FACILITY_CONFIG.barracks.workerCapPerLevel}명/레벨 (현재 ${this.getWorkerCap()}명)`)
+            describe('barracks', '막사 증축', `워커 정원 +${Game.FACILITY_CONFIG.barracks.workerCapPerLevel}명/레벨 (현재 ${this.getWorkerCap()}명)`),
+            describe('infirmary', '치료실', `워커 회복 속도 +${Math.round(Game.FACILITY_CONFIG.infirmary.regenBonusPerLevel * 100)}%/레벨 · 다운 회복도 단축`),
+            describe('trainingHall', '훈련소', `워커 경험치 +${Math.round(Game.FACILITY_CONFIG.trainingHall.xpBonusPerLevel * 100)}%/레벨`),
+            describe('workshop', '정비 작업장', `제작 성공 보정 +${Math.round(Game.FACILITY_CONFIG.workshop.craftBonusPerLevel * 100)}%/레벨`)
         ];
     }
 
@@ -5181,8 +5208,9 @@ export class Game {
         }
 
         const roleDamageMult = ({ miner: 0.78, fighter: 1.35, guard: 0.92, prospector: 0.72 }[worker.userData.workerRole] || 1);
+        const personality = getWorkerPersonality(worker.userData.workerPersonality);
         const damage = 4 * roleDamageMult * this.traitEffects.workerAttackMult * this.boons.workerAttackMult
-            * this.getWorkerLevelMult(worker) * (1 + (this.stats.strength - 1) * 0.18);
+            * this.getWorkerLevelMult(worker) * (1 + (this.stats.strength - 1) * 0.18) * (personality.attackMult || 1);
         this.damageEnemy(enemy, damage, { from: worker.position, color: '#b7f3ff', knockback: 0.16 });
         this.addWorkerXp(worker, 2);
     }
@@ -5220,7 +5248,7 @@ export class Game {
         if (source) this.pushCombatFeed(`${source.userData.name}이(가) 워커를 공격합니다! -${damage}`, '#ffb36b');
         this.app.ui.showWorkerAlert?.('워커가 공격받고 있습니다!');
         if (worker.userData.hp <= 0) {
-            worker.userData.downTimer = 6;
+            worker.userData.downTimer = Math.max(2.5, 6 * (1 - (this.facilities.infirmary || 0) * Game.FACILITY_CONFIG.infirmary.downRecoveryPerLevel));
             worker.userData.isMining = false;
             worker.userData.squadRole = 'downed';
             worker.userData.miningTarget = null;
@@ -5284,7 +5312,8 @@ export class Game {
         const hp = worker.userData.hp ?? maxHp;
         worker.userData.regenTimer = Math.max(0, (worker.userData.regenTimer || 0) - delta);
         if (hp < maxHp && worker.userData.regenTimer <= 0) {
-            const regenRate = this.arenaActive || this.enemies.length > 0 ? 2.5 : 5;
+            const baseRegen = this.arenaActive || this.enemies.length > 0 ? 2.5 : 5;
+            const regenRate = baseRegen * (1 + (this.facilities.infirmary || 0) * 0.12);
             worker.userData.hp = Math.min(maxHp, hp + delta * regenRate);
             if (worker.userData.healthBar) {
                 worker.userData.healthBar.visible = worker.userData.hp < maxHp - 0.5;
@@ -5335,13 +5364,14 @@ export class Game {
                         isMining = true;
                         worker.userData.swingTimer = (worker.userData.swingTimer || 0) - delta;
                         if (worker.userData.swingTimer <= 0) {
-                            this.swingAtNode(node);
+                            this.swingAtNode(node, worker);
                             const roleMiningMult = ({ miner: 1.35, fighter: 0.72, guard: 0.82, prospector: 0.92 }[worker.userData.workerRole] || 1);
                             const roleNoiseMult = ({ miner: 1.0, fighter: 0.8, guard: 0.7, prospector: 0.65 }[worker.userData.workerRole] || 1);
                             this.addMiningNoise(0.75 * roleNoiseMult);
                             this.addWorkerXp(worker, 1);
+                            const personality = getWorkerPersonality(worker.userData.workerPersonality);
                             worker.userData.swingTimer = 0.72 / (this.traitEffects.workerSwingMult
-                                * this.boons.workerSwingMult * this.getWorkerLevelMult(worker) * this.getWorkerMiningMult(worker) * roleMiningMult);
+                                * this.boons.workerSwingMult * this.getWorkerLevelMult(worker) * this.getWorkerMiningMult(worker) * roleMiningMult * (personality.miningSpeedMult || 1));
                         }
                     }
                 }
@@ -5561,7 +5591,8 @@ export class Game {
             roles: this.workers.map((worker) => ({ role: worker.userData.workerRole || 'miner', label: this.getWorkerRoleLabel(worker.userData.workerRole || 'miner') })),
             xp: this.workers.map((worker) => Math.max(0, Math.floor(worker.userData.workerXp || 0))),
             maxLevel: 100,
-            promotions: this.workers.map((worker) => ({ tier: worker.userData.workerPromotionTier || 0, talents: { ...(worker.userData.workerTalents || { attack:1, mining:1, hp:1, rare:0 }) } }))
+            promotions: this.workers.map((worker) => ({ tier: worker.userData.workerPromotionTier || 0, talents: { ...(worker.userData.workerTalents || { attack:1, mining:1, hp:1, rare:0 }) } })),
+            personalities: this.workers.map((worker) => { const p = getWorkerPersonality(worker.userData.workerPersonality); return { id:p.id, name:p.name, icon:p.icon, desc:p.desc }; })
         };
     }
 
@@ -5652,7 +5683,36 @@ export class Game {
             {id:'hide',icon:'🫥',title:'흔적을 숨긴다',desc:'안전하게 통로를 확보',color:'#8fd9a8',safe:true},
             {id:'workers',icon:'👷',title:'워커 2명을 보내 확인한다',desc:'보상 ↑↑ · 부상 위험',color:'#d7b8ff',requiresWorkers:2,workerChoice:true}
         ]});
+        const genericEvents = [
+            ['oldLift','🛗','낡은 광차 승강기','녹슨 승강기가 아직 움직일 것 같습니다.'],
+            ['crystalBell','🔔','수정 종소리','수정을 건드리자 아름다운 소리가 울립니다.'],
+            ['lostPack','🎒','잃어버린 배낭','오래된 광부의 배낭이 바닥에 놓여 있습니다.'],
+            ['gasPocket','💨','유독 가스층','바위 틈에서 가스가 새어 나옵니다.'],
+            ['ancientMap','🗺️','고대 광산 지도','다음 구역을 표시한 낡은 지도가 발견됐습니다.'],
+            ['oreFever','✨','광맥의 열기','벽 전체가 미세하게 반짝입니다.'],
+            ['caveIn','🪨','작은 붕괴','통로 한쪽이 무너져 길이 좁아졌습니다.'],
+            ['merchant','🧳','떠돌이 광부','어둠 속에서 다른 광부가 손짓합니다.'],
+            ['egg','🥚','이상한 알','바위 사이에 커다란 알 하나가 놓여 있습니다.'],
+            ['torch','🔥','꺼지지 않는 횃불','이상할 정도로 오래 타는 횃불을 발견했습니다.'],
+            ['echo','📢','광산의 메아리','곡괭이 소리가 다른 곳에서 그대로 돌아옵니다.'],
+            ['altar','⛩️','광부의 제단','누군가 광석을 제단에 바쳐 놓았습니다.'],
+            ['spiderWeb','🕸️','거대한 거미줄','천장에 반짝이는 거미줄이 가득합니다.'],
+            ['dragonMark','🐲','용의 낙인','바닥에 뜨거운 용의 발자국이 남아 있습니다.']
+        ];
+        const genericChoices = {
+            risk: { id:'take', icon:'⚔️', title:'위험을 감수한다', desc:'보상 크게 증가 · 소음과 전투 위험 증가', color:'#ffd166', risk:2, reward:22, noise:18, rare:1.5, charges:3, encounter:0.45 },
+            safe: { id:'avoid', icon:'🛡️', title:'안전하게 지나간다', desc:'작은 보상 · 위험 감소', color:'#8fd9a8', safe:true, reward:7, noise:-8 },
+            worker: { id:'send', icon:'👷', title:'워커에게 맡긴다', desc:'워커가 있으면 보상 증가 · 부상 가능', color:'#d7b8ff', workerChoice:true, requiresWorkers:1, reward:16, noise:6, rare:1.0, charges:2, workerRisk:20 }
+        };
+        genericEvents.forEach(([eid, icon, title, text]) => {
+            defs.push({ id: eid, icon, title, text, generic: true, choices: ['risk', 'safe', 'worker'].map((k) => ({ ...genericChoices[k] })) });
+        });
         return defs;
+    }
+
+    getWorkerEventBonus() {
+        const lucky = this.workers.filter(w => w.userData.downTimer <= 0 && getWorkerPersonality(w.userData.workerPersonality).id === 'lucky').length;
+        return 1 + lucky * 0.08;
     }
 
     maybeTriggerMineEvent(node) {
@@ -5771,6 +5831,20 @@ export class Game {
             if (choiceId === 'track') { reward(28 + Math.floor(Math.random() * 12)); this.addMiningNoise(22); this.eventRareBoost = 3.0; this.eventRareCharges = 3; if (Math.random() < 0.5) this.spawnFieldEncounter(); message = '용의 흔적을 추적해 오래된 보물을 발견했습니다. 하지만 거대한 포효가 들립니다!'; }
             else if (choiceId === 'workers') { reward(24); this.addMiningNoise(14); workerRisk(aliveWorkers, 30, 0.55); this.eventRareBoost = 2.0; this.eventRareCharges = 4; message = '워커들이 용의 흔적 주변에서 귀중한 조각을 회수했습니다.'; }
             else { this.markedSeams = Math.min(5, (this.markedSeams || 0) + 1); message = '용의 흔적을 숨기고 조용히 통로를 확보했습니다.'; }
+        } else if (event.generic) {
+            const payout = Math.round((choice.reward || 0) * (1 + (this.getFloorsClimbed() * 0.015)) * (this.getWorkerEventBonus() || 1));
+            if (choice.reward) reward(payout);
+            if (choice.noise) this.miningNoise = Math.max(0, Math.min(100, this.miningNoise + choice.noise));
+            if (choice.rare) { this.eventRareBoost = choice.rare; this.eventRareCharges = choice.charges || 2; }
+            if (choice.workerChoice) {
+                const w = aliveWorkers[0];
+                if (w && choice.workerRisk && Math.random() < 0.65) injure(w, choice.workerRisk + Math.random() * 10);
+            }
+            if (choice.encounter && Math.random() < choice.encounter) this.spawnFieldEncounter();
+            if (choice.safe) this.miningNoise = Math.max(0, this.miningNoise - 4);
+            message = choice.safe ? `${event.title}을(를) 안전하게 지나갔습니다. 소량의 보급품을 챙겼습니다.`
+                : choice.workerChoice ? `${event.title}을(를) 워커에게 맡겼습니다. 보상 ${payout}을 확보했습니다.`
+                : `${event.title}의 위험을 감수했습니다. 보상 ${payout}을 확보했지만 광산이 소란스러워졌습니다.`;
         }
 
         this.mineEvent = null;
@@ -5784,7 +5858,7 @@ export class Game {
 
     // One pickaxe swing. The vein only yields an item once enough swings land,
     // and it keeps producing until its reserves run out.
-    swingAtNode(node) {
+    swingAtNode(node, worker = null) {
         if (!node || !this.nodes.includes(node)) return;
 
         node.userData.hitPulse = 1;
@@ -5795,9 +5869,11 @@ export class Game {
         node.userData.swings = 0;
         node.userData.reserves -= 1;
 
-        const minedOre = this.rollMinedOre(node.userData.oreType);
+        const minedOre = this.rollMinedOre(node.userData.oreType, worker);
         // Trait-driven bonus pulls stack on top of the base single ore.
         let amount = 1;
+        const workerPersonality = worker ? getWorkerPersonality(worker.userData.workerPersonality) : null;
+        if (workerPersonality?.miningYieldMult && Math.random() < (workerPersonality.miningYieldMult - 1)) amount += 1;
         if (Math.random() < this.traitEffects.yieldBonusChance) amount += 1;
         if (Math.random() < this.traitEffects.doubleOreChance) amount *= 2;
         this.inventory[minedOre] += amount;
