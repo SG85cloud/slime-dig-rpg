@@ -16,6 +16,9 @@ class App {
         
         // Isometric view position
         this.cameraOffset = new THREE.Vector3(20, 20, 20);
+        this.baseCameraZoom = 1.0;
+        this.cameraPunchZoom = 0;
+        this.hitStopTimer = 0;
         this.camera.position.copy(this.cameraOffset);
         this.camera.lookAt(0, 0, 0);
 
@@ -49,7 +52,13 @@ class App {
     }
 
     async loadAssets() {
-        const loadModel = (path) => new Promise(res => this.loader.load(path, gltf => res(gltf.scene)));
+        const loadModel = (path) => new Promise(res => this.loader.load(path, gltf => {
+            // Keep animation clips attached to the cloned scene. Current slime/monster
+            // GLBs are static, but this makes the presentation layer automatically
+            // use real skeletal clips if/when animated assets are dropped in later.
+            gltf.scene.userData.animationClips = gltf.animations || [];
+            res(gltf.scene);
+        }));
         const loadTex = (path) => new Promise(res => this.texLoader.load(path, tex => {
             tex.colorSpace = THREE.SRGBColorSpace;
             res(tex);
@@ -105,14 +114,33 @@ class App {
     animate(timestamp) {
         requestAnimationFrame((t) => this.animate(t));
         this.timer.update(timestamp);
-        const delta = this.timer.getDelta();
-        
+        let delta = this.timer.getDelta();
+        // Short cinematic hit-stop: freeze gameplay for a few frames while the
+        // already-rendered impact pose remains on screen.
+        if (this.hitStopTimer > 0) {
+            this.hitStopTimer = Math.max(0, this.hitStopTimer - delta);
+            delta = 0;
+        }
+
         if (this.game) {
             this.game.update(delta);
             this.followPlayer(delta);
         }
 
+        // Smooth camera punch/zoom used for critical hits and boss entrances.
+        this.camera.zoom = THREE.MathUtils.damp(this.camera.zoom, this.baseCameraZoom + this.cameraPunchZoom, 10, Math.max(delta, 0.016));
+        this.camera.updateProjectionMatrix();
         this.renderer.render(this.scene, this.camera);
+    }
+
+    // Impact camera shake.
+    addHitStop(duration = 0.065) {
+        this.hitStopTimer = Math.max(this.hitStopTimer || 0, duration);
+    }
+
+    punchZoom(amount = 0.12, duration = 0.35) {
+        this.cameraPunchZoom = Math.max(this.cameraPunchZoom || 0, amount);
+        setTimeout(() => { this.cameraPunchZoom = 0; }, duration * 1000);
     }
 
     // Impact camera shake. Combat calls this on heavy hits and deaths.

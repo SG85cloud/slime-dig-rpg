@@ -142,6 +142,10 @@ export class MineEnvironment {
         this.waveLights = [];
         this.crystalMotes = [];
         this.waveMotes = [];
+        this.ambientMotes = [];
+        this.torches = [];
+        this.lavaPools = [];
+        this.iceMotes = [];
         this.progress = 0;
         this.waveActive = false;
         this.wave = 0;
@@ -152,6 +156,7 @@ export class MineEnvironment {
         this.buildFissureBand();
         this.buildThresholdBand();
         this.buildWaveArena();
+        this.buildAmbientEffects();
         this.setProgress(0);
     }
 
@@ -514,6 +519,98 @@ export class MineEnvironment {
         this.waveGroup.visible = false;
     }
 
+    buildAmbientEffects() {
+        // Procedural ambience: no new image assets required. These lightweight
+        // meshes make the mine feel alive while keeping GPU cost predictable.
+        const dustMat = new THREE.MeshBasicMaterial({
+            color: 0xd8c7b5,
+            transparent: true,
+            opacity: 0.22,
+            depthWrite: false
+        });
+        const emberMat = new THREE.MeshBasicMaterial({
+            color: 0xff8a4d,
+            transparent: true,
+            opacity: 0.72,
+            depthWrite: false
+        });
+        const iceMat = new THREE.MeshBasicMaterial({
+            color: 0x9defff,
+            transparent: true,
+            opacity: 0.5,
+            depthWrite: false
+        });
+
+        for (let i = 0; i < 70; i++) {
+            const mote = new THREE.Mesh(
+                new THREE.SphereGeometry(0.035 + (i % 4) * 0.018, 5, 4),
+                dustMat
+            );
+            const a = (i / 70) * Math.PI * 2;
+            const r = 3 + (i % 13) * 1.35;
+            mote.position.set(Math.cos(a) * r, 0.5 + (i % 9) * 0.42, Math.sin(a) * r);
+            mote.userData.baseY = mote.position.y;
+            mote.userData.phase = i * 0.71;
+            mote.userData.speed = 0.16 + (i % 5) * 0.035;
+            this.root.add(mote);
+            this.ambientMotes.push(mote);
+        }
+
+        // A few stylised torches. Their glow is purely procedural, so no flame
+        // sprite or texture is required.
+        const torchPositions = [
+            [-9, 2.1, -11], [9, 2.1, -11], [-17, 1.7, 2], [17, 1.7, 2],
+            [-7, 1.8, 17], [7, 1.8, 17]
+        ];
+        torchPositions.forEach(([x, y, z], index) => {
+            const group = new THREE.Group();
+            const pole = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.11, 0.16, 1.35, 6),
+                new THREE.MeshStandardMaterial({ color: 0x4b3327, roughness: 0.9 })
+            );
+            pole.position.y = -0.65;
+            group.add(pole);
+            const flame = new THREE.Mesh(new THREE.SphereGeometry(0.24, 7, 5), emberMat);
+            flame.scale.set(0.72, 1.35, 0.72);
+            group.add(flame);
+            const light = new THREE.PointLight(0xff9a55, 1.7, 7.5, 2);
+            group.add(light);
+            group.position.set(x, y, z);
+            group.userData.flame = flame;
+            group.userData.light = light;
+            group.userData.phase = index * 1.8;
+            this.root.add(group);
+            this.torches.push(group);
+        });
+
+        // Near-surface lava accents. They fade in with the fissure band.
+        const lavaMat = new THREE.MeshBasicMaterial({
+            color: 0xff5a25,
+            transparent: true,
+            opacity: 0.72,
+            depthWrite: false
+        });
+        const lavaSpots = [[-13, 0.08, -5, 2.4], [13, 0.08, -3, 2.0], [-8, 0.08, 13, 1.8], [9, 0.08, 12, 2.2]];
+        lavaSpots.forEach(([x, y, z, r], index) => {
+            const lava = new THREE.Mesh(new THREE.CircleGeometry(r, 24), lavaMat);
+            lava.rotation.x = -Math.PI / 2;
+            lava.position.set(x, y, z);
+            lava.userData.phase = index * 1.2;
+            lava.userData.baseScale = 1;
+            this.root.add(lava);
+            this.lavaPools.push(lava);
+        });
+
+        // Tiny falling ice motes make the middle band visibly colder.
+        for (let i = 0; i < 18; i++) {
+            const mote = new THREE.Mesh(new THREE.OctahedronGeometry(0.07, 0), iceMat);
+            mote.position.set(((i * 17) % 32) - 16, 1 + (i % 8) * 0.8, ((i * 11) % 34) - 17);
+            mote.userData.phase = i * 0.43;
+            this.root.add(mote);
+            this.iceMotes.push(mote);
+        }
+    }
+
     setGroupOpacity(group, amount) {
         const opacity = THREE.MathUtils.clamp(amount, 0, 1);
         group.visible = opacity > 0.015;
@@ -613,6 +710,42 @@ export class MineEnvironment {
             mote.position.x = Math.cos(orbit) * mote.userData.radius;
             mote.position.z = Math.sin(orbit) * mote.userData.radius;
             mote.position.y = mote.userData.baseY + Math.sin(elapsed * 2.1 + mote.userData.orbit) * 0.16;
+        });
+
+        this.ambientMotes.forEach((mote) => {
+            mote.position.y = mote.userData.baseY + Math.sin(elapsed * mote.userData.speed + mote.userData.phase) * 0.22;
+            mote.position.x += Math.sin(elapsed * 0.23 + mote.userData.phase) * delta * 0.08;
+            mote.position.z += Math.cos(elapsed * 0.19 + mote.userData.phase) * delta * 0.06;
+            if (mote.position.x > 20) mote.position.x = -20;
+            if (mote.position.x < -20) mote.position.x = 20;
+            if (mote.position.z > 20) mote.position.z = -20;
+            if (mote.position.z < -20) mote.position.z = 20;
+        });
+
+        this.torches.forEach((torch) => {
+            const pulse = 0.9 + Math.sin(elapsed * 8.0 + torch.userData.phase) * 0.08 + Math.sin(elapsed * 13.0 + torch.userData.phase) * 0.04;
+            torch.userData.light.intensity = 1.7 * pulse;
+            torch.userData.flame.scale.y = 1.35 + Math.sin(elapsed * 7.0 + torch.userData.phase) * 0.16;
+            torch.userData.flame.rotation.z = Math.sin(elapsed * 5.0 + torch.userData.phase) * 0.12;
+        });
+
+        const fissureStrength = THREE.MathUtils.smoothstep(this.progress, 0.58, 0.78);
+        this.lavaPools.forEach((lava) => {
+            const pulse = 1 + Math.sin(elapsed * 2.8 + lava.userData.phase) * 0.035;
+            lava.scale.setScalar(pulse);
+            lava.material.opacity = 0.10 + fissureStrength * 0.62;
+            lava.visible = fissureStrength > 0.02;
+        });
+
+        const frostStrength = 1 - THREE.MathUtils.smoothstep(this.progress, 0.58, 0.78);
+        const middleBand = THREE.MathUtils.smoothstep(this.progress, 0.25, 0.38) * (1 - THREE.MathUtils.smoothstep(this.progress, 0.62, 0.75));
+        this.iceMotes.forEach((mote, index) => {
+            mote.visible = middleBand > 0.02;
+            mote.position.y -= delta * (0.15 + (index % 3) * 0.04);
+            mote.rotation.x += delta * 0.8;
+            mote.rotation.y += delta * 1.1;
+            if (mote.position.y < 0.25) mote.position.y = 6.5 + (index % 4) * 0.5;
+            mote.material.opacity = 0.12 + middleBand * 0.48 * frostStrength;
         });
     }
 }

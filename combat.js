@@ -619,6 +619,24 @@ export class CombatFX {
         });
     }
 
+    /** Mining/ore impact: rock chips, dust and a short expanding ring. */
+    spawnOreImpact(position, options = {}) {
+        const color = options.color || 0xd9c7a8;
+        this.spawnSparks(position, { color, count: options.count || 14, speed: options.speed || 4.8, life: 0.42, height: options.height ?? 0.45 });
+        this.spawnBurst(position, { color, radius: 0.18, expand: 3.0, life: 0.32, height: options.height ?? 0.45 });
+        this.spawnFlash(position, color, options.intensity || 16, 0.12);
+    }
+
+    /**
+     * A stronger radial hit marker than the normal slash. Used for crits and
+     * skill impacts so the player can visually read the exact contact frame.
+     */
+    spawnCriticalImpact(position, color = 0xffef9a) {
+        this.spawnShockwave(position, { color, scale: 4.4, life: 0.32 });
+        this.spawnSparks(position, { color, count: 24, speed: 8.5, life: 0.48, height: 0.7 });
+        this.spawnFlash(position, color, 42, 0.18);
+    }
+
     /** Soft coloured mist for wounds and deaths. */
     spawnBurst(position, options = {}) {
         const color = new THREE.Color(options.color || 0xff5a5a);

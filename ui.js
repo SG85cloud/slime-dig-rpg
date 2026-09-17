@@ -2592,11 +2592,16 @@ export class UI {
             risk.style.display = noise > 1 ? 'block' : 'none';
             risk.querySelector('.risk-value').textContent = `${noise}%`;
             risk.querySelector('.risk-bar').style.width = `${noise}%`;
-            risk.querySelector('.risk-hint').textContent = noise >= 70
-                ? '🚨 매우 위험 — 잠시 채굴을 멈추면 소음이 내려갑니다.'
-                : noise >= 40
-                    ? '⚠ 위험 증가 — 계속 캐면 몬스터가 찾아옵니다.'
-                    : '현재는 비교적 조용합니다.';
+            const dangerData = typeof combat.getMiningDangerData === 'function'
+                ? combat.getMiningDangerData()
+                : null;
+            risk.querySelector('.risk-hint').textContent = dangerData
+                ? `${dangerData.name} · 출현 몬스터 HP +${dangerData.hpPercent}% · 공격 +${dangerData.damagePercent}% · 이동 +${dangerData.speedPercent}%`
+                : noise >= 70
+                    ? '🚨 매우 위험 — 잠시 채굴을 멈추면 소음이 내려갑니다.'
+                    : noise >= 40
+                        ? '⚠ 위험 증가 — 계속 캐면 몬스터가 찾아옵니다.'
+                        : '현재는 비교적 조용합니다.';
             if ((combat.unstableHaul || 0) > 0) {
                 risk.querySelector('.risk-hint').textContent += ` · 욕심 보너스 ${Math.round(combat.unstableHaul)} (사망 시 소실)`;
             }
