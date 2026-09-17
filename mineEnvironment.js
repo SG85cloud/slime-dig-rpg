@@ -130,8 +130,10 @@ export class MineEnvironment {
         this.fissureGroup = new THREE.Group();
         this.thresholdGroup = new THREE.Group();
         this.waveGroup = new THREE.Group();
+        this.architectureGroup = new THREE.Group();
+        this.architectureGroup.name = 'mine-architecture-v38';
         this.waveGroup.name = 'elemental-wave-arena';
-        this.root.add(this.deepGroup, this.veinGroup, this.fissureGroup, this.thresholdGroup, this.waveGroup);
+        this.root.add(this.deepGroup, this.veinGroup, this.fissureGroup, this.thresholdGroup, this.waveGroup, this.architectureGroup);
 
         this.deepMaterials = [];
         this.veinMaterials = [];
@@ -150,6 +152,9 @@ export class MineEnvironment {
         this.waveActive = false;
         this.wave = 0;
         this.currentTheme = getMineTheme(0);
+        this.architectureMaterials = [];
+        this.architectureLights = [];
+        this.mineCart = null;
 
         this.buildDeepBand();
         this.buildVeinBand();
@@ -157,6 +162,7 @@ export class MineEnvironment {
         this.buildThresholdBand();
         this.buildWaveArena();
         this.buildAmbientEffects();
+        this.buildMineArchitecture();
         this.setProgress(0);
     }
 
@@ -519,6 +525,72 @@ export class MineEnvironment {
         this.waveGroup.visible = false;
     }
 
+    buildMineArchitecture() {
+        // V38: replace the "flat room" feeling with a readable mine structure.
+        // Everything is procedural so the package stays self-contained.
+        const timber = new THREE.MeshStandardMaterial({ color: 0x4a3023, roughness: 0.9 });
+        const timberLight = new THREE.MeshStandardMaterial({ color: 0x6d4930, roughness: 0.86 });
+        const iron = new THREE.MeshStandardMaterial({ color: 0x30363c, roughness: 0.48, metalness: 0.72 });
+        const wall = new THREE.MeshStandardMaterial({ color: 0x29232d, roughness: 0.98 });
+        const wall2 = new THREE.MeshStandardMaterial({ color: 0x3a3037, roughness: 0.95 });
+        const railMat = new THREE.MeshStandardMaterial({ color: 0x3b4147, roughness: 0.42, metalness: 0.75 });
+        const accent = new THREE.MeshStandardMaterial({ color: 0x9b6a4c, roughness: 0.82 });
+        [timber,timberLight,iron,wall,wall2,railMat,accent].forEach(m => this.architectureMaterials.push(m));
+
+        // Cave wall silhouette: staggered rock blocks form a dark perimeter and a ceiling rim.
+        const wallRocks = [
+            [-23,2,-17,5,3,2],[-23,3,-8,4,5,2],[-23,2,2,5,4,2],[-23,3,12,4,5,2],[-18,3,22,6,4,2],
+            [23,2,-17,5,3,2],[23,3,-8,4,5,2],[23,2,2,5,4,2],[23,3,12,4,5,2],[18,3,22,6,4,2],
+            [-14,4,23,5,3,2],[-4,5,24,5,4,2],[7,4,23,6,3,2],[16,5,24,4,4,2]
+        ];
+        wallRocks.forEach(([x,y,z,sx,sy,sz],i)=>{
+            const rock=new THREE.Mesh(new THREE.DodecahedronGeometry(1,1), i%3===0?wall2:wall);
+            rock.position.set(x,y,z); rock.scale.set(sx,sy,sz); rock.rotation.set(0.1,i*0.37,0.08*(i%2));
+            addShadowFlags(rock,true,true); this.architectureGroup.add(rock);
+        });
+
+        // Repeating timber frames: unmistakable mine supports around the play space.
+        const framePositions=[-16,-8,0,8,16];
+        framePositions.forEach((x,i)=>{
+            const postL=new THREE.Mesh(new THREE.BoxGeometry(.48,6.4,.55), timber);
+            const postR=postL.clone();
+            postL.position.set(x-2.6,3.2,-19.2); postR.position.set(x+2.6,3.2,-19.2);
+            const beam=new THREE.Mesh(new THREE.BoxGeometry(5.8,.62,.62), timberLight); beam.position.set(x,6.15,-19.2);
+            [postL,postR,beam].forEach(o=>{addShadowFlags(o);this.architectureGroup.add(o)});
+            const brace=new THREE.Mesh(new THREE.BoxGeometry(4.8,.24,.28), accent); brace.position.set(x,4.1,-18.82); brace.rotation.z=(i%2?-.17:.17); this.architectureGroup.add(brace);
+        });
+
+        // Rails and sleepers leading toward the back of the shaft.
+        [-1.05,1.05].forEach(x=>{
+            const rail=new THREE.Mesh(new THREE.BoxGeometry(.14,.12,35),railMat); rail.position.set(x,.11,-1.5); this.architectureGroup.add(rail);
+        });
+        for(let z=-18;z<=15;z+=2.4){
+            const sleeper=new THREE.Mesh(new THREE.BoxGeometry(3.4,.18,.34),timber); sleeper.position.set(0,.04,z); this.architectureGroup.add(sleeper);
+        }
+
+        // Small ore cart near the rear edge.
+        const cart=new THREE.Group(); cart.name='mine-cart-v38';
+        const body=new THREE.Mesh(new THREE.BoxGeometry(2.5,1.15,1.6),iron); body.position.y=1.0; body.rotation.x=-.1; cart.add(body);
+        const rim=new THREE.Mesh(new THREE.BoxGeometry(2.7,.22,1.8),accent); rim.position.y=1.65; cart.add(rim);
+        [-.82,.82].forEach(x=>[-.55,.55].forEach(z=>{const w=new THREE.Mesh(new THREE.CylinderGeometry(.28,.28,.18,12),iron); w.rotation.z=Math.PI/2; w.position.set(x,.45,z); cart.add(w)}));
+        cart.position.set(9,.0,-13.5); cart.rotation.y=-.22; cart.userData.interactionType='mineCart'; addShadowFlags(cart); this.architectureGroup.add(cart); this.mineCart=cart;
+
+        // Hanging lamps over the main route.
+        [-12,-4,4,12].forEach((x,i)=>{
+            const chain=new THREE.Mesh(new THREE.CylinderGeometry(.035,.035,2.0,6),iron); chain.position.set(x,7.7,-7); this.architectureGroup.add(chain);
+            const lamp=new THREE.Mesh(new THREE.SphereGeometry(.22,8,6), new THREE.MeshStandardMaterial({color:0xffc36b,emissive:0xff8b32,emissiveIntensity:1.8})); lamp.position.set(x,6.65,-7); lamp.userData.interactionType='lamp'; this.architectureGroup.add(lamp);
+            const light=new THREE.PointLight(0xffb45d,1.0,7,2); light.position.set(x,6.5,-7); this.architectureGroup.add(light); this.architectureLights.push({light,phase:i*.8});
+        });
+    }
+
+    interactMineProp(kind) {
+        if (kind === 'mineCart' && this.mineCart) {
+            this.mineCart.userData.bump = 1;
+            this.mineCart.rotation.z = -0.06;
+        }
+        if (kind === 'lamp') this.architectureLights.forEach(entry => entry.light.intensity = 1.65);
+    }
+
     buildAmbientEffects() {
         // Procedural ambience: no new image assets required. These lightweight
         // meshes make the mine feel alive while keeping GPU cost predictable.
@@ -649,6 +721,7 @@ export class MineEnvironment {
             this.setGroupOpacity(this.fissureGroup, fissureIn * (1 - fissureOut));
             this.setGroupOpacity(this.thresholdGroup, thresholdIn);
             this.waveGroup.visible = false;
+            this.architectureGroup.visible = true;
             this.currentTheme = theme;
             this.scene.background?.set(theme.sky);
             if (this.scene.fog) this.scene.fog.color.set(theme.fog);
@@ -662,6 +735,14 @@ export class MineEnvironment {
         this.fissureMaterials.forEach((material) => {
             material.emissiveIntensity = 1.8 + t * 1.3;
         });
+        // Timber/metal palette follows the depth so the same architecture still
+        // feels like a different mine rather than a static prop layer.
+        const timberHue = new THREE.Color(0x4a3023).lerp(new THREE.Color(0x76503a), t);
+        const wallHue = new THREE.Color(0x29232d).lerp(new THREE.Color(0x59372b), t * 0.8);
+        this.architectureMaterials[0]?.color.copy(timberHue);
+        this.architectureMaterials[1]?.color.copy(timberHue.clone().multiplyScalar(1.18));
+        this.architectureMaterials[3]?.color.copy(wallHue);
+        this.architectureMaterials[4]?.color.copy(wallHue.clone().multiplyScalar(1.22));
 
         return this.getCurrentTheme();
     }
@@ -695,6 +776,16 @@ export class MineEnvironment {
             const pulse = 0.9 + Math.sin(elapsed * 3.1 + index * 1.7) * 0.1;
             light.intensity = 1.9 * pulse;
         });
+
+        this.architectureLights.forEach(({ light, phase }) => {
+            light.intensity = 0.82 + Math.sin(elapsed * 4.2 + phase) * 0.10 + Math.sin(elapsed * 9.0 + phase) * 0.05;
+        });
+        if (this.mineCart) {
+            const bump = Math.max(0, (this.mineCart.userData.bump || 0) - delta * 4.5);
+            this.mineCart.userData.bump = bump;
+            this.mineCart.rotation.z = Math.sin(elapsed * 0.7) * 0.008 - bump * 0.055;
+            this.mineCart.position.x = 9 + Math.sin((1 - bump) * Math.PI) * 0.18;
+        }
 
         this.waveLights.forEach((light, index) => {
             const pulse = 0.88 + Math.sin(elapsed * 2.6 + index * 1.35) * 0.16;

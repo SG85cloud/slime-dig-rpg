@@ -23,6 +23,7 @@ import {
     CombatFX
 } from './combat.js';
 import { MineEnvironment } from './mineEnvironment.js';
+import { getLeaderAnimationProfile } from './leaderAnimationAssets.js';
 
 /** Floor height of the mine. All contact correction resolves to this plane. */
 const GROUND_Y = 0;
@@ -982,12 +983,12 @@ export class Game {
         const floorGeo = new THREE.PlaneGeometry(50, 50);
         const floorMat = new THREE.MeshStandardMaterial({ 
             map: this.assets.floor,
-            color: 0xb59ab9,
+            color: 0x8f7b82,
             roughness: 0.8,
             metalness: 0.05
         });
         this.assets.floor.wrapS = this.assets.floor.wrapT = THREE.RepeatWrapping;
-        this.assets.floor.repeat.set(10, 10);
+        this.assets.floor.repeat.set(7, 7);
         
         const floor = new THREE.Mesh(floorGeo, floorMat);
         floor.rotation.x = -Math.PI / 2;
@@ -1038,6 +1039,8 @@ export class Game {
             for (let i = 0; i < Math.max(0, totalNodes - coalNodes); i++) {
                 this.spawnNode();
             }
+            // V40: fixed wall seams make the cave walls themselves readable and mineable.
+            this.spawnWallNodes();
         }
         this.applyDepthAtmosphere();
         this.initVisualAtmosphere();
@@ -1375,8 +1378,8 @@ export class Game {
         const distance = options.minDistance !== undefined
             ? options.minDistance + Math.random() * 14
             : 5 + Math.random() * 17;
-        const x = Math.cos(angle) * distance;
-        const z = Math.sin(angle) * distance;
+        const x = options.position?.x ?? Math.cos(angle) * distance;
+        const z = options.position?.z ?? Math.sin(angle) * distance;
 
         // Bigger, chunkier veins so ore reads clearly on the isometric map.
         const scale = config.scale * (0.92 + Math.random() * 0.2);
@@ -1409,6 +1412,59 @@ export class Game {
         this.scene.add(model);
         this.nodes.push(model);
         return model;
+    }
+
+    /** V40: ore seams embedded in the cave wall. They are regular mining nodes,
+     * so the existing click-to-mine loop, quota, noise and worker systems all apply. */
+    spawnWallNodes() {
+        const theme = this.environment?.getCurrentTheme?.() || { id: 'deep' };
+        const placements = [
+            { x:-21.0, z:-10.5, rot: Math.PI/2, type:'iron' },
+            { x:-21.2, z:  5.0, rot: Math.PI/2, type:'gold' },
+            { x:-13.5, z: 21.0, rot: 0, type:'frostite' },
+            { x:  2.0, z: 21.3, rot: 0, type:'mithril' },
+            { x: 21.0, z: -5.0, rot: -Math.PI/2, type:'gold' },
+            { x: 21.2, z: 10.0, rot: -Math.PI/2, type:'obsidian' },
+            { x: 10.5, z:-21.0, rot: Math.PI, type:'sunstone' }
+        ];
+        placements.forEach((place, index) => {
+            const type = this.oreConfig[place.type] ? place.type : (index % 2 ? 'iron' : 'coal');
+            const info = ORE_INFO[type];
+            const group = new THREE.Group();
+            group.name = `wall-ore-seam-${type}-${index}`;
+            group.position.set(place.x, 0.9, place.z);
+            group.rotation.y = place.rot;
+            const rockMat = new THREE.MeshStandardMaterial({ color: 0x342d31, roughness: 0.96 });
+            const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1, 1), rockMat);
+            rock.scale.set(1.8, 1.15, 0.48);
+            rock.position.z = 0.35;
+            rock.castShadow = true;
+            rock.receiveShadow = true;
+            group.add(rock);
+            const oreMat = new THREE.MeshStandardMaterial({
+                color: info?.color || 0xbfc7d2,
+                emissive: info?.color || 0xbfc7d2,
+                emissiveIntensity: 0.42,
+                roughness: 0.28,
+                metalness: 0.16
+            });
+            for (let j=0;j<5;j++) {
+                const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.28 + (j%2)*0.08, 0), oreMat);
+                shard.position.set(-0.72 + j*0.36, 0.05 + (j%2)*0.22, -0.03);
+                shard.rotation.z = (j-2)*0.16;
+                shard.scale.y = 1.25 + (j%3)*0.25;
+                shard.castShadow = true;
+                group.add(shard);
+            }
+            group.userData = {
+                type:'node', oreType:type, wallNode:true, baseScale:1, swingsRequired:this.getSwingsRequired(type),
+                swings:0, reserves:Math.max(2, Math.round(2 + Math.random()*2)),
+                basePosition:group.position.clone(), interactionLabel:`${info?.label || type} 암벽 광맥`
+            };
+            group.traverse(child => { child.userData.type='nodePart'; });
+            this.scene.add(group);
+            this.nodes.push(group);
+        });
     }
 
     // A simple procedural chest — the hoard room needs no ore-vein GLB, just
@@ -2203,6 +2259,63 @@ export class Game {
         if (this.combatFeed.length > 5) this.combatFeed.pop();
     }
 
+    createWorkerRoleVisuals(role = 'miner') {
+        const group = new THREE.Group();
+        group.name = `WorkerRoleVisual_${role}`;
+        group.userData.ignoreContact = true;
+
+        const configs = {
+            miner:      { color: 0xf3c74f, accent: 0xfff1a8, shape: 'lamp', label: '⛏' },
+            fighter:    { color: 0xc96bff, accent: 0xf0c6ff, shape: 'blade', label: '⚔' },
+            guard:      { color: 0x4d8cff, accent: 0xb8d5ff, shape: 'shield', label: '🛡' },
+            prospector: { color: 0x55d68a, accent: 0xc6ffe0, shape: 'gem', label: '◆' }
+        };
+        const cfg = configs[role] || configs.miner;
+        const ringMat = new THREE.MeshStandardMaterial({
+            color: cfg.color, emissive: cfg.color, emissiveIntensity: 0.55,
+            transparent: true, opacity: 0.9, roughness: 0.35, metalness: 0.15
+        });
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.025, 6, 18), ringMat);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.045;
+        ring.name = 'roleRing';
+        group.add(ring);
+
+        if (cfg.shape === 'lamp') {
+            const lamp = new THREE.Mesh(
+                new THREE.SphereGeometry(0.09, 8, 6),
+                new THREE.MeshStandardMaterial({ color: cfg.accent, emissive: cfg.accent, emissiveIntensity: 2.5 })
+            );
+            lamp.position.set(0, 0.83, 0.08);
+            group.add(lamp);
+        } else if (cfg.shape === 'blade') {
+            const blade = new THREE.Mesh(
+                new THREE.BoxGeometry(0.08, 0.42, 0.045),
+                new THREE.MeshStandardMaterial({ color: cfg.accent, metalness: 0.75, roughness: 0.22 })
+            );
+            blade.position.set(0.46, 0.48, 0);
+            blade.rotation.z = -0.35;
+            group.add(blade);
+        } else if (cfg.shape === 'shield') {
+            const shield = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.17, 0.17, 0.055, 8),
+                new THREE.MeshStandardMaterial({ color: cfg.color, metalness: 0.5, roughness: 0.35 })
+            );
+            shield.rotation.x = Math.PI / 2;
+            shield.position.set(0.47, 0.45, 0.08);
+            group.add(shield);
+        } else {
+            const gem = new THREE.Mesh(
+                new THREE.OctahedronGeometry(0.13, 0),
+                new THREE.MeshStandardMaterial({ color: cfg.accent, emissive: cfg.color, emissiveIntensity: 1.7, metalness: 0.25, roughness: 0.2 })
+            );
+            gem.position.set(0, 0.9, 0);
+            group.add(gem);
+        }
+        group.userData.roleColor = cfg.color;
+        return group;
+    }
+
     createWorkerPickaxe() {
         const pickaxe = new THREE.Group();
         const handleMaterial = new THREE.MeshStandardMaterial({ color: 0x7b452c, roughness: 0.8 });
@@ -2225,6 +2338,144 @@ export class Game {
         return pickaxe;
     }
 
+    /** V36 presentation polish: contact shadows and a subtle leader halo. */
+    createCharacterPresentation(kind = 'leader') {
+        const group = new THREE.Group();
+        group.name = `CharacterPresentation_${kind}`;
+        group.userData.ignoreContact = true;
+        const shadow = new THREE.Mesh(
+            new THREE.CircleGeometry(kind === 'leader' ? 0.62 : 0.46, 32),
+            new THREE.MeshBasicMaterial({ color: 0x05030a, transparent: true, opacity: kind === 'leader' ? 0.28 : 0.20, depthWrite: false })
+        );
+        shadow.rotation.x = -Math.PI / 2;
+        shadow.position.y = 0.012;
+        shadow.scale.y = 0.55;
+        shadow.name = 'ContactShadow';
+        group.add(shadow);
+        if (kind === 'leader') {
+            const impact = new THREE.Mesh(
+                new THREE.RingGeometry(0.22, 0.30, 32),
+                new THREE.MeshBasicMaterial({ color: 0xb8fff0, transparent:true, opacity:0, depthWrite:false, side:THREE.DoubleSide })
+            );
+            impact.rotation.x = -Math.PI / 2;
+            impact.position.y = 0.022;
+            impact.name = 'SlimeLandingShock';
+            group.add(impact);
+            const gloss = new THREE.Mesh(
+                new THREE.SphereGeometry(0.32, 20, 12),
+                new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0.0, depthWrite:false })
+            );
+            gloss.scale.set(0.55, 0.22, 0.42);
+            gloss.position.set(-0.24, 0.58, 0.34);
+            gloss.name = 'SlimeGloss';
+            group.add(gloss);
+            const halo = new THREE.Mesh(
+                new THREE.RingGeometry(0.68, 0.74, 40),
+                new THREE.MeshBasicMaterial({ color: 0x7fffd4, transparent: true, opacity: 0.10, depthWrite: false, side: THREE.DoubleSide })
+            );
+            halo.rotation.x = -Math.PI / 2;
+            halo.position.y = 0.018;
+            halo.name = 'LeaderHalo';
+            group.add(halo);
+        }
+        return group;
+    }
+
+    createSlimeTrailGhosts() {
+        const ghosts = [];
+        for (let i=0;i<3;i++) {
+            const ghost = this.assets.leader.clone();
+            ghost.name = `SlimeTrailGhost_${i}`;
+            ghost.scale.setScalar(1.25);
+            ghost.visible = false;
+            ghost.traverse(child => {
+                if (!child.isMesh) return;
+                child.castShadow = false; child.receiveShadow = false;
+                if (child.material) {
+                    const mat = child.material.clone();
+                    mat.transparent = true; mat.opacity = 0;
+                    mat.depthWrite = false; mat.depthTest = true;
+                    mat.emissive = mat.emissive ? mat.emissive.clone() : new THREE.Color(0);
+                    mat.emissiveIntensity = Math.max(0.2, mat.emissiveIntensity || 0) + 0.15;
+                    child.material = mat;
+                }
+            });
+            this.scene.add(ghost);
+            ghosts.push(ghost);
+        }
+        return ghosts;
+    }
+
+    triggerSlimeLanding(player) {
+        const p = player?.userData?.presentationGroup;
+        const ring = p?.getObjectByName('SlimeLandingShock');
+        if (!ring) return;
+        ring.scale.setScalar(0.45);
+        ring.material.opacity = 0.34;
+        player.userData.landingShock = 1;
+        this.combatFX.spawnBurst(player.position, { color:0xb8fff0, radius:0.20, expand:1.6, life:0.22, height:0.05 });
+    }
+
+    updateSlimeTrail(player, delta, moving) {
+        const ghosts = player?.userData?.trailGhosts;
+        if (!ghosts?.length) return;
+        player.userData.trailTimer = Math.max(0, (player.userData.trailTimer || 0) - delta);
+        if (!moving) {
+            ghosts.forEach(g => { g.visible=false; g.materialOpacityTarget=0; });
+            return;
+        }
+        if (player.userData.trailTimer <= 0) {
+            player.userData.trailTimer = 0.055;
+            const pos = player.position.clone();
+            const rotY = player.rotation.y;
+            ghosts.forEach((ghost, i) => {
+                const source = i === 0 ? pos : ghosts[i-1].position.clone();
+                ghost.position.copy(source);
+                ghost.rotation.y = rotY;
+                ghost.scale.setScalar((player.userData.baseScale || 1.25) * (1 - i*0.06));
+                ghost.visible = true;
+                ghost.userData.life = 0.24;
+            });
+        }
+        ghosts.forEach((ghost, i) => {
+            ghost.userData.life = Math.max(0, (ghost.userData.life || 0) - delta);
+            ghost.traverse(child => {
+                if (child.isMesh && child.material) child.material.opacity = (ghost.userData.life / 0.24) * (0.11 - i*0.025);
+            });
+            if (ghost.userData.life <= 0) ghost.visible = false;
+        });
+    }
+
+    updateCharacterGroundPresentation(object, delta, moving, intensity = 1) {
+        const p = object?.userData?.presentationGroup;
+        if (!p) return;
+        const shadow = p.getObjectByName('ContactShadow');
+        if (shadow) {
+            const target = moving ? 0.48 : 0.55;
+            shadow.scale.x = THREE.MathUtils.damp(shadow.scale.x, target * intensity, 8, delta);
+            shadow.scale.y = THREE.MathUtils.damp(shadow.scale.y, 0.55 * intensity, 8, delta);
+            shadow.material.opacity = THREE.MathUtils.damp(shadow.material.opacity, moving ? 0.16 : 0.24, 8, delta);
+        }
+        const halo = p.getObjectByName('LeaderHalo');
+        if (halo) {
+            halo.rotation.z += delta * (moving ? 1.8 : 0.45);
+            halo.material.opacity = THREE.MathUtils.damp(halo.material.opacity, moving ? 0.16 : 0.09, 7, delta);
+            halo.scale.setScalar(1 + Math.sin(this.elapsed * 3.2) * 0.035);
+        }
+        const ring = p.getObjectByName('SlimeLandingShock');
+        if (ring) {
+            const shock = object.userData.landingShock || 0;
+            object.userData.landingShock = Math.max(0, shock - delta * 4.2);
+            ring.scale.setScalar(0.45 + (1 - shock) * 1.6);
+            ring.material.opacity = shock * 0.34;
+        }
+        const gloss = p.getObjectByName('SlimeGloss');
+        if (gloss) {
+            gloss.material.opacity = 0.045 + Math.max(0, Math.sin(this.elapsed * 2.7)) * 0.035;
+            gloss.position.x = -0.24 + Math.sin(this.elapsed * 1.5) * 0.025;
+        }
+    }
+
     initPlayer() {
         this.player = this.assets.leader.clone();
         // Measure the actual model so the slime's underside rests on the floor
@@ -2234,6 +2485,15 @@ export class Game {
         this.player.scale.setScalar(1.25);
         this.player.traverse((child) => {
             child.castShadow = true;
+            if (child.isMesh && child.material) {
+                const m = child.material;
+                // V40: wet-jelly look without replacing the existing texture.
+                m.roughness = Math.min(0.24, m.roughness ?? 0.5);
+                m.metalness = Math.min(0.06, m.metalness ?? 0.0);
+                m.clearcoat = 0.85;
+                m.clearcoatRoughness = 0.12;
+                m.emissiveIntensity = Math.max(0.05, m.emissiveIntensity || 0) + 0.04;
+            }
         });
         this.player.userData.baseScale = 1.25;
         this.player.userData.miningClock = Math.random() * Math.PI * 2;
@@ -2243,6 +2503,8 @@ export class Game {
         this.player.userData.actionPhase = Math.random() * Math.PI * 2;
         this.player.userData.animationMixer = null;
         this.player.userData.animationActions = {};
+        this.player.userData.leaderAnimationState = 'idle';
+        this.player.userData.leaderAnimationClock = Math.random() * Math.PI * 2;
         this.initRealAnimationClips(this.player, this.assets.leader);
         this.player.userData.isMining = false;
         this.player.userData.pickaxe = this.createWorkerPickaxe();
@@ -2259,6 +2521,17 @@ export class Game {
         this.weaponArm.position.set(0.42, 0.32, 0.12);
         this.player.add(this.weaponArm);
         this.refreshWeaponMesh();
+
+        this.player.userData.presentationGroup = this.createCharacterPresentation('leader');
+        this.player.add(this.player.userData.presentationGroup);
+        this.player.userData.trailGhosts = this.createSlimeTrailGhosts();
+        this.player.userData.trailTimer = 0;
+        this.player.userData.lastHopValue = 0;
+        this.player.userData.landingShock = 0;
+        this.player.userData.presentationLight = new THREE.PointLight(0x9fffe0, 0.22, 3.6, 2);
+        this.player.userData.presentationLight.position.set(0, 0.65, 0.35);
+        this.player.userData.presentationLight.userData.ignoreContact = true;
+        this.player.add(this.player.userData.presentationLight);
 
         this.scene.add(this.player);
 
@@ -2334,11 +2607,16 @@ export class Game {
         worker.userData.pickaxe = this.createWorkerPickaxe();
         worker.userData.pickaxe.userData.ignoreContact = true;
         worker.add(worker.userData.pickaxe);
+        worker.userData.roleVisuals = this.createWorkerRoleVisuals(worker.userData.workerRole);
+        worker.add(worker.userData.roleVisuals);
+        worker.userData.presentationGroup = this.createCharacterPresentation('worker');
+        worker.add(worker.userData.presentationGroup);
         // Recreate the optional mixer after the worker userData object has been
         // fully initialized; static models simply skip this at zero cost.
         this.initRealAnimationClips(worker, this.assets.worker);
         worker.userData.presentationState = 'idle';
         worker.userData.presentationPhase = Math.random() * Math.PI * 2;
+        worker.userData.walkDistance = 0;
         worker.userData.lastFootstep = 0;
         this.scene.add(worker);
         this.workers.push(worker);
@@ -2603,7 +2881,30 @@ export class Game {
                 this.playerData.miningTarget = target;
                 this.playerData.targetPos.copy(this.getMiningStandPosition(target));
                 this.miningHitTimer = 0;
+                if (target.userData.wallNode) this.pushCombatFeed(`⛏️ ${target.userData.interactionLabel}을(를) 채굴합니다.`, '#ffd166');
                 return;
+            }
+        }
+
+        // V40: small mine props are interactive rather than dead decoration.
+        const architecture = this.environment?.architectureGroup;
+        if (architecture) {
+            const hits = this.raycaster.intersectObject(architecture, true);
+            if (hits.length) {
+                let target = hits[0].object;
+                while (target && !target.userData?.interactionType) target = target.parent;
+                const kind = target?.userData?.interactionType;
+                if (kind === 'mineCart') {
+                    this.environment.interactMineProp?.('mineCart');
+                    this.pushCombatFeed('🛒 광차를 밀어 봤습니다. 덜컹! 광산의 소리가 울립니다.', '#d7c4ed');
+                    this.app.addShake?.(0.12);
+                    return;
+                }
+                if (kind === 'lamp') {
+                    this.environment.interactMineProp?.('lamp');
+                    this.pushCombatFeed('💡 광산등이 흔들리며 주변 암벽이 밝아집니다.', '#ffe39a');
+                    return;
+                }
             }
         }
 
@@ -5328,15 +5629,26 @@ export class Game {
         worker.position.add(direction.multiplyScalar(step));
         worker.position.y = worker.userData.baseY || 0.5;
         worker.lookAt(worker.position.clone().add(direction));
+        worker.userData.walkDistance = (worker.userData.walkDistance || 0) + step;
+        if (worker.userData.walkDistance > 1.15) {
+            worker.userData.walkDistance = 0;
+            this.spawnStepDust(worker, 0.65);
+        }
+        const role = worker.userData.workerRole || 'miner';
+        const lean = role === 'fighter' ? -0.045 : role === 'guard' ? -0.025 : role === 'prospector' ? -0.035 : -0.02;
+        worker.rotation.x = THREE.MathUtils.damp(worker.rotation.x, lean, 8, delta);
         return true;
     }
 
     animateWorkerMining(worker, isMining, delta) {
-        worker.userData.miningClock = (worker.userData.miningClock || 0) + delta * (isMining ? 8.5 : 3.5);
+        const role = worker.userData.workerRole || 'miner';
+        const roleRate = ({ miner: 1.0, fighter: 1.08, guard: 0.92, prospector: 0.98 }[role] || 1);
+        worker.userData.miningClock = (worker.userData.miningClock || 0) + delta * (isMining ? 8.5 * roleRate : 3.5);
         const clock = worker.userData.miningClock;
         const baseScale = worker.userData.baseScale || 0.9;
         const baseY = worker.userData.baseY || 0.5;
         const pickaxe = worker.userData.pickaxe;
+        const roleVisuals = worker.userData.roleVisuals;
 
         if (isMining) {
             const impact = Math.max(0, Math.sin(clock));
@@ -5347,10 +5659,9 @@ export class Game {
                 baseScale * (1 - squash),
                 baseScale * (1 + squash * 0.72)
             );
-            // Only the anticipation hop is expressed here; the contact pass
-            // resolves the squash against the floor after animation.
             worker.position.y = baseY + anticipation * 0.06;
             worker.rotation.z = Math.sin(clock * 0.5) * 0.055;
+            worker.rotation.x = THREE.MathUtils.damp(worker.rotation.x, -0.06 - anticipation * 0.06, 10, delta);
             if (pickaxe) {
                 pickaxe.rotation.z = -0.65 + anticipation * 1.95 - impact * 0.48;
                 pickaxe.rotation.x = Math.sin(clock) * 0.08;
@@ -5363,10 +5674,19 @@ export class Game {
             worker.scale.set(baseScale * (1 + squash), baseScale * (1 - squash * 0.8), baseScale * (1 + squash));
             worker.position.y = THREE.MathUtils.damp(worker.position.y, baseY + (moving ? Math.max(0, walk) * 0.03 : Math.max(0, breathe) * 0.018), 10, delta);
             worker.rotation.z = THREE.MathUtils.damp(worker.rotation.z, moving ? -walk * 0.05 : breathe * 0.018, 10, delta);
+            worker.rotation.x = THREE.MathUtils.damp(worker.rotation.x, moving ? -walk * 0.025 : 0, 10, delta);
             if (pickaxe) {
                 pickaxe.rotation.z = THREE.MathUtils.damp(pickaxe.rotation.z, -0.65 + (moving ? walk * 0.12 : breathe * 0.03), 10, delta);
                 pickaxe.rotation.x = THREE.MathUtils.damp(pickaxe.rotation.x, moving ? walk * 0.05 : breathe * 0.02, 10, delta);
             }
+        }
+
+        if (roleVisuals) {
+            const pulse = 1 + Math.sin(this.elapsed * 3.2 + (worker.userData.presentationPhase || 0)) * 0.035;
+            roleVisuals.scale.setScalar(pulse);
+            roleVisuals.rotation.y = THREE.MathUtils.damp(roleVisuals.rotation.y, role === 'prospector' ? this.elapsed * 0.8 : 0, 4, delta);
+            if (role === 'fighter') roleVisuals.rotation.z = Math.sin(clock * 2.1) * 0.035;
+            if (role === 'guard') roleVisuals.position.x = 0.02 + Math.sin(this.elapsed * 2.2) * 0.025;
         }
         worker.userData.isMining = isMining;
     }
@@ -5380,68 +5700,106 @@ export class Game {
         const hitReact = Math.max(0, player.userData.hitReact || 0);
         player.userData.hitReact = Math.max(0, hitReact - delta * 7.5);
 
-        // Mining gets a readable anticipation -> impact -> recovery rhythm.
-        const swingRate = Math.PI / Math.max(0.16, this.getSwingInterval());
-        player.userData.miningClock = (player.userData.miningClock || 0) + delta * (isMining ? swingRate : (moving ? 7.0 : 2.4));
-        const clock = player.userData.miningClock;
+        // V37: authored leader motion profiles. The current GLB is unrigged, so
+        // these profiles are applied to the whole-body presentation rather than
+        // pretending to be skeletal animation.
+        const state = this.isDown ? 'death' : hitReact > 0.08 ? 'hit' : isMining ? 'mine' : this.swingActive ? 'attack' : moving ? 'walk' : 'idle';
+        const profile = getLeaderAnimationProfile(state);
+        if (player.userData.leaderAnimationState !== state) {
+            player.userData.leaderAnimationState = state;
+            player.userData.leaderAnimationClock = state === 'idle' ? 0 : 0;
+            this.playPresentationClip(player, state);
+        }
+        player.userData.leaderAnimationClock = (player.userData.leaderAnimationClock || 0) + delta * profile.speed;
+        const clock = player.userData.leaderAnimationClock;
+        const wave = Math.sin(clock);
+        const pulse = Math.sin(clock * 0.5);
 
-        if (isMining) {
-            const phase = (clock % (Math.PI * 2));
+        if (state === 'death') {
+            const deathT = Math.min(1, (this.deathTimer !== undefined ? Math.max(0, 3 - this.deathTimer) : 1) / 0.55);
+            const collapse = Math.min(1, deathT * 1.8);
+            const wobble = Math.sin(deathT * Math.PI * 3) * (1 - deathT) * 0.08;
+            player.scale.set(
+                baseScale * (1.18 + collapse * 0.12),
+                baseScale * Math.max(0.42, 0.98 - collapse * 0.56),
+                baseScale * (1.18 + collapse * 0.12)
+            );
+            player.rotation.z = THREE.MathUtils.damp(player.rotation.z, 0.16 + wobble, 7, delta);
+            player.rotation.x = THREE.MathUtils.damp(player.rotation.x, 0.08, 7, delta);
+            player.userData.isMining = isMining;
+            return;
+        }
+
+        if (state === 'mine') {
+            // Anticipation -> impact -> recovery gives each pickaxe strike a
+            // readable rhythm instead of a generic bob.
+            const phase = clock % (Math.PI * 2);
             const anticipation = Math.max(0, Math.sin(phase - 1.15));
             const impact = Math.max(0, Math.sin(phase));
-            const squash = impact * 0.09;
+            const squash = impact * profile.squash;
             player.scale.set(
                 baseScale * (1 + squash * 0.95),
                 baseScale * (1 - squash),
                 baseScale * (1 + squash * 0.95)
             );
-            player.position.y = baseY + anticipation * 0.11;
-            player.rotation.z = Math.sin(clock * 0.5) * 0.06;
+            player.position.y = baseY + anticipation * profile.bounce;
+            player.rotation.z = Math.sin(clock * 0.5) * profile.lean;
             if (pickaxe) {
                 pickaxe.rotation.z = -0.65 + anticipation * 2.25 - impact * 0.72;
                 pickaxe.rotation.x = Math.sin(clock) * 0.12;
                 pickaxe.rotation.y = Math.sin(clock * 0.5) * 0.08;
             }
-        } else if (moving) {
-            // Squash/stretch locomotion: the body visibly compresses on each
-            // step, then springs back. This makes a simple GLB read as alive.
-            const walk = Math.sin(clock * 1.8);
-            const bounce = Math.max(0, walk);
-            const squash = Math.abs(walk) * 0.045;
-            player.scale.set(
-                baseScale * (1 + squash * 0.9),
-                baseScale * (1 - squash * 0.7),
-                baseScale * (1 + squash * 0.9)
-            );
-            player.position.y = baseY + bounce * 0.045;
-            player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -walk * 0.065, 10, delta);
-            if (pickaxe) {
-                pickaxe.rotation.z = THREE.MathUtils.damp(pickaxe.rotation.z, -0.62 + walk * 0.16, 8, delta);
-                pickaxe.rotation.x = THREE.MathUtils.damp(pickaxe.rotation.x, walk * 0.06, 8, delta);
-            }
-        } else {
-            // Character idle: breathing squash + tiny side sway + tool movement.
-            const breathe = Math.sin(this.elapsed * 2.5);
-            player.scale.set(
-                baseScale * (1 + breathe * 0.012),
-                baseScale * (1 - breathe * 0.022),
-                baseScale * (1 + breathe * 0.012)
-            );
-            player.position.y = THREE.MathUtils.damp(player.position.y, baseY + Math.max(0, breathe) * 0.025, 8, delta);
-            player.rotation.z = THREE.MathUtils.damp(player.rotation.z, breathe * 0.018, 8, delta);
-            if (pickaxe) {
-                pickaxe.rotation.z = THREE.MathUtils.damp(pickaxe.rotation.z, -0.65 + breathe * 0.035, 8, delta);
-                pickaxe.rotation.x = THREE.MathUtils.damp(pickaxe.rotation.x, breathe * 0.02, 8, delta);
-            }
+            player.userData.isMining = isMining;
+            return;
         }
 
-        // Universal hit reaction sits on top of the base pose.
-        if (hitReact > 0) {
-            const kick = Math.sin(hitReact * Math.PI * 3.0) * hitReact;
-            player.scale.x *= 1 + hitReact * 0.13;
-            player.scale.y *= 1 - hitReact * 0.10;
-            player.scale.z *= 1 + hitReact * 0.13;
-            player.rotation.z += kick * 0.10;
+        if (state === 'hit') {
+            const impact = hitReact;
+            const snap = Math.sin((1 - impact) * Math.PI);
+            player.scale.set(
+                baseScale * (1 + snap * 0.08),
+                baseScale * (1 - snap * 0.13),
+                baseScale * (1 + snap * 0.08)
+            );
+            player.position.y = baseY + snap * 0.025;
+            player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -Math.sign(Math.sin(clock)) * profile.lean * snap, 14, delta);
+            player.userData.isMining = isMining;
+            return;
+        }
+
+        if (state === 'attack') {
+            const t = this.swingActive ? Math.min(1, this.swingTime / Math.max(0.01, this.swingDuration)) : 0;
+            const strike = Math.sin(t * Math.PI);
+            const anticipation = t < 0.34 ? t / 0.34 : 0;
+            const squash = anticipation * 0.035 + strike * profile.squash * 0.45;
+            // V40: slime attack stretches forward before snapping back.
+            const forwardStretch = strike * 0.20;
+            player.scale.set(
+                baseScale * (1 + squash * 0.55 - forwardStretch * 0.10),
+                baseScale * (1 - squash * 0.9 - forwardStretch * 0.18),
+                baseScale * (1 + squash + forwardStretch)
+            );
+            player.position.y = baseY + anticipation * 0.025 + strike * profile.bounce * 0.35;
+            player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -anticipation * profile.lean + strike * 0.035, 14, delta);
+            player.userData.isMining = isMining;
+            return;
+        }
+
+        // Idle / walk.
+        const squash = moving ? Math.abs(wave) * profile.squash : Math.abs(pulse) * profile.squash;
+        const bounce = moving ? Math.max(0, wave) * profile.bounce : Math.max(0, pulse) * profile.bounce;
+        player.scale.set(
+            baseScale * (1 + squash),
+            baseScale * (1 - squash * 0.85),
+            baseScale * (1 + squash)
+        );
+        player.position.y = baseY + bounce;
+        const targetLean = moving ? -wave * profile.lean : pulse * profile.lean * 0.32;
+        player.rotation.z = THREE.MathUtils.damp(player.rotation.z, targetLean, moving ? 11 : 7, delta);
+
+        if (pickaxe) {
+            pickaxe.rotation.z = THREE.MathUtils.damp(pickaxe.rotation.z, -0.65 + (moving ? wave * 0.12 : pulse * 0.03), 10, delta);
+            pickaxe.rotation.x = THREE.MathUtils.damp(pickaxe.rotation.x, moving ? wave * 0.05 : pulse * 0.02, 10, delta);
         }
         player.userData.isMining = isMining;
     }
@@ -5477,16 +5835,26 @@ export class Game {
     // Short weapon-swing flourish while a worker is fighting.
     animateWorkerCombat(worker, delta) {
         const pickaxe = worker.userData.pickaxe;
+        const role = worker.userData.workerRole || 'miner';
         worker.userData.swingFx = Math.max(0, (worker.userData.swingFx || 0) - delta);
         const t = worker.userData.swingFx / 0.3;
-        if (pickaxe) {
-            const swing = t > 0 ? Math.sin(t * Math.PI) : 0;
-            pickaxe.rotation.z = -0.65 + swing * 2.2;
-            pickaxe.rotation.x = swing * 0.4;
-        }
+        const swing = t > 0 ? Math.sin(t * Math.PI) : 0;
         const baseScale = worker.userData.baseScale || 0.9;
-        worker.scale.setScalar(baseScale * (1 + (t > 0 ? Math.sin(t * Math.PI) * 0.1 : 0)));
-        worker.position.y = worker.userData.baseY || 0.5;
+        const rolePower = ({ miner: 0.8, fighter: 1.25, guard: 0.95, prospector: 0.9 }[role] || 1);
+        worker.scale.setScalar(baseScale * (1 + swing * 0.09 * rolePower));
+        worker.rotation.x = THREE.MathUtils.damp(worker.rotation.x, -swing * (role === 'guard' ? 0.06 : 0.11), 12, delta);
+        worker.rotation.z = THREE.MathUtils.damp(worker.rotation.z, (role === 'fighter' ? -0.08 : 0) * swing, 12, delta);
+        if (pickaxe) {
+            const arc = role === 'guard' ? 1.65 : role === 'fighter' ? 2.65 : 2.2;
+            pickaxe.rotation.z = -0.65 + swing * arc;
+            pickaxe.rotation.x = swing * (role === 'fighter' ? 0.55 : 0.4);
+        }
+        const roleVisuals = worker.userData.roleVisuals;
+        if (roleVisuals) {
+            roleVisuals.position.z = swing * (role === 'fighter' ? -0.06 : 0.025);
+            if (role === 'fighter') roleVisuals.rotation.y = swing * 0.35;
+            if (role === 'guard') roleVisuals.rotation.x = swing * 0.15;
+        }
     }
 
     /** Worker damage is a downed-state system rather than an instant squad loss.
@@ -5826,7 +6194,8 @@ export class Game {
             const moving = !!player.userData.isMoving;
             const mining = !!player.userData.isMining;
             const combat = !!this.playerTarget && this.enemies?.includes(this.playerTarget);
-            const nextState = mining ? 'attack' : (moving ? 'walk' : (combat ? 'idle' : 'idle'));
+            const hitReactActive = (player.userData.hitReact || 0) > 0.08;
+            const nextState = this.isDown ? 'death' : (hitReactActive ? 'hit' : (mining ? 'mine' : (this.swingActive ? 'attack' : (moving ? 'walk' : (combat ? 'idle' : 'idle')))));
             if (player.userData.presentationState !== nextState) {
                 player.userData.presentationState = nextState;
                 this.playPresentationClip(player, nextState);
@@ -5848,6 +6217,15 @@ export class Game {
             if (!mining) {
                 const targetLean = moving ? -pulse * 0.055 : (combat ? Math.sin(t * 5.2) * 0.018 : 0);
                 player.rotation.z = THREE.MathUtils.damp(player.rotation.z, targetLean, 10, delta);
+            }
+            this.updateCharacterGroundPresentation(player, delta, moving, 1);
+            const hopValue = Math.sin(player.userData.leaderAnimationClock || 0);
+            const lastHop = player.userData.lastHopValue || 0;
+            if (moving && lastHop > 0 && hopValue <= 0) this.triggerSlimeLanding(player);
+            player.userData.lastHopValue = hopValue;
+            this.updateSlimeTrail(player, delta, moving && !mining);
+            if (player.userData.presentationLight) {
+                player.userData.presentationLight.intensity = 0.20 + (combat ? 0.07 : 0) + Math.max(0, Math.sin(t * 3.1)) * 0.025;
             }
             this.animatePlayerBodyAction(delta, moving, mining);
         }
@@ -5903,6 +6281,7 @@ export class Game {
             worker.scale.x = base * (1 + pulse);
             worker.scale.z = base * (1 + pulse);
             worker.scale.y = base * (1 - pulse * 1.25);
+            this.updateCharacterGroundPresentation(worker, delta, !!d.isMoving, 0.85);
         }
     }
 
